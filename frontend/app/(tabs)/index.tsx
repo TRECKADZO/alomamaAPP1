@@ -157,6 +157,9 @@ function MamanDash({ data, router }: any) {
         <QuickAction icon="shield-checkmark" label="Contracep." onPress={() => router.push("/contraception")} testID="qa-contra" color={COLORS.accent} />
         <QuickAction icon="heart-circle" label="Post-partum" onPress={() => router.push("/post-partum")} testID="qa-postpartum" color={COLORS.secondary} />
         <QuickAction icon="search" label="Rechercher" onPress={() => router.push("/search")} testID="qa-search" />
+        <QuickAction icon="scan" label="Échographie" onPress={() => router.push("/tele-echo")} testID="qa-echo" color={COLORS.secondary} />
+        <QuickAction icon="document-text" label="Naissance" onPress={() => router.push("/naissance")} testID="qa-naiss" color={COLORS.accent} />
+        <QuickAction icon="shield" label="Dossier FHIR" onPress={() => router.push("/fhir")} testID="qa-fhir" />
       </View>
 
       {/* Rappels */}

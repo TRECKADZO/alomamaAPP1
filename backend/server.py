@@ -220,6 +220,27 @@ class PhotoIn(BaseModel):
     photo_base64: str
 
 
+class NaissanceIn(BaseModel):
+    enfant_id: str
+    lieu_naissance: str
+    heure_naissance: str  # HH:MM
+    poids_naissance_g: int
+    taille_naissance_cm: float
+    nom_pere: Optional[str] = None
+    nom_mere: str
+    profession_pere: Optional[str] = None
+    profession_mere: Optional[str] = None
+    medecin_accoucheur: Optional[str] = None
+    numero_acte: Optional[str] = None
+
+
+class TeleEchoIn(BaseModel):
+    rdv_id: str
+    image_base64: str
+    description: Optional[str] = None
+    semaine_grossesse: Optional[int] = None
+
+
 # ----------------------------------------------------------------------
 # Auth Endpoints
 # ----------------------------------------------------------------------
@@ -890,6 +911,10 @@ async def push_notif(user_id: str, title: str, body: str, ntype: str = "info"):
         "read": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
+    # Best-effort Expo push if user has a token
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "push_token": 1})
+    if u and u.get("push_token"):
+        await send_expo_push(u["push_token"], title, body, {"type": ntype})
 
 
 # ----------------------------------------------------------------------
@@ -940,6 +965,217 @@ async def video_link(rid: str, user=Depends(get_current_user)):
         "room": room,
         "url": f"https://meet.jit.si/{room}",
     }
+
+
+# ----------------------------------------------------------------------
+# Télé-échographie (pro uploads image, maman views)
+# ----------------------------------------------------------------------
+@api.post("/tele-echo")
+async def upload_echo(payload: TeleEchoIn, user=Depends(require_roles("professionnel"))):
+    rdv = await db.rdv.find_one({"id": payload.rdv_id}, {"_id": 0})
+    if not rdv or rdv["pro_id"] != user["id"]:
+        raise HTTPException(404, "RDV introuvable ou non autorisé")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "rdv_id": payload.rdv_id,
+        "maman_id": rdv["maman_id"],
+        "pro_id": user["id"],
+        "pro_name": user["name"],
+        "image_base64": payload.image_base64,
+        "description": payload.description,
+        "semaine_grossesse": payload.semaine_grossesse,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.tele_echo.insert_one(doc)
+    doc.pop("_id", None)
+    await push_notif(
+        rdv["maman_id"],
+        "Nouvelle image d'échographie 🩺",
+        f"Dr. {user['name']} a partagé une image (semaine {payload.semaine_grossesse or '?'})",
+        "info",
+    )
+    return doc
+
+
+@api.get("/tele-echo")
+async def list_echos(user=Depends(get_current_user)):
+    q = {"maman_id": user["id"]} if user["role"] == "maman" else (
+        {"pro_id": user["id"]} if user["role"] == "professionnel" else {}
+    )
+    items = await db.tele_echo.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return items
+
+
+@api.get("/tele-echo/rdv/{rdv_id}")
+async def echos_for_rdv(rdv_id: str, user=Depends(get_current_user)):
+    items = await db.tele_echo.find({"rdv_id": rdv_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    if items and user["id"] not in [items[0]["maman_id"], items[0]["pro_id"]] and user["role"] != "admin":
+        raise HTTPException(403, "Accès refusé")
+    return items
+
+
+# ----------------------------------------------------------------------
+# Déclaration de naissance
+# ----------------------------------------------------------------------
+@api.post("/naissance")
+async def create_naissance(payload: NaissanceIn, user=Depends(require_roles("maman"))):
+    enfant = await db.enfants.find_one({"id": payload.enfant_id, "user_id": user["id"]})
+    if not enfant:
+        raise HTTPException(404, "Enfant introuvable")
+    existing = await db.naissances.find_one({"enfant_id": payload.enfant_id})
+    if existing:
+        raise HTTPException(400, "Déclaration déjà enregistrée pour cet enfant")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "enfant_nom": enfant["nom"],
+        "enfant_sexe": enfant["sexe"],
+        "enfant_date_naissance": enfant["date_naissance"],
+        **payload.dict(),
+        "status": "en_attente",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.naissances.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/naissance")
+async def list_naissances(user=Depends(get_current_user)):
+    if user["role"] == "admin":
+        items = await db.naissances.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    else:
+        items = await db.naissances.find({"user_id": user["id"]}, {"_id": 0}).to_list(50)
+    return items
+
+
+@api.get("/naissance/{nid}")
+async def get_naissance(nid: str, user=Depends(get_current_user)):
+    n = await db.naissances.find_one({"id": nid}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Introuvable")
+    if user["role"] != "admin" and n["user_id"] != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    return n
+
+
+@api.patch("/naissance/{nid}/validate")
+async def validate_naissance(nid: str, user=Depends(require_roles("admin"))):
+    await db.naissances.update_one(
+        {"id": nid},
+        {"$set": {"status": "validee", "validated_at": datetime.now(timezone.utc).isoformat(), "validated_by": user["id"]}},
+    )
+    n = await db.naissances.find_one({"id": nid}, {"_id": 0})
+    if n:
+        await push_notif(
+            n["user_id"],
+            "Acte de naissance validé 📄",
+            f"La déclaration de naissance de {n['enfant_nom']} a été validée",
+            "info",
+        )
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# FHIR Export (Patient + Observations)
+# ----------------------------------------------------------------------
+@api.get("/fhir/patient")
+async def fhir_export(user=Depends(get_current_user)):
+    """Export user data in lightweight FHIR-like JSON (Patient + Observations)."""
+    if user["role"] != "maman":
+        raise HTTPException(403, "Export FHIR réservé aux mamans")
+
+    patient = {
+        "resourceType": "Patient",
+        "id": user["id"],
+        "name": [{"text": user["name"]}],
+        "telecom": [{"system": "email", "value": user["email"]}] + (
+            [{"system": "phone", "value": user["phone"]}] if user.get("phone") else []
+        ),
+        "gender": "female",
+    }
+
+    observations = []
+    grossesse = await db.grossesses.find_one({"user_id": user["id"], "active": True}, {"_id": 0})
+    if grossesse:
+        observations.append({
+            "resourceType": "Observation",
+            "status": "final",
+            "category": [{"text": "pregnancy"}],
+            "code": {"text": "Gestational age"},
+            "effectiveDateTime": grossesse["date_debut"],
+            "valueString": f"Début: {grossesse['date_debut']}" + (f" · Terme: {grossesse['date_terme']}" if grossesse.get("date_terme") else ""),
+            "note": [{"text": s} for s in grossesse.get("symptomes", [])],
+        })
+
+    enfants = await db.enfants.find({"user_id": user["id"]}, {"_id": 0}).to_list(100)
+    related = []
+    for e in enfants:
+        related.append({
+            "resourceType": "RelatedPerson",
+            "id": e["id"],
+            "name": [{"text": e["nom"]}],
+            "gender": "female" if e["sexe"] == "F" else "male",
+            "birthDate": e["date_naissance"],
+        })
+        for m in e.get("mesures", []):
+            observations.append({
+                "resourceType": "Observation",
+                "subject": {"reference": f"RelatedPerson/{e['id']}"},
+                "code": {"text": "Anthropometry"},
+                "effectiveDateTime": m["date"],
+                "component": [
+                    {"code": {"text": "weight"}, "valueQuantity": {"value": m.get("poids_kg"), "unit": "kg"}} if m.get("poids_kg") else None,
+                    {"code": {"text": "height"}, "valueQuantity": {"value": m.get("taille_cm"), "unit": "cm"}} if m.get("taille_cm") else None,
+                ],
+            })
+        for v in e.get("vaccins", []):
+            observations.append({
+                "resourceType": "Immunization",
+                "subject": {"reference": f"RelatedPerson/{e['id']}"},
+                "vaccineCode": {"text": v["nom"]},
+                "occurrenceDateTime": v["date"],
+                "status": "completed" if v.get("fait") else "not-done",
+            })
+
+    cycles = await db.cycles.find({"user_id": user["id"]}, {"_id": 0}).to_list(20)
+    for c in cycles:
+        observations.append({
+            "resourceType": "Observation",
+            "code": {"text": "Menstrual cycle"},
+            "effectiveDateTime": c["date_debut_regles"],
+            "valueString": f"Règles: {c.get('duree_regles')}j · Cycle: {c.get('duree_cycle')}j",
+        })
+
+    return {
+        "resourceType": "Bundle",
+        "type": "collection",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "entry": [
+            {"resource": patient},
+            *[{"resource": r} for r in related],
+            *[{"resource": o} for o in observations],
+        ],
+    }
+
+
+# ----------------------------------------------------------------------
+# Send Expo Push (real push, best-effort)
+# ----------------------------------------------------------------------
+async def send_expo_push(token: str, title: str, body: str, data: Optional[dict] = None):
+    """Send an Expo push via the public Expo Push API. Silently no-ops on failure."""
+    if not token or not token.startswith("ExponentPushToken"):
+        return
+    try:
+        import httpx  # type: ignore
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            await http.post(
+                "https://exp.host/--/api/v2/push/send",
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                json={"to": token, "title": title, "body": body, "data": data or {}, "sound": "default"},
+            )
+    except Exception as e:  # noqa
+        logger.info(f"Expo push skipped: {e}")
 
 
 # ----------------------------------------------------------------------

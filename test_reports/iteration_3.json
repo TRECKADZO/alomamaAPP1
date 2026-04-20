@@ -1,0 +1,56 @@
+{
+  "summary": "Phase 3 backend testing of À lo Maman (FHIR / Télé-échographie / Déclaration de naissance / Push token). All 29 Phase 3 tests passing + all 36 Phase 2 tests still passing (Phase 2 RDV auto-notif skips from iter_2 are now resolved). Verified: FHIR Bundle with Patient+Observations+RelatedPerson+Immunization (maman only, 403 for pro/admin); Télé-écho POST requires professionnel role (403 for maman), 404 for RDV not owned by pro, auto-notifies maman on upload, role-filtered GET list (maman→her own, pro→his own), /tele-echo/rdv/{id} 403 for strangers; Naissance POST maman-only (403 for pro), duplicate enforcement (400), role-filtered list (maman sees own / admin sees all), admin-only PATCH /validate that persists status=validee and sends in-app notif to maman; push-token saves, push_notif tolerates invalid tokens (no crash on message send). Phase 1 regression (auth/me, grossesse, professionnels, community, reminders, rdv, admin/stats) all 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/tele-echo", "issue": "No validation that the target RDV status is 'confirme' — pro can upload images for an unconfirmed/cancelled RDV. Not a security issue (pro still owns the rdv) but semantically weak."},
+      {"endpoint": "PATCH /api/naissance/{id}/validate", "issue": "No status transition guard — admin can re-validate an already-validated declaration without error; endpoint is idempotent but silently re-sends the notification. Consider returning 400 if already validated or skipping notif."},
+      {"endpoint": "GET /api/tele-echo/rdv/{rdv_id}", "issue": "Returns empty list [] (200) for non-existent rdv_id instead of 404 — technically ok, but inconsistent with POST behavior which 404s."},
+      {"endpoint": "POST /api/push-token", "issue": "Accepts any string as a push token (no format validation). send_expo_push() correctly no-ops on invalid tokens, but storing garbage tokens bloats user doc."},
+      {"endpoint": "PATCH /api/rdv/{rid}/status", "issue": "Still uses query param status_val — carry-over from iter_2, not a Phase 3 finding."},
+      {"endpoint": "General", "issue": "image_base64 in tele-echo stored directly in Mongo doc with no size cap. Spec-level, same risk as profile photos flagged in iter_2."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase3_api.py",
+    "/app/backend/tests/test_phase2_api.py",
+    "/app/backend/tests/test_alomaman_api.py",
+    "/app/test_reports/pytest/pytest_phase3_results.xml",
+    "/app/test_reports/pytest/pytest_phase2_results.xml"
+  ],
+  "action_items": [
+    "(nice-to-have) Add guard in POST /api/tele-echo to reject uploads when rdv.status != 'confirme' (optional, depends on product intent).",
+    "(nice-to-have) Add guard in PATCH /api/naissance/{id}/validate to 400 or skip notif when already validated.",
+    "(nice-to-have) Validate push-token format server-side (startswith 'ExponentPushToken[' or 'ExpoPushToken[') before persisting.",
+    "(nice-to-have) Return 404 from GET /api/tele-echo/rdv/{rdv_id} when no rdv with that id exists (consistency).",
+    "Carry-over from iter_2: split server.py (>1300 lines) into routers; pin CORS origins; move image base64 to external storage for production; align expo-device / expo-image-picker / expo-notifications package versions; replace deprecated shadow* props."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~1300 lines (grew from 1047 in iter_2). Modular split is overdue.",
+    "fhir_export builds component arrays containing None entries when a mesure has only one of poids_kg/taille_cm — entries list is [None, None] filtered by neither; downstream consumers must tolerate None. Consider filtering None with a list comprehension.",
+    "push_notif → send_expo_push chain is correctly best-effort (httpx 5s timeout, broad except, startswith guard) — good defensive coding.",
+    "Role guard pattern require_roles() is consistently applied across new Phase 3 endpoints (/tele-echo POST: professionnel, /naissance POST: maman, /naissance/{id}/validate: admin, /fhir/patient: manual role check — would be cleaner as require_roles('maman') dependency).",
+    "In /fhir/patient, role check is done imperatively instead of via Depends(require_roles('maman')) — cosmetic inconsistency but still correct.",
+    "All new endpoints correctly exclude _id via projection {'_id': 0}.",
+    "Unique index on (enfant_id) for naissances would make the duplicate check race-safe; currently it's a find_one then insert_one which could race under concurrent requests.",
+    "POST /api/tele-echo does not enforce that the pro_id of the rdv matches user['id'] when role is admin — admins can still use this endpoint with their own rdv (but admins don't have rdvs, so N/A)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase3_api.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (29/29 Phase 3 passed; 36/36 Phase 2 regression passed)",
+    "frontend": "Not tested this iteration (per request: backend-only focus)"
+  },
+  "seed_data_creation": "Created via Phase 3 tests (all TEST_ prefixed): 1 confirmed RDV for maman↔pro (used for tele-echo upload), 1 tele-echo record with semaine_grossesse=22, 1 enfant 'TEST_NaisEnf_*' for naissance, 1 naissance declaration (now status=validee). A few TEST_stranger_* mamans registered for 403 checks. No cleanup performed — main agent may want to prune naissances/tele_echo collections before production.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "BASE URL: https://maman-mobile-2.preview.emergentagent.com. Credentials in /app/memory/test_credentials.md. Phase 3 endpoints fully green. New collections in Mongo: db.tele_echo, db.naissances. For next iteration, consider adding frontend Playwright smoke tests for /fhir, /tele-echo, /naissance screens (were already visually validated per main agent's note). Test data from iter_3: maman@test.com now has ≥5 TEST_* enfants, 1 validated naissance, 1 tele_echo image. All 65 pytest cases (29 phase3 + 36 phase2) currently pass green.",
+  "rca_of_issue": "No critical issues found in Phase 3. All role guards, data flows, and notification side-effects behave as specified. Phase 2 RDV auto-notif issue from iter_2 has been correctly fixed by main agent — push_notif is now called in both create_rdv (line 436) and rdv_status (line 454) as recommended."
+}

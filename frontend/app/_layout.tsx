@@ -22,6 +22,9 @@ export default function RootLayout() {
             <Stack.Screen name="post-partum" />
             <Stack.Screen name="search" />
             <Stack.Screen name="notifications" />
+            <Stack.Screen name="fhir" />
+            <Stack.Screen name="tele-echo" />
+            <Stack.Screen name="naissance" />
           </Stack>
         </AuthProvider>
       </SafeAreaProvider>

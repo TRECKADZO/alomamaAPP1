@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { api, saveAuth, clearAuth, getStoredUser, TOKEN_KEY } from "./api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { registerExpoPushToken } from "./push";
 
 export type Role = "maman" | "professionnel" | "admin";
 
@@ -61,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data } = await api.post("/auth/login", { email, password });
     await saveAuth(data.token, data.user);
     setUser(data.user);
+    registerExpoPushToken().catch(() => {});
     return data.user;
   };
 
@@ -68,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data } = await api.post("/auth/register", payload);
     await saveAuth(data.token, data.user);
     setUser(data.user);
+    registerExpoPushToken().catch(() => {});
     return data.user;
   };
 
