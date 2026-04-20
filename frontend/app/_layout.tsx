@@ -16,7 +16,6 @@ export default function RootLayout() {
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="chat/[id]" options={{ presentation: "card" }} />
-            <Stack.Screen name="book-rdv" options={{ presentation: "modal" }} />
           </Stack>
         </AuthProvider>
       </SafeAreaProvider>

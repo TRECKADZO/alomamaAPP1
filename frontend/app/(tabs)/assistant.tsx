@@ -124,6 +124,9 @@ export default function AssistantIA() {
             placeholder="Posez votre question..."
             placeholderTextColor={COLORS.textMuted}
             multiline
+            blurOnSubmit
+            onSubmitEditing={send}
+            returnKeyType="send"
             testID="ia-input"
           />
           <TouchableOpacity

@@ -99,7 +99,8 @@ function MamanDash({ data, router }: any) {
   const rdv = (data.rdv || []).filter((r: any) => r.status !== "termine").slice(0, 2);
   const reminders = (data.reminders || []).filter((r: any) => !r.done).slice(0, 3);
 
-  const weeks = g?.date_debut ? Math.floor((Date.now() - new Date(g.date_debut).getTime()) / (7 * 24 * 3600 * 1000)) : 0;
+  const weeksRaw = g?.date_debut ? Math.floor((Date.now() - new Date(g.date_debut).getTime()) / (7 * 24 * 3600 * 1000)) : 0;
+  const weeks = Math.min(Math.max(weeksRaw, 0), 40);
 
   return (
     <View style={styles.body}>

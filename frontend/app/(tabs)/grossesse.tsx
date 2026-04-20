@@ -62,7 +62,8 @@ export default function Grossesse() {
     return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
   }
 
-  const weeks = g ? Math.floor((Date.now() - new Date(g.date_debut).getTime()) / (7 * 86400000)) : 0;
+  const rawWeeks = g ? Math.floor((Date.now() - new Date(g.date_debut).getTime()) / (7 * 86400000)) : 0;
+  const weeks = Math.min(Math.max(rawWeeks, 0), 40);
   const progress = Math.min(weeks / 40, 1);
 
   return (
