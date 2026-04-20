@@ -412,6 +412,12 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
     }
     await db.rdv.insert_one(doc)
     doc.pop("_id", None)
+    await push_notif(
+        payload.pro_id,
+        "Nouveau rendez-vous",
+        f"{user['name']} demande un RDV le {payload.date[:10]} — {payload.motif[:60]}",
+        "rdv",
+    )
     return doc
 
 
@@ -419,7 +425,17 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
 async def rdv_status(rid: str, status_val: str, user=Depends(require_roles("professionnel", "admin"))):
     if status_val not in ["confirme", "annule", "termine", "en_attente"]:
         raise HTTPException(400, "Statut invalide")
+    rdv = await db.rdv.find_one({"id": rid}, {"_id": 0})
+    if not rdv:
+        raise HTTPException(404, "RDV introuvable")
     await db.rdv.update_one({"id": rid}, {"$set": {"status": status_val}})
+    label = {"confirme": "confirmé ✅", "annule": "annulé ❌", "termine": "terminé ✓", "en_attente": "remis en attente"}.get(status_val, status_val)
+    await push_notif(
+        rdv["maman_id"],
+        "Rendez-vous mis à jour",
+        f"Votre RDV du {rdv['date'][:10]} a été {label}",
+        "rdv",
+    )
     return {"ok": True}
 
 
