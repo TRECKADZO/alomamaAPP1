@@ -19,6 +19,8 @@ export default function TabsLayout() {
   const isMaman = user.role === "maman";
   const isPro = user.role === "professionnel";
   const isAdmin = user.role === "admin";
+  const isCentre = user.role === "centre_sante";
+  const isFamille = user.role === "famille";
 
   return (
     <Tabs
@@ -62,8 +64,8 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="patients"
         options={{
-          title: "Patientes",
-          href: isPro ? "/(tabs)/patients" : null,
+          title: "Pros",
+          href: isPro || isCentre ? "/(tabs)/patients" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="medkit" size={size} color={color} />,
         }}
       />
@@ -71,7 +73,7 @@ export default function TabsLayout() {
         name="rdv"
         options={{
           title: "RDV",
-          href: isAdmin ? null : "/(tabs)/rdv",
+          href: isAdmin || isFamille ? null : "/(tabs)/rdv",
           tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} />,
         }}
       />

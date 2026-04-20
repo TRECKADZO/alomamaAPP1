@@ -10,7 +10,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status
 from starlette.middleware.cors import CORSMiddleware
@@ -105,7 +105,7 @@ def require_roles(*roles):
 # ----------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------
-Role = Literal["maman", "professionnel", "admin"]
+Role = Literal["maman", "professionnel", "admin", "centre_sante", "famille"]
 
 
 class RegisterIn(BaseModel):
@@ -115,6 +115,16 @@ class RegisterIn(BaseModel):
     role: Role = "maman"
     phone: Optional[str] = None
     specialite: Optional[str] = None  # for professionals
+    # Centre de santé
+    nom_centre: Optional[str] = None
+    type_etablissement: Optional[str] = None  # clinique_privee | hopital_public | pmi | maternite
+    numero_agrement: Optional[str] = None
+    adresse: Optional[str] = None
+    ville: Optional[str] = None
+    region: Optional[str] = None
+    email_contact: Optional[str] = None
+    # Pro/Maman optional
+    code_invitation_centre: Optional[str] = None
 
 
 class LoginIn(BaseModel):
@@ -266,12 +276,54 @@ async def register(payload: RegisterIn):
         "role": payload.role,
         "phone": payload.phone,
         "specialite": payload.specialite,
+        "ville": payload.ville,
+        "region": payload.region,
         "avatar": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
+
+    # Auto-créer un Centre de Santé si role centre_sante
+    if payload.role == "centre_sante" and payload.nom_centre:
+        centre_doc = {
+            "id": str(uuid.uuid4()),
+            "owner_id": user_id,
+            "owner_email": email,
+            "nom_centre": payload.nom_centre,
+            "type_etablissement": payload.type_etablissement or "clinique_privee",
+            "numero_agrement": payload.numero_agrement,
+            "adresse": payload.adresse,
+            "ville": payload.ville,
+            "region": payload.region,
+            "email_contact": payload.email_contact or email,
+            "telephone": payload.phone,
+            "code_invitation": _gen_code(6),
+            "services": [],
+            "horaires": "",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.centres.insert_one(centre_doc)
+
+    # Si pro avec code invitation centre → on lie
+    if payload.role == "professionnel" and payload.code_invitation_centre:
+        centre = await db.centres.find_one(
+            {"code_invitation": payload.code_invitation_centre.upper()}
+        )
+        if centre:
+            await db.centres.update_one(
+                {"id": centre["id"]},
+                {"$addToSet": {"membres_pro": user_id}},
+            )
+
     token = create_token(user_id, email, payload.role)
     return {"token": token, "user": serialize_user(doc)}
+
+
+def _gen_code(n: int = 6) -> str:
+    import secrets
+    import string
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(n))
 
 
 @api.post("/auth/login")
@@ -1512,6 +1564,218 @@ async def shutdown():
 @api.get("/")
 async def root():
     return {"app": "À lo Maman API", "status": "ok"}
+
+
+# ----------------------------------------------------------------------
+# Centres de santé
+# ----------------------------------------------------------------------
+class CentreIn(BaseModel):
+    nom_centre: str
+    type_etablissement: str = "clinique_privee"
+    numero_agrement: Optional[str] = None
+    adresse: Optional[str] = None
+    ville: Optional[str] = None
+    region: Optional[str] = None
+    email_contact: Optional[str] = None
+    telephone: Optional[str] = None
+    services: List[str] = []
+    horaires: Optional[str] = None
+    description: Optional[str] = None
+
+
+def _ser_centre(c: dict) -> dict:
+    return {
+        "id": c.get("id"),
+        "nom_centre": c.get("nom_centre"),
+        "type_etablissement": c.get("type_etablissement"),
+        "numero_agrement": c.get("numero_agrement"),
+        "adresse": c.get("adresse"),
+        "ville": c.get("ville"),
+        "region": c.get("region"),
+        "email_contact": c.get("email_contact"),
+        "telephone": c.get("telephone"),
+        "services": c.get("services", []),
+        "horaires": c.get("horaires"),
+        "description": c.get("description"),
+        "code_invitation": c.get("code_invitation"),
+        "membres_pro": c.get("membres_pro", []),
+        "owner_email": c.get("owner_email"),
+        "created_at": c.get("created_at"),
+    }
+
+
+@api.get("/centres")
+async def list_centres(q: Optional[str] = None, region: Optional[str] = None):
+    """Liste publique des centres de santé (recherche)."""
+    flt: dict = {}
+    if region:
+        flt["region"] = region
+    if q:
+        flt["$or"] = [
+            {"nom_centre": {"$regex": q, "$options": "i"}},
+            {"ville": {"$regex": q, "$options": "i"}},
+        ]
+    cursor = db.centres.find(flt, {"_id": 0}).limit(100)
+    return [_ser_centre(c) async for c in cursor]
+
+
+@api.get("/centres/mine")
+async def my_centre(user=Depends(require_roles("centre_sante"))):
+    c = await db.centres.find_one({"owner_id": user["id"]}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Centre introuvable")
+    return _ser_centre(c)
+
+
+@api.get("/centres/{cid}")
+async def get_centre(cid: str):
+    c = await db.centres.find_one({"id": cid}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Centre introuvable")
+    return _ser_centre(c)
+
+
+@api.patch("/centres/{cid}")
+async def update_centre(
+    cid: str, payload: CentreIn, user=Depends(require_roles("centre_sante", "admin"))
+):
+    c = await db.centres.find_one({"id": cid})
+    if not c:
+        raise HTTPException(status_code=404, detail="Centre introuvable")
+    if user["role"] != "admin" and c.get("owner_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+    upd = payload.model_dump(exclude_none=True)
+    await db.centres.update_one({"id": cid}, {"$set": upd})
+    new = await db.centres.find_one({"id": cid}, {"_id": 0})
+    return _ser_centre(new)
+
+
+# ----------------------------------------------------------------------
+# Famille connectée
+# ----------------------------------------------------------------------
+DEFAULT_PERMISSIONS = {
+    "grossesse": True,
+    "grossesse_details": False,
+    "enfants": True,
+    "enfants_details": False,
+    "rendez_vous": True,
+    "documents": False,
+    "messagerie": True,
+}
+
+
+class JoinFamilleIn(BaseModel):
+    code: str
+    relation: str = "partenaire"
+
+
+class UpdateMemberIn(BaseModel):
+    permissions: Optional[Dict[str, bool]] = None
+    statut: Optional[str] = None  # accepte | refuse | en_attente
+
+
+def _ser_famille(f: dict) -> dict:
+    return {
+        "id": f.get("id"),
+        "owner_email": f.get("owner_email"),
+        "owner_name": f.get("owner_name"),
+        "code_partage": f.get("code_partage"),
+        "membres": f.get("membres", []),
+        "created_at": f.get("created_at"),
+    }
+
+
+@api.get("/famille")
+async def get_famille(user=Depends(get_current_user)):
+    """Récupère la famille dont l'utilisateur est propriétaire ou membre."""
+    f = await db.familles.find_one({"owner_email": user["email"]}, {"_id": 0})
+    membre_de = await db.familles.find(
+        {"membres.email": user["email"], "membres.statut": "accepte"},
+        {"_id": 0},
+    ).to_list(20)
+    return {
+        "owned": _ser_famille(f) if f else None,
+        "member_of": [_ser_famille(x) for x in membre_de if not f or x["id"] != f["id"]],
+    }
+
+
+@api.post("/famille/create")
+async def create_famille(user=Depends(get_current_user)):
+    existing = await db.familles.find_one({"owner_email": user["email"]})
+    if existing:
+        return _ser_famille(existing)
+    code = _gen_code(6)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "owner_id": user["id"],
+        "owner_email": user["email"],
+        "owner_name": user.get("name", ""),
+        "code_partage": code,
+        "membres": [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.familles.insert_one(doc)
+    return _ser_famille(doc)
+
+
+@api.post("/famille/join")
+async def join_famille(payload: JoinFamilleIn, user=Depends(get_current_user)):
+    f = await db.familles.find_one({"code_partage": payload.code.upper()})
+    if not f:
+        raise HTTPException(status_code=404, detail="Code invalide")
+    if f["owner_email"] == user["email"]:
+        raise HTTPException(status_code=400, detail="Vous êtes le propriétaire")
+    # Déjà membre ?
+    for m in f.get("membres", []):
+        if m.get("email") == user["email"]:
+            return _ser_famille(f)
+    new_member = {
+        "email": user["email"],
+        "name": user.get("name", ""),
+        "phone": user.get("phone"),
+        "relation": payload.relation,
+        "statut": "en_attente",
+        "permissions": DEFAULT_PERMISSIONS.copy(),
+        "joined_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.familles.update_one(
+        {"id": f["id"]},
+        {"$push": {"membres": new_member}},
+    )
+    return _ser_famille(await db.familles.find_one({"id": f["id"]}, {"_id": 0}))
+
+
+@api.patch("/famille/members/{member_email}")
+async def update_famille_member(
+    member_email: str, payload: UpdateMemberIn, user=Depends(get_current_user)
+):
+    f = await db.familles.find_one({"owner_email": user["email"]})
+    if not f:
+        raise HTTPException(status_code=404, detail="Famille introuvable")
+    upd = {}
+    if payload.permissions is not None:
+        upd["membres.$.permissions"] = payload.permissions
+    if payload.statut is not None:
+        upd["membres.$.statut"] = payload.statut
+    if not upd:
+        return _ser_famille(f)
+    await db.familles.update_one(
+        {"id": f["id"], "membres.email": member_email},
+        {"$set": upd},
+    )
+    return _ser_famille(await db.familles.find_one({"id": f["id"]}, {"_id": 0}))
+
+
+@api.delete("/famille/members/{member_email}")
+async def delete_famille_member(member_email: str, user=Depends(get_current_user)):
+    f = await db.familles.find_one({"owner_email": user["email"]})
+    if not f:
+        raise HTTPException(status_code=404, detail="Famille introuvable")
+    await db.familles.update_one(
+        {"id": f["id"]},
+        {"$pull": {"membres": {"email": member_email}}},
+    )
+    return {"ok": True}
 
 
 app.include_router(api)

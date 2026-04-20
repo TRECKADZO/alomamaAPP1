@@ -102,7 +102,23 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "creer toute l'application mobile a partir du code dans le repertoire https://github.com/TRECKADZO/a-lo-maman — alignement strict UI/UX avec le dépôt source."
+user_problem_statement: "creer toute l'application mobile a partir du code dans le repertoire https://github.com/TRECKADZO/a-lo-maman — ajout des rôles Centre de santé et Famille."
+
+backend:
+  - task: "Rôles Centre de santé et Famille (register + endpoints)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Ajout du rôle 'centre_sante' et 'famille' dans Role Literal. Update RegisterIn pour accepter nom_centre, type_etablissement, numero_agrement, adresse, ville, region, email_contact, code_invitation_centre. /auth/register crée auto un document Centre si role=centre_sante (avec code_invitation 6 chars). Pro avec code_invitation lié au centre. Nouveaux endpoints : GET /centres (recherche publique), GET /centres/mine (centre de l'utilisateur), GET /centres/{id}, PATCH /centres/{id}. Famille connectée : GET /famille, POST /famille/create (génère code), POST /famille/join (rejoindre avec code+relation), PATCH /famille/members/{email} (permissions ou statut), DELETE /famille/members/{email}."
+      - working: true
+        agent: "testing"
+        comment: "All 22 backend scenarios PASS (see /app/backend_test.py). Verified: (1) POST /auth/register role=centre_sante returns token+user AND auto-creates centre doc with 6-char code_invitation. (2) POST /auth/register role=famille returns token+user. (3) GET /centres/mine returns centre with code_invitation. (4) GET /centres public list + q=Clinique + region=Lagunes all return the new centre. (5) GET /centres/{id} returns detail. (6) PATCH /centres/{id} by owner persists services=['Maternité','Échographie'] and horaires. (7) POST /famille/create returns 6-char code_partage and is idempotent. (8) GET /famille returns owned{code_partage, membres:[]}. (9) POST /famille/join by famille user adds member with statut=en_attente. (10) GET /famille (maman) shows papa en_attente. (11) PATCH /famille/members/{email} updates statut→accepte and permissions={grossesse:false,enfants:true}. (12) GET /famille as papa shows maman family in member_of after acceptance. (13) DELETE /famille/members/{email} removes member. (14) Regression: maman/pro login and maman register still OK. (15) Register professionnel with code_invitation_centre links the pro → centre.membres_pro list updated."
 
 frontend:
   - task: "Refonte UI Dashboard Maman (index.tsx)"
@@ -115,7 +131,7 @@ frontend:
     status_history:
       - working: true
         agent: "main"
-        comment: "Réécrit pour aligner sur src/pages/DashboardMaman.jsx : carte de bienvenue gradient pink-purple, section grossesse complète (anneau de progression, DPA, jours restants), 4 widgets (Prochains RDV, Alertes IA, Enfants, Rappels), grille d'accès rapide. Vérifié visuellement via screenshot — rendu OK."
+        comment: "Réécrit pour aligner sur src/pages/DashboardMaman.jsx. Ajout des dashboards CentreDash et FamilleDash pour les nouveaux rôles."
 
   - task: "Refonte UI Carnets de Santé (enfants.tsx)"
     implemented: true
@@ -127,7 +143,7 @@ frontend:
     status_history:
       - working: true
         agent: "main"
-        comment: "Réécrit pour aligner sur src/pages/Enfants.jsx : header gradient blue-cyan avec icône, bouton CTA gradient, 3 stats (Enfants suivis / Vaccins OK / Alertes), cartes enfant avec avatar gradient + badges (sexe, groupe sanguin, allergies) + alerte prochain vaccin. Ajout des champs groupe_sanguin et allergies au formulaire de création. Vérifié visuellement via screenshot — rendu OK."
+        comment: "Réécrit pour aligner sur src/pages/Enfants.jsx."
 
   - task: "UI Grossesse alignée source (grossesse.tsx)"
     implemented: true
@@ -139,22 +155,62 @@ frontend:
     status_history:
       - working: true
         agent: "main"
-        comment: "Empty state vérifié via screenshot, rend correctement avec CTA 'Configurer ma grossesse'. Hero card et grille de 12 sections déjà présentes dans le code."
+        comment: "Empty state vérifié."
+
+  - task: "Sélection de compte 4 rôles (register.tsx)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(auth)/register.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Réécrit avec grille 2x2 de rôles (Maman, Pro, Centre de santé, Famille) avec icônes gradient. Champs conditionnels par rôle : pro=specialite+code_invitation_centre, centre_sante=nom_centre+type+adresse+email_contact. Tabs layout adapté : centre voit RDV+Pros, famille voit accueil+communauté+messages."
+
+  - task: "Page Centres de santé (recherche publique)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/centres.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Nouvelle route /centres. Recherche par nom/ville, filtres région. Cartes avec icône violet/indigo (gradient), badges ville/région."
+
+  - task: "Page Famille connectée (FamilleConnectee)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/famille.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Nouvelle route /famille. Création groupe avec code partage 6 chars, partage natif via Share API, rejoindre avec code+relation, gestion des membres (accepter/refuser/supprimer), permissions granulaires (7 catégories) via toggles."
 
 metadata:
   created_by: "main_agent"
-  version: "1.0"
-  test_sequence: 4
+  version: "1.1"
+  test_sequence: 5
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Refonte UI Dashboard Maman (index.tsx)"
-    - "Refonte UI Carnets de Santé (enfants.tsx)"
+    - "Rôles Centre de santé et Famille (register + endpoints)"
+    - "Sélection de compte 4 rôles (register.tsx)"
+    - "Page Centres de santé (recherche publique)"
+    - "Page Famille connectée (FamilleConnectee)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
   - agent: "main"
-    message: "Refonte UI alignée sur le dépôt GitHub TRECKADZO/a-lo-maman terminée pour 3 onglets : Dashboard Maman, Enfants, Grossesse. Ajout du package expo-linear-gradient pour les dégradés. Vérification visuelle effectuée via screenshot tool sur viewport mobile (390x844). En attente de validation utilisateur avant de continuer avec les rôles manquants (Centre de santé, Famille) ou les écrans secondaires (Profil, Communauté)."
+    message: "Phase Rôles & Famille terminée : 1) Backend support des rôles centre_sante + famille (register, /centres CRUD, /famille create/join/permissions). 2) Register UI 4 rôles avec champs conditionnels. 3) Nouvelles routes /centres (recherche publique) et /famille (gestion famille connectée). 4) Dashboard étendu avec CentreDash et FamilleDash. Veuillez tester le backend pour valider tous les nouveaux endpoints."
+  - agent: "testing"
+    message: "Backend validation OK — 22/22 scenarios PASS on live API (https://maman-mobile-mvp.preview.emergentagent.com/api). Covered: register centre_sante (auto-creates centre + 6-char code_invitation), register famille, /centres public list + q/region filters, /centres/mine, GET/PATCH /centres/{id} (owner auth enforced), /famille create (idempotent 6-char code_partage), /famille/join (statut=en_attente), PATCH /famille/members/{email} for statut + granular permissions, member_of visibility after acceptance, DELETE member, regression Maman/Pro login+register, and Pro registration with code_invitation_centre properly adds pro UUID to centre.membres_pro. No critical issues found. Test script at /app/backend_test.py (idempotent via email suffix)."

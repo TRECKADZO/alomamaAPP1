@@ -3,7 +3,7 @@ import { api, saveAuth, clearAuth, getStoredUser, TOKEN_KEY } from "./api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { registerExpoPushToken } from "./push";
 
-export type Role = "maman" | "professionnel" | "admin";
+export type Role = "maman" | "professionnel" | "admin" | "centre_sante" | "famille";
 
 export interface User {
   id: string;

@@ -75,6 +75,8 @@ export default function DashboardHome() {
         {user?.role === "maman" && <MamanDash user={user} data={data} router={router} />}
         {user?.role === "professionnel" && <ProDash user={user} data={data} router={router} />}
         {user?.role === "admin" && <AdminDash user={user} data={data} router={router} />}
+        {user?.role === "centre_sante" && <CentreDash user={user} router={router} />}
+        {user?.role === "famille" && <FamilleDash user={user} router={router} />}
       </ScrollView>
     </SafeAreaView>
   );
@@ -368,6 +370,8 @@ function MamanDash({ user, data, router }: any) {
           <QuickAction icon="shield-checkmark" label="Contracep." onPress={() => router.push("/contraception")} testID="qa-contra" color="#F59E0B" />
           <QuickAction icon="heart-circle" label="Post-partum" onPress={() => router.push("/post-partum")} testID="qa-postpartum" color="#06B6D4" />
           <QuickAction icon="search" label="Rechercher" onPress={() => router.push("/search")} testID="qa-search" color="#6366F1" />
+          <QuickAction icon="search" label="Centres" onPress={() => router.push("/centres")} testID="qa-centres" color="#A855F7" />
+          <QuickAction icon="people-circle" label="Famille" onPress={() => router.push("/famille")} testID="qa-famille" color="#F59E0B" />
           <QuickAction icon="scan" label="Échographie" onPress={() => router.push("/tele-echo")} testID="qa-echo" color="#8B5CF6" />
           <QuickAction icon="document-text" label="Naissance" onPress={() => router.push("/naissance")} testID="qa-naiss" color="#14B8A6" />
           <QuickAction icon="shield" label="FHIR" onPress={() => router.push("/fhir")} testID="qa-fhir" color="#0EA5E9" />
@@ -483,6 +487,162 @@ function AdminDash({ user, data, router }: any) {
         >
           <Text style={styles.btnText}>Gérer les utilisateurs</Text>
         </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+/* ===========================================================
+   DASHBOARD CENTRE DE SANTÉ
+   =========================================================== */
+function CentreDash({ user, router }: any) {
+  const [centre, setCentre] = useState<any>(null);
+  const loadCentre = async () => {
+    try {
+      const { data } = await api.get("/centres/mine");
+      setCentre(data);
+    } catch {
+      setCentre(null);
+    }
+  };
+  useFocusEffect(useCallback(() => { loadCentre(); }, []));
+
+  return (
+    <View>
+      <LinearGradient colors={["#A855F7", "#6366F1"]} style={styles.welcomeCard}>
+        <View style={styles.welcomeRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.welcomeTitle, { color: "#fff" }]}>
+              {centre?.nom_centre || user?.name}
+            </Text>
+            <Text style={[styles.welcomeSub, { color: "#E9D5FF" }]}>Espace centre de santé</Text>
+          </View>
+          <TouchableOpacity style={styles.welcomeBtn} onPress={() => router.push("/(tabs)/profil")}>
+            <Ionicons name="settings-outline" size={18} color={COLORS.textPrimary} />
+          </TouchableOpacity>
+        </View>
+      </LinearGradient>
+
+      <View style={styles.body}>
+        {centre ? (
+          <>
+            <View style={styles.widget}>
+              <View style={styles.widgetHead}>
+                <View style={styles.widgetTitleWrap}>
+                  <View style={[styles.widgetIcon, { backgroundColor: "#F3E8FF" }]}>
+                    <Ionicons name="key" size={18} color="#7E22CE" />
+                  </View>
+                  <Text style={styles.widgetTitle}>Code d'invitation</Text>
+                </View>
+              </View>
+              <Text style={[styles.welcomeTitle, { color: "#7E22CE", textAlign: "center", letterSpacing: 4, marginTop: 8 }]}>
+                {centre.code_invitation}
+              </Text>
+              <Text style={{ color: COLORS.textSecondary, fontSize: 12, textAlign: "center", marginTop: 6 }}>
+                Partagez ce code avec vos professionnels pour qu'ils rejoignent votre centre
+              </Text>
+            </View>
+
+            <View style={styles.widget}>
+              <Text style={styles.widgetTitle}>Informations du centre</Text>
+              {centre.type_etablissement && (
+                <View style={styles.widgetRow}>
+                  <View style={[styles.widgetRowIcon, { backgroundColor: "#F3E8FF" }]}>
+                    <Ionicons name="business" size={16} color="#7E22CE" />
+                  </View>
+                  <Text style={{ color: COLORS.textSecondary, flex: 1 }}>Type</Text>
+                  <Text style={styles.widgetRowTitle}>{centre.type_etablissement}</Text>
+                </View>
+              )}
+              {centre.adresse && (
+                <View style={styles.widgetRow}>
+                  <View style={[styles.widgetRowIcon, { backgroundColor: "#F3E8FF" }]}>
+                    <Ionicons name="location" size={16} color="#7E22CE" />
+                  </View>
+                  <Text style={[styles.widgetRowTitle, { flex: 1 }]} numberOfLines={2}>{centre.adresse}</Text>
+                </View>
+              )}
+              {centre.ville && (
+                <View style={styles.widgetRow}>
+                  <View style={[styles.widgetRowIcon, { backgroundColor: "#F3E8FF" }]}>
+                    <Ionicons name="map" size={16} color="#7E22CE" />
+                  </View>
+                  <Text style={[styles.widgetRowTitle, { flex: 1 }]}>{centre.ville} · {centre.region}</Text>
+                </View>
+              )}
+              {centre.email_contact && (
+                <View style={styles.widgetRow}>
+                  <View style={[styles.widgetRowIcon, { backgroundColor: "#F3E8FF" }]}>
+                    <Ionicons name="mail" size={16} color="#7E22CE" />
+                  </View>
+                  <Text style={[styles.widgetRowTitle, { flex: 1 }]}>{centre.email_contact}</Text>
+                </View>
+              )}
+            </View>
+
+            <Text style={styles.sectionTitle}>Actions</Text>
+            <View style={styles.quickGrid}>
+              <QuickAction icon="people" label="Pros" onPress={() => router.push("/(tabs)/patients")} color="#A855F7" />
+              <QuickAction icon="calendar" label="Agenda" onPress={() => router.push("/(tabs)/rdv")} color="#3B82F6" />
+              <QuickAction icon="search" label="Annuaire" onPress={() => router.push("/centres")} color="#10B981" />
+              <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} color="#F59E0B" />
+            </View>
+          </>
+        ) : (
+          <View style={styles.widget}>
+            <Text style={styles.widgetTitle}>Centre non trouvé</Text>
+            <Text style={{ color: COLORS.textSecondary, marginTop: 8 }}>
+              Recréez votre profil ou contactez le support.
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+/* ===========================================================
+   DASHBOARD FAMILLE
+   =========================================================== */
+function FamilleDash({ user, router }: any) {
+  return (
+    <View>
+      <LinearGradient colors={["#FED7AA", "#FCA5A5"]} style={styles.welcomeCard}>
+        <View style={styles.welcomeRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.welcomeTitle}>Bonjour {user?.name?.split(" ")[0] || "Proche"} 🤝</Text>
+            <Text style={styles.welcomeSub}>Restez connecté à vos proches mamans</Text>
+          </View>
+        </View>
+      </LinearGradient>
+
+      <View style={styles.body}>
+        <View style={styles.widget}>
+          <View style={styles.widgetHead}>
+            <View style={styles.widgetTitleWrap}>
+              <View style={[styles.widgetIcon, { backgroundColor: "#FEF3C7" }]}>
+                <Ionicons name="people" size={18} color="#D97706" />
+              </View>
+              <Text style={styles.widgetTitle}>Famille connectée</Text>
+            </View>
+          </View>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 13, marginVertical: 8 }}>
+            Rejoignez le groupe famille d'une maman avec un code de partage.
+          </Text>
+          <TouchableOpacity style={styles.btn} onPress={() => router.push("/famille")}>
+            <LinearGradient colors={["#F59E0B", "#EF4444"]} style={[styles.btn, { width: "100%" }]}>
+              <Text style={[styles.btnText, { padding: 0 }]}>Accéder à mes familles</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.sectionTitle}>Accès rapide</Text>
+        <View style={styles.quickGrid}>
+          <QuickAction icon="people-circle" label="Famille" onPress={() => router.push("/famille")} color="#F59E0B" />
+          <QuickAction icon="chatbubbles" label="Messages" onPress={() => router.push("/(tabs)/messages")} color="#10B981" />
+          <QuickAction icon="search" label="Centres" onPress={() => router.push("/centres")} color="#A855F7" />
+          <QuickAction icon="settings" label="Profil" onPress={() => router.push("/(tabs)/profil")} color="#6B7280" />
+        </View>
       </View>
     </View>
   );
