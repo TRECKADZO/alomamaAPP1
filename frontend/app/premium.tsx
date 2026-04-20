@@ -80,7 +80,7 @@ export default function Premium() {
           <View style={styles.heroCard}>
             <Ionicons name="diamond" size={36} color="#fff" />
             <Text style={styles.heroTitle}>Débloquez Premium</Text>
-            <Text style={styles.heroSub}>5 000 FCFA / mois</Text>
+            <Text style={styles.heroSub}>2 000 FCFA / mois</Text>
           </View>
         )}
 
@@ -105,7 +105,7 @@ export default function Premium() {
                 >
                   <Text style={[styles.monthValue, months === m && { color: "#fff" }]}>{m}</Text>
                   <Text style={[styles.monthLabel, months === m && { color: "#fff" }]}>mois</Text>
-                  <Text style={[styles.monthPrice, months === m && { color: "#fff" }]}>{(5000 * m).toLocaleString()} F</Text>
+                  <Text style={[styles.monthPrice, months === m && { color: "#fff" }]}>{(2000 * m).toLocaleString()} F</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -114,7 +114,7 @@ export default function Premium() {
               {loading ? <ActivityIndicator color="#fff" /> : (
                 <>
                   <Ionicons name="card" size={20} color="#fff" />
-                  <Text style={styles.payBtnText}>Payer {(5000 * months).toLocaleString()} FCFA avec PayDunya</Text>
+                  <Text style={styles.btnPrimaryText}>Payer {(2000 * months).toLocaleString()} FCFA avec PayDunya</Text>
                 </>
               )}
             </TouchableOpacity>

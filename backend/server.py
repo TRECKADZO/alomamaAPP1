@@ -1253,7 +1253,7 @@ class SubscribeIn(BaseModel):
 @api.post("/pay/subscribe")
 async def pay_subscribe(payload: SubscribeIn, user=Depends(require_roles("maman"))):
     months = max(1, min(payload.months, 12))
-    amount = 5000 * months
+    amount = 2000 * months
     desc = f"Abonnement À lo Maman Premium · {months} mois"
     return_url = f"{os.environ.get('APP_URL', '')}/api/pay/return"
     inv = await paydunya_create_invoice(
