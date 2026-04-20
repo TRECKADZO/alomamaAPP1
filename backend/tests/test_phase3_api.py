@@ -10,7 +10,7 @@ import pytest
 import requests
 
 BASE_URL = (os.environ.get("EXPO_PUBLIC_BACKEND_URL")
-            or "https://maman-mobile-2.preview.emergentagent.com").rstrip("/")
+            or "https://maman-mobile-mvp.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN = {"email": "admin@alomaman.com", "password": "Admin123!"}
