@@ -170,6 +170,56 @@ class AiChatIn(BaseModel):
     message: str
 
 
+class MesureIn(BaseModel):
+    date: str
+    poids_kg: Optional[float] = None
+    taille_cm: Optional[float] = None
+    perimetre_cranien_cm: Optional[float] = None
+
+
+class CycleIn(BaseModel):
+    date_debut_regles: str
+    duree_regles: int = 5
+    duree_cycle: int = 28
+    notes: Optional[str] = None
+
+
+class ContraceptionIn(BaseModel):
+    methode: str  # pilule, sterilet, preservatif, implant, etc
+    date_debut: str
+    date_fin: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AllaitementIn(BaseModel):
+    enfant_id: str
+    date: str  # ISO datetime
+    duree_minutes: int
+    cote: Literal["gauche", "droit", "les_deux", "biberon"]
+    notes: Optional[str] = None
+
+
+class HumeurIn(BaseModel):
+    date: str
+    score: int = Field(ge=1, le=10)
+    notes: Optional[str] = None
+    symptomes: List[str] = []
+
+
+class PushTokenIn(BaseModel):
+    token: str
+
+
+class NotificationIn(BaseModel):
+    title: str
+    body: str
+    type: str = "info"  # info, rdv, rappel, message
+
+
+class PhotoIn(BaseModel):
+    photo_base64: str
+
+
 # ----------------------------------------------------------------------
 # Auth Endpoints
 # ----------------------------------------------------------------------
@@ -260,6 +310,25 @@ async def update_grossesse(gid: str, payload: GrossesseIn, user=Depends(require_
 async def list_enfants(user=Depends(require_roles("maman"))):
     items = await db.enfants.find({"user_id": user["id"]}, {"_id": 0}).to_list(100)
     return items
+
+
+@api.post("/enfants/{eid}/mesures")
+async def add_mesure(eid: str, payload: MesureIn, user=Depends(require_roles("maman"))):
+    mesure = {"id": str(uuid.uuid4()), **payload.dict()}
+    await db.enfants.update_one(
+        {"id": eid, "user_id": user["id"]},
+        {"$push": {"mesures": mesure}},
+    )
+    return await db.enfants.find_one({"id": eid}, {"_id": 0})
+
+
+@api.post("/enfants/{eid}/photo")
+async def set_enfant_photo(eid: str, payload: PhotoIn, user=Depends(require_roles("maman"))):
+    await db.enfants.update_one(
+        {"id": eid, "user_id": user["id"]},
+        {"$set": {"photo": payload.photo_base64}},
+    )
+    return await db.enfants.find_one({"id": eid}, {"_id": 0})
 
 
 @api.post("/enfants")
@@ -410,11 +479,13 @@ async def send_message(payload: MessageIn, user=Depends(get_current_user)):
     }
     await db.messages.insert_one(doc)
     doc.pop("_id", None)
+    await push_notif(
+        payload.to_id,
+        f"Message de {user['name']}",
+        payload.content[:80],
+        "message",
+    )
     return doc
-
-
-# ----------------------------------------------------------------------
-# Communauté
 # ----------------------------------------------------------------------
 @api.get("/community")
 async def list_posts(user=Depends(get_current_user)):
@@ -631,6 +702,228 @@ async def admin_stats(user=Depends(require_roles("admin"))):
 async def admin_users(user=Depends(require_roles("admin"))):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return users
+
+
+# ----------------------------------------------------------------------
+# Photo de profil
+# ----------------------------------------------------------------------
+@api.post("/profile/photo")
+async def set_profile_photo(payload: PhotoIn, user=Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"avatar": payload.photo_base64}})
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# Cycle menstruel
+# ----------------------------------------------------------------------
+@api.get("/cycle")
+async def list_cycles(user=Depends(require_roles("maman"))):
+    items = await db.cycles.find({"user_id": user["id"]}, {"_id": 0}).sort("date_debut_regles", -1).to_list(50)
+    return items
+
+
+@api.post("/cycle")
+async def create_cycle(payload: CycleIn, user=Depends(require_roles("maman"))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        **payload.dict(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.cycles.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/cycle/{cid}")
+async def delete_cycle(cid: str, user=Depends(require_roles("maman"))):
+    await db.cycles.delete_one({"id": cid, "user_id": user["id"]})
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# Contraception
+# ----------------------------------------------------------------------
+@api.get("/contraception")
+async def list_contraception(user=Depends(require_roles("maman"))):
+    items = await db.contraception.find({"user_id": user["id"]}, {"_id": 0}).sort("date_debut", -1).to_list(50)
+    return items
+
+
+@api.post("/contraception")
+async def create_contraception(payload: ContraceptionIn, user=Depends(require_roles("maman"))):
+    # Deactivate previous
+    await db.contraception.update_many(
+        {"user_id": user["id"], "active": True}, {"$set": {"active": False}}
+    )
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        **payload.dict(),
+        "active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.contraception.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/contraception/{cid}/end")
+async def end_contraception(cid: str, date_fin: str, user=Depends(require_roles("maman"))):
+    await db.contraception.update_one(
+        {"id": cid, "user_id": user["id"]},
+        {"$set": {"active": False, "date_fin": date_fin}},
+    )
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# Allaitement
+# ----------------------------------------------------------------------
+@api.get("/allaitement")
+async def list_allaitement(enfant_id: Optional[str] = None, user=Depends(require_roles("maman"))):
+    q = {"user_id": user["id"]}
+    if enfant_id:
+        q["enfant_id"] = enfant_id
+    items = await db.allaitement.find(q, {"_id": 0}).sort("date", -1).to_list(500)
+    return items
+
+
+@api.post("/allaitement")
+async def create_allaitement(payload: AllaitementIn, user=Depends(require_roles("maman"))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        **payload.dict(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.allaitement.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/allaitement/{aid}")
+async def delete_allaitement(aid: str, user=Depends(require_roles("maman"))):
+    await db.allaitement.delete_one({"id": aid, "user_id": user["id"]})
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# Humeur Post-partum
+# ----------------------------------------------------------------------
+@api.get("/humeur")
+async def list_humeur(user=Depends(require_roles("maman"))):
+    items = await db.humeur.find({"user_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(200)
+    return items
+
+
+@api.post("/humeur")
+async def create_humeur(payload: HumeurIn, user=Depends(require_roles("maman"))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        **payload.dict(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.humeur.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+# ----------------------------------------------------------------------
+# Notifications (in-app)
+# ----------------------------------------------------------------------
+@api.get("/notifications")
+async def list_notifications(user=Depends(get_current_user)):
+    items = await db.notifications.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(100)
+    return items
+
+
+@api.post("/notifications/{nid}/read")
+async def mark_notif_read(nid: str, user=Depends(get_current_user)):
+    await db.notifications.update_one(
+        {"id": nid, "user_id": user["id"]}, {"$set": {"read": True}}
+    )
+    return {"ok": True}
+
+
+@api.post("/notifications/read-all")
+async def mark_all_read(user=Depends(get_current_user)):
+    await db.notifications.update_many(
+        {"user_id": user["id"], "read": False}, {"$set": {"read": True}}
+    )
+    return {"ok": True}
+
+
+@api.post("/push-token")
+async def save_push_token(payload: PushTokenIn, user=Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"push_token": payload.token}})
+    return {"ok": True}
+
+
+# Helper to create in-app notification
+async def push_notif(user_id: str, title: str, body: str, ntype: str = "info"):
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "title": title,
+        "body": body,
+        "type": ntype,
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+# ----------------------------------------------------------------------
+# Recherche
+# ----------------------------------------------------------------------
+@api.get("/search/pros")
+async def search_pros(q: str = "", specialite: str = "", user=Depends(get_current_user)):
+    query = {"role": "professionnel"}
+    if specialite:
+        query["specialite"] = {"$regex": specialite, "$options": "i"}
+    if q:
+        query["$or"] = [
+            {"name": {"$regex": q, "$options": "i"}},
+            {"specialite": {"$regex": q, "$options": "i"}},
+        ]
+    pros = await db.users.find(query, {"_id": 0, "password_hash": 0}).to_list(100)
+    return pros
+
+
+@api.get("/search/community")
+async def search_posts(q: str = "", category: str = "", user=Depends(get_current_user)):
+    query: dict = {}
+    if category:
+        query["category"] = category
+    if q:
+        query["$or"] = [
+            {"title": {"$regex": q, "$options": "i"}},
+            {"content": {"$regex": q, "$options": "i"}},
+        ]
+    posts = await db.posts.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return posts
+
+
+# ----------------------------------------------------------------------
+# Vidéo-consultation (Jitsi room link)
+# ----------------------------------------------------------------------
+@api.get("/rdv/{rid}/video-link")
+async def video_link(rid: str, user=Depends(get_current_user)):
+    rdv = await db.rdv.find_one({"id": rid}, {"_id": 0})
+    if not rdv:
+        raise HTTPException(404, "RDV introuvable")
+    if user["id"] not in [rdv["maman_id"], rdv["pro_id"]]:
+        raise HTTPException(403, "Accès refusé")
+    if rdv.get("status") != "confirme":
+        raise HTTPException(400, "RDV non confirmé")
+    room = f"alomaman-{rid[:12]}"
+    return {
+        "room": room,
+        "url": f"https://meet.jit.si/{room}",
+    }
 
 
 # ----------------------------------------------------------------------

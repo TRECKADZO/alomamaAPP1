@@ -1,0 +1,61 @@
+{
+  "summary": "Phase 2 testing of À lo Maman. Backend: 33/36 pytest cases passing, 3 skipped (all related to missing RDV auto-notification feature). All new Phase 2 endpoints verified: cycle CRUD, contraception (create + active-toggle + end), allaitement (+enfant_id filter), humeur (1-10 score validation), notifications list/read/read-all, push-token, search/pros (by q & specialite), search/community (by q & category), video-link (200 for confirmed, 400 for unconfirmed, 403 for non-participant), profile+enfant photo, enfant mesures, role guards (403 for pros on maman-only endpoints). Phase 1 regression: grossesse/professionnels/community/reminders all still 200. Frontend: maman dashboard shows 8 quick actions (RDV, Assistant IA, Enfants, Communauté, Cycle, Contracep., Post-partum, Rechercher) + notification bell icon next to avatar; all Phase 2 routes (/cycle /contraception /post-partum /search /notifications) load with correct content; RDV screen shows 'Rejoindre la visio' button on CONFIRMÉ appointments; profile photo camera overlay icon renders on avatar.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/rdv", "issue": "Auto-notification to pro NOT generated. push_notif() is only called in send_message (line 482); create_rdv has no notification call. Spec explicitly requires: 'Notif auto-generation on POST /api/rdv (notify pro)'.", "priority": "HIGH"},
+      {"endpoint": "PATCH /api/rdv/{rid}/status", "issue": "Auto-notification to maman NOT generated when pro confirms/cancels. rdv_status() has no push_notif() call. Spec requires: 'notify maman on status change'.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "PATCH /api/contraception/{cid}/end", "issue": "date_fin passed as query param (not JSON body). Functional but inconsistent with REST conventions."},
+      {"endpoint": "PATCH /api/rdv/{rid}/status", "issue": "status_val passed as query param (not JSON body). Already noted iter 1; still present."},
+      {"endpoint": "POST /api/humeur", "issue": "Input symptomes list accepted as free strings (no whitelist). Low risk but could allow arbitrary data."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Maman dashboard", "issues": ["Quick-action label 'Contracep.' is truncated/abbreviated; full 'Contraception' would read better — consider smaller text rather than ellipsis.", "8 tabs in bottom bar (same as iter 1) still feel dense at 390px — grouping or overflow menu recommended."]},
+      {"screen": "/cycle, /notifications (empty states)", "issues": ["Empty states are very minimal. /cycle shows 'Ajoutez votre premier cycle' without a prominent CTA button; /notifications shows only 'Pas de notifications'."]}
+    ],
+    "react_native_issues": [
+      {"component": "AsyncStorage", "issue": "Expo-diagnostic warning: @react-native-async-storage/async-storage@3.0.2 — expected 2.2.0 (from /var/log/supervisor/expo.err.log). Plus expo-device, expo-image-picker, expo-notifications version mismatches. Cosmetic but may cause subtle issues."},
+      {"component": "shadow* props", "issue": "'shadow*' style props deprecated warnings still present (iter 1 carry-over)."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_api.py",
+    "/app/backend/tests/test_alomaman_api.py",
+    "/app/test_reports/pytest/pytest_phase2_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Add push_notif() call inside create_rdv() — notify pro when maman books an RDV (type='rdv', title=e.g. 'Nouveau RDV de <maman.name>', body=motif).",
+    "CRITICAL: Add push_notif() call inside rdv_status() — notify maman when pro changes status (type='rdv', body includes new status + pro name).",
+    "Consider moving date_fin from query param to JSON body in PATCH /api/contraception/{cid}/end for consistency.",
+    "Upgrade/align Expo SDK package versions (async-storage, expo-device, expo-image-picker, expo-notifications) per expo-doctor output to avoid compat warnings.",
+    "Consider splitting server.py (now >1040 lines) into routers (auth, grossesse, enfants, rdv, messages, community, ai, cycle, contraception, allaitement, humeur, notifications, search, video, admin).",
+    "Replace deprecated shadow* / resizeMode style props app-wide."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1047 lines — exceeds the 700-line threshold. Strongly recommend modular split before Phase 3.",
+    "CORS still allow_origins=['*'] with allow_credentials=False — acceptable since auth is Bearer-token (not cookies), but pin to real origin in production.",
+    "Contraception active-toggle is done atomically via update_many then insert_one — good pattern; same approach used in grossesse. Consistent.",
+    "push_notif helper exists and works for messages but is under-utilized — only 1 of 3 required auto-notification triggers wired.",
+    "Video-link endpoint correctly enforces: (1) RDV exists, (2) user is participant (maman or pro), (3) status=confirme. All 3 branches tested and pass.",
+    "All new endpoints exclude _id via projection — verified in cycle/contraception/allaitement/humeur/notifications/search responses.",
+    "Photo base64 stored directly in user/enfant documents. Works for tests but large images could bloat docs. Consider size limit or external storage (GridFS/S3) for production.",
+    "Input validation on humeur.score (1-10) via Pydantic Field(ge=1, le=10) correctly returns 422 — verified."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase2_api.py (new)"
+  ],
+  "success_rate": {
+    "backend": "91.6% (33/36 passed, 3 skipped due to missing RDV auto-notif feature)",
+    "frontend": "100% on smoke (all Phase 2 routes render correct content; quick actions + bell + video button + profile photo overlay all verified)"
+  },
+  "seed_data_creation": "Created via tests (all TEST_ prefixed): 3 enfants for maman (TEST_Bebe_P2, TEST_PhotoChild, TEST_MesureChild), 2 contraception records (pilule ended, sterilet active-ended), 1 humeur entry, 3 RDV (1 confirmed for notifs, 1 confirmed for video, 1 unconfirmed for 400-check). A few TEST_* registered users. Note: maman now has 4 enfants total on dashboard (1 from iter 1 + 3 new) — main agent may want to cleanup or retest agent should remove these in teardown.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent adds push_notif calls in create_rdv and rdv_status, re-run /app/backend/tests/test_phase2_api.py. The 3 skipped tests should then pass (type='rdv' assertion is already in place). BASE URL: https://maman-mobile-2.preview.emergentagent.com. Credentials in /app/memory/test_credentials.md. Test DB currently has 4 TEST_ enfants for maman@test.com — cleanup before new UI iteration if needed.",
+  "rca_of_issue": "RDV auto-notification bug: server.py defines push_notif() helper at line 867 and invokes it only inside send_message() at line 482. Functions create_rdv() (line 399-415) and rdv_status() (line 418-423) simply update Mongo without any push_notif call. Fix: add `await push_notif(payload.pro_id, f'Nouveau RDV de {user[\"name\"]}', payload.motif, 'rdv')` in create_rdv after insert, and `await push_notif(rdv['maman_id'], 'Statut de votre RDV', f'Nouveau statut: {status_val}', 'rdv')` in rdv_status after fetching the rdv doc."
+}

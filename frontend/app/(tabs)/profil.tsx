@@ -5,11 +5,22 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../lib/auth";
+import { api, formatError } from "../../lib/api";
+import { pickImageBase64 } from "../../lib/imagePicker";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 export default function Profil() {
-  const { user, logout } = useAuth();
+  const { user, logout, refresh } = useAuth();
   const router = useRouter();
+
+  const uploadPhoto = async () => {
+    const b64 = await pickImageBase64();
+    if (!b64) return;
+    try {
+      await api.post("/profile/photo", { photo_base64: b64 });
+      await refresh();
+    } catch (e) { Alert.alert("Erreur", formatError(e)); }
+  };
 
   const handleLogout = () => {
     Alert.alert("Se déconnecter", "Voulez-vous vraiment vous déconnecter ?", [
@@ -34,9 +45,18 @@ export default function Profil() {
         <Text style={styles.title}>Mon profil</Text>
 
         <View style={styles.profileCard}>
-          <View style={styles.bigAvatar}>
-            <Text style={styles.bigAvatarText}>{user?.name?.charAt(0).toUpperCase()}</Text>
-          </View>
+          <TouchableOpacity onPress={uploadPhoto} testID="profile-photo-btn">
+            {user?.avatar ? (
+              <Image source={{ uri: user.avatar }} style={styles.bigAvatarImg} />
+            ) : (
+              <View style={styles.bigAvatar}>
+                <Text style={styles.bigAvatarText}>{user?.name?.charAt(0).toUpperCase()}</Text>
+              </View>
+            )}
+            <View style={styles.cameraBadge}>
+              <Ionicons name="camera" size={14} color="#fff" />
+            </View>
+          </TouchableOpacity>
           <Text style={styles.name}>{user?.name}</Text>
           <Text style={styles.email}>{user?.email}</Text>
           <View style={styles.roleChip}>
@@ -102,6 +122,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: "800", color: COLORS.textPrimary, marginBottom: SPACING.lg },
   profileCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.xl, alignItems: "center", borderWidth: 1, borderColor: COLORS.border, marginBottom: SPACING.lg },
   bigAvatar: { width: 90, height: 90, borderRadius: 45, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center", marginBottom: 14 },
+  bigAvatarImg: { width: 90, height: 90, borderRadius: 45, marginBottom: 14 },
+  cameraBadge: { position: "absolute", bottom: 14, right: -2, width: 28, height: 28, borderRadius: 14, backgroundColor: COLORS.accent, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#fff" },
   bigAvatarText: { color: "#fff", fontSize: 36, fontWeight: "800" },
   name: { fontSize: 20, fontWeight: "800", color: COLORS.textPrimary },
   email: { color: COLORS.textSecondary, fontSize: 13, marginTop: 2 },

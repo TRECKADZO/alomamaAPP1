@@ -5,13 +5,14 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 export default function Rdv() {
   const { user } = useAuth();
+  const router = useRouter();
   const [rdv, setRdv] = useState<any[]>([]);
   const [pros, setPros] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,9 +115,21 @@ export default function Rdv() {
                 </View>
               )}
               {user?.role === "professionnel" && r.status === "confirme" && (
-                <TouchableOpacity style={[styles.actionBtn, { alignSelf: "flex-start", marginTop: 10 }]} onPress={() => changeStatus(r.id, "termine")}>
-                  <Ionicons name="checkmark-done" size={16} color={COLORS.primary} />
-                  <Text style={[styles.actionText, { color: COLORS.primary }]}>Marquer terminé</Text>
+                <View style={{ flexDirection: "row", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                  <TouchableOpacity style={[styles.actionBtn]} onPress={() => changeStatus(r.id, "termine")}>
+                    <Ionicons name="checkmark-done" size={16} color={COLORS.primary} />
+                    <Text style={[styles.actionText, { color: COLORS.primary }]}>Marquer terminé</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.actionBtn]} onPress={() => router.push(`/video-call/${r.id}`)} testID={`video-${r.id}`}>
+                    <Ionicons name="videocam" size={16} color={COLORS.success} />
+                    <Text style={[styles.actionText, { color: COLORS.success }]}>Démarrer vidéo</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              {user?.role === "maman" && r.status === "confirme" && (
+                <TouchableOpacity style={[styles.actionBtn, { alignSelf: "flex-start", marginTop: 10 }]} onPress={() => router.push(`/video-call/${r.id}`)} testID={`video-${r.id}`}>
+                  <Ionicons name="videocam" size={16} color={COLORS.success} />
+                  <Text style={[styles.actionText, { color: COLORS.success }]}>Rejoindre la visio</Text>
                 </TouchableOpacity>
               )}
             </View>

@@ -76,13 +76,22 @@ export default function DashboardHome() {
             <Text style={styles.hello}>Bonjour 👋</Text>
             <Text style={styles.name} testID="dashboard-name">{user?.name}</Text>
           </View>
-          <TouchableOpacity
-            style={styles.avatar}
-            onPress={() => router.push("/(tabs)/profil")}
-            testID="avatar-btn"
-          >
-            <Text style={styles.avatarText}>{user?.name?.charAt(0).toUpperCase()}</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => router.push("/notifications")}
+              testID="notif-btn"
+            >
+              <Ionicons name="notifications-outline" size={22} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.avatar}
+              onPress={() => router.push("/(tabs)/profil")}
+              testID="avatar-btn"
+            >
+              <Text style={styles.avatarText}>{user?.name?.charAt(0).toUpperCase()}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {user?.role === "maman" && <MamanDash data={data} router={router} />}
@@ -144,6 +153,10 @@ function MamanDash({ data, router }: any) {
         <QuickAction icon="sparkles" label="Assistant IA" onPress={() => router.push("/(tabs)/assistant")} testID="qa-ia" color={COLORS.accent} />
         <QuickAction icon="people" label="Enfants" onPress={() => router.push("/(tabs)/enfants")} testID="qa-enfants" color={COLORS.secondary} />
         <QuickAction icon="chatbubbles" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} testID="qa-com" />
+        <QuickAction icon="flower" label="Cycle" onPress={() => router.push("/cycle")} testID="qa-cycle" color="#E11D48" />
+        <QuickAction icon="shield-checkmark" label="Contracep." onPress={() => router.push("/contraception")} testID="qa-contra" color={COLORS.accent} />
+        <QuickAction icon="heart-circle" label="Post-partum" onPress={() => router.push("/post-partum")} testID="qa-postpartum" color={COLORS.secondary} />
+        <QuickAction icon="search" label="Rechercher" onPress={() => router.push("/search")} testID="qa-search" />
       </View>
 
       {/* Rappels */}
@@ -361,6 +374,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   avatarText: { color: "#fff", fontWeight: "800", fontSize: 17 },
+  iconBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
   body: { padding: SPACING.xl, paddingTop: 0, gap: SPACING.lg },
   heroCard: {
     height: 190,
