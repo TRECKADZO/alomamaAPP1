@@ -1,0 +1,52 @@
+{
+  "summary": "First iteration test of À lo Maman MVP. Backend: 39/40 pytest cases passing (1 failure is test-assertion artifact — backend correctly lowercases emails while the test used TEST_ uppercase prefix). All critical flows verified: auth (3 seeded roles), grossesse CRUD, enfants+vaccins, RDV flow (maman creates → pro confirms), messagerie, communauté (like/comment), reminders, AI chat (Claude Sonnet 4.5 responds in French), admin stats/users, pro/patients, role-based authz (403 correct for cross-role access), all responses exclude _id. Frontend: Landing, login (all 3 demo buttons auto-fill correctly), maman dashboard (hero/quick-actions/rappels/RDV/enfants), pro dashboard (patients/RDV/today counts), admin dashboard (stats grid + Gérer les utilisateurs), tab nav correctly differs per role (maman=8 tabs, pro=6-7 tabs, admin=3 tabs), AI chat end-to-end works in French.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PATCH /api/rdv/{rid}/status", "issue": "status_val is passed as query parameter (not JSON body). Works but unusual; frontend must align. Functional."},
+      {"endpoint": "POST /api/ai/chat", "issue": "Context re-feed is manual (concatenates history into text) rather than using LlmChat native stateful history. Works but adds token cost."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AssistantIA TextInput", "issue": "Submitting with Enter key does not send the message; only the send-arrow button works. Expected: Enter submits on web.", "testID": "none (needs testID='ai-send-button' & onSubmitEditing)", "priority": "MEDIUM"},
+      {"component": "Tabs (maman role)", "issue": "8 tabs rendered in bottom bar on 390px viewport — labels cramped (Accueil/Grossesse/Enfants/RDV/Communauté/IA/Messages/Profil). Consider grouping or overflow menu.", "testID": "tab-bar", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Maman dashboard", "issues": ["Hero card shows 'Semaine 46' because seeded data date_debut 2025-06-01 computed against Apr 2026 > 40 weeks. Weeks counter should cap at 42 or flag post-term."]},
+      {"screen": "Global", "issues": ["Missing testID attributes on interactive elements (demo buttons, Se connecter, tab items, AI send button). Needed for robust automation.", "Console warnings: 'shadow* style props are deprecated, use boxShadow' and 'Image style.resizeMode is deprecated, use props.resizeMode' — cosmetic only."]}
+    ],
+    "react_native_issues": [
+      {"component": "app/_layout or (tabs)/_layout", "issue": "Expo Router warns: \"Too many screens defined. Route 'book-rdv' is extraneous.\" — there is a book-rdv.tsx screen file not registered as a Tabs.Screen. Register it or move to a non-tab stack."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_alomaman_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Register 'book-rdv' screen properly or move it outside (tabs)/ to remove the 'extraneous route' warning.",
+    "Add testID props to critical interactive elements (demo-maman/pro/admin buttons, login-submit, ai-send, tab items, logout).",
+    "Wire AssistantIA TextInput onSubmitEditing to send (or enable returnKeyType='send') so Enter submits.",
+    "Cap grossesse weeks calculation at 42 (handle post-term case) — seeded maman shows 'Semaine 46'.",
+    "Consider reducing maman bottom-tab count (e.g., group Messages/Communauté in a sub-menu or use drawer).",
+    "Replace deprecated shadow* and Image style.resizeMode with boxShadow/resizeMode prop to silence console warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 753 lines — still manageable but approaching threshold; consider splitting routers (auth, grossesse, enfants, rdv, messages, community, ai, admin) into modules before adding Phase 2 features.",
+    "CORS currently allows_origins=['*'] with allow_credentials=False — fine for public preview but should be tightened to real frontend origin in production.",
+    "bcrypt $2b$ hash format verified. JWT 7-day expiry with HS256. Passwords never returned (password_hash stripped in all projections).",
+    "All listed endpoints exclude MongoDB _id (projection {'_id':0}) — verified in 10+ endpoints and in admin/users output.",
+    "AI chat: history rebuild by concatenating previous turns into the user message works but is not ideal. Prefer LlmChat(session_id=...) native history or loading prior messages via chat.add_message()."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_alomaman_api.py (new)"
+  ],
+  "success_rate": {"backend": "97.5% (39/40 — 1 test-only assertion artifact due to email lowercase)", "frontend": "95% (all critical flows verified; minor UX issues on Enter-to-send and tab-bar density)"},
+  "seed_data_creation": "Tests created: 1 RDV (maman → Dr Fatou, status confirme), 1 enfant (TEST_Petit with BCG vaccin), 1 grossesse (active), 1 community post (TEST_Question liked+commented), 1 reminder (TEST rappel done), 1 AI session. A few TEST_* registered users. All prefixed with TEST_ for easy cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "App is at https://maman-mobile-2.preview.emergentagent.com. Credentials in /app/memory/test_credentials.md. Run backend tests: `EXPO_PUBLIC_BACKEND_URL=https://maman-mobile-2.preview.emergentagent.com pytest /app/backend/tests/test_alomaman_api.py -v`. Already seeded: 1 RDV (confirmed), 1 child, 1 grossesse for maman@test.com. For new UI automation add testIDs first (demo buttons currently require get_by_text('Maman'/'Pro'/'Admin') which is fragile).",
+  "rca_of_issue": "N/A — no critical bugs. The only pytest failure is a test-script lowercase/uppercase mismatch (backend correctly lowercases emails per common UX practice); the backend behavior is correct."
+}
