@@ -67,6 +67,8 @@ def serialize_user(u: dict) -> dict:
         "role": u["role"],
         "avatar": u.get("avatar"),
         "phone": u.get("phone"),
+        "premium": bool(u.get("premium", False)),
+        "premium_until": u.get("premium_until"),
         "created_at": u.get("created_at"),
     }
 
@@ -142,6 +144,7 @@ class RdvIn(BaseModel):
     pro_id: str
     date: str  # ISO
     motif: str
+    tarif_fcfa: int = 10000
 
 
 class MessageIn(BaseModel):
@@ -428,6 +431,8 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "pro_id": payload.pro_id,
         "date": payload.date,
         "motif": payload.motif,
+        "tarif_fcfa": payload.tarif_fcfa,
+        "paye": False,
         "status": "en_attente",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1176,6 +1181,224 @@ async def send_expo_push(token: str, title: str, body: str, data: Optional[dict]
             )
     except Exception as e:  # noqa
         logger.info(f"Expo push skipped: {e}")
+
+
+# ----------------------------------------------------------------------
+# PayDunya — Subscription & Consultation payments
+# ----------------------------------------------------------------------
+PAYDUNYA_MODE = os.environ.get("PAYDUNYA_MODE", "test").lower()
+PAYDUNYA_BASE = (
+    "https://app.paydunya.com/api/v1" if PAYDUNYA_MODE == "live"
+    else "https://app.paydunya.com/sandbox-api/v1"
+)
+
+
+def paydunya_headers() -> dict:
+    return {
+        "Content-Type": "application/json",
+        "PAYDUNYA-MASTER-KEY": os.environ.get("PAYDUNYA_MASTER_KEY", ""),
+        "PAYDUNYA-PRIVATE-KEY": os.environ.get("PAYDUNYA_PRIVATE_KEY", ""),
+        "PAYDUNYA-TOKEN": os.environ.get("PAYDUNYA_TOKEN", ""),
+    }
+
+
+async def paydunya_create_invoice(amount: int, description: str, user: dict, custom: dict, return_url: str) -> dict:
+    import httpx
+    payload = {
+        "invoice": {
+            "total_amount": amount,
+            "description": description,
+        },
+        "store": {"name": "À lo Maman"},
+        "actions": {
+            "return_url": return_url,
+            "cancel_url": return_url + "?cancel=1",
+        },
+        "custom_data": custom,
+    }
+    if not os.environ.get("PAYDUNYA_MASTER_KEY"):
+        # No keys configured — return simulated invoice so UI keeps working
+        return {
+            "success": False,
+            "error": "PayDunya keys not configured. Ajoutez vos clés dans /app/backend/.env",
+            "simulated": True,
+        }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.post(f"{PAYDUNYA_BASE}/checkout-invoice/create", json=payload, headers=paydunya_headers())
+            data = r.json()
+        if data.get("response_code") == "00":
+            return {"success": True, "token": data.get("token"), "url": data.get("response_text")}
+        return {"success": False, "error": data.get("response_text") or data.get("description") or "Erreur PayDunya"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def paydunya_confirm(token: str) -> dict:
+    import httpx
+    if not os.environ.get("PAYDUNYA_MASTER_KEY"):
+        return {"success": False, "error": "Non configuré"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as http:
+            r = await http.get(f"{PAYDUNYA_BASE}/checkout-invoice/confirm/{token}", headers=paydunya_headers())
+            return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+class SubscribeIn(BaseModel):
+    months: int = 1
+
+
+@api.post("/pay/subscribe")
+async def pay_subscribe(payload: SubscribeIn, user=Depends(require_roles("maman"))):
+    months = max(1, min(payload.months, 12))
+    amount = 5000 * months
+    desc = f"Abonnement À lo Maman Premium · {months} mois"
+    return_url = f"{os.environ.get('APP_URL', '')}/api/pay/return"
+    inv = await paydunya_create_invoice(
+        amount, desc, user, {"kind": "subscription", "user_id": user["id"], "months": months}, return_url
+    )
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "kind": "subscription",
+        "amount": amount,
+        "months": months,
+        "token": inv.get("token"),
+        "status": "pending" if inv.get("success") else "error",
+        "error": inv.get("error"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payments.insert_one(doc)
+    doc.pop("_id", None)
+    return {"payment": doc, "payment_url": inv.get("url"), "success": inv.get("success", False), "error": inv.get("error")}
+
+
+class ConsultationPayIn(BaseModel):
+    rdv_id: str
+
+
+@api.post("/pay/consultation")
+async def pay_consultation(payload: ConsultationPayIn, user=Depends(require_roles("maman"))):
+    rdv = await db.rdv.find_one({"id": payload.rdv_id, "maman_id": user["id"]}, {"_id": 0})
+    if not rdv:
+        raise HTTPException(404, "RDV introuvable")
+    amount = rdv.get("tarif_fcfa", 10000)
+    commission = amount // 10  # 10%
+    pro_amount = amount - commission
+    desc = f"Consultation À lo Maman · RDV {rdv['date'][:10]}"
+    return_url = f"{os.environ.get('APP_URL', '')}/api/pay/return"
+    inv = await paydunya_create_invoice(
+        amount, desc, user,
+        {"kind": "consultation", "rdv_id": payload.rdv_id, "maman_id": user["id"], "pro_id": rdv["pro_id"], "commission": commission, "pro_amount": pro_amount},
+        return_url,
+    )
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "kind": "consultation",
+        "rdv_id": payload.rdv_id,
+        "pro_id": rdv["pro_id"],
+        "amount": amount,
+        "commission": commission,
+        "pro_amount": pro_amount,
+        "token": inv.get("token"),
+        "status": "pending" if inv.get("success") else "error",
+        "error": inv.get("error"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payments.insert_one(doc)
+    doc.pop("_id", None)
+    return {"payment": doc, "payment_url": inv.get("url"), "success": inv.get("success", False), "error": inv.get("error")}
+
+
+@api.post("/pay/verify/{token}")
+async def pay_verify(token: str, user=Depends(get_current_user)):
+    p = await db.payments.find_one({"token": token}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Paiement introuvable")
+    res = await paydunya_confirm(token)
+    status_val = (res.get("status") or "").lower()
+    if res.get("response_code") == "00" and status_val == "completed":
+        now = datetime.now(timezone.utc)
+        await db.payments.update_one({"token": token}, {"$set": {"status": "completed", "paid_at": now.isoformat()}})
+        if p["kind"] == "subscription":
+            end = now + timedelta(days=30 * p["months"])
+            await db.users.update_one(
+                {"id": p["user_id"]},
+                {"$set": {"premium": True, "premium_until": end.isoformat()}},
+            )
+            await push_notif(p["user_id"], "Premium activé 🎉", f"Merci ! Votre abonnement est actif jusqu'au {end.strftime('%d/%m/%Y')}.", "info")
+        elif p["kind"] == "consultation":
+            await db.rdv.update_one({"id": p["rdv_id"]}, {"$set": {"paye": True, "payment_token": token}})
+            await push_notif(p["pro_id"], "Consultation payée 💰", f"Votre RDV a été payé ({p['pro_amount']} FCFA après commission).", "info")
+        return {"status": "completed", "payment": {**p, "status": "completed"}}
+    return {"status": p["status"], "paydunya_status": status_val, "raw": res}
+
+
+@api.get("/pay/history")
+async def pay_history(user=Depends(get_current_user)):
+    q = {"user_id": user["id"]} if user["role"] == "maman" else (
+        {"pro_id": user["id"]} if user["role"] == "professionnel" else {}
+    )
+    items = await db.payments.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api.get("/pay/admin/stats")
+async def pay_admin_stats(user=Depends(require_roles("admin"))):
+    completed = await db.payments.find({"status": "completed"}, {"_id": 0}).to_list(1000)
+    total_revenu = sum(p["amount"] for p in completed)
+    total_commission = sum(p.get("commission", p["amount"] if p["kind"] == "subscription" else 0) for p in completed)
+    total_pro = sum(p.get("pro_amount", 0) for p in completed if p["kind"] == "consultation")
+    return {
+        "total_revenu_fcfa": total_revenu,
+        "total_commission_plateforme": total_commission,
+        "total_reverse_pros": total_pro,
+        "nb_paiements": len(completed),
+        "nb_abonnements": len([p for p in completed if p["kind"] == "subscription"]),
+        "nb_consultations": len([p for p in completed if p["kind"] == "consultation"]),
+    }
+
+
+@api.post("/pay/webhook")
+async def pay_webhook(request: Request):
+    """PayDunya IPN callback. No auth — relies on token lookup + confirm call."""
+    body = await request.json()
+    token = body.get("invoice", {}).get("token") or body.get("token") or body.get("data", {}).get("invoice", {}).get("token")
+    if not token:
+        return {"ok": False}
+    res = await paydunya_confirm(token)
+    status_val = (res.get("status") or "").lower()
+    if res.get("response_code") == "00" and status_val == "completed":
+        p = await db.payments.find_one({"token": token}, {"_id": 0})
+        if p and p["status"] != "completed":
+            now = datetime.now(timezone.utc)
+            await db.payments.update_one({"token": token}, {"$set": {"status": "completed", "paid_at": now.isoformat()}})
+            if p["kind"] == "subscription":
+                end = now + timedelta(days=30 * p["months"])
+                await db.users.update_one({"id": p["user_id"]}, {"$set": {"premium": True, "premium_until": end.isoformat()}})
+                await push_notif(p["user_id"], "Premium activé 🎉", f"Abonnement actif jusqu'au {end.strftime('%d/%m/%Y')}", "info")
+            elif p["kind"] == "consultation":
+                await db.rdv.update_one({"id": p["rdv_id"]}, {"$set": {"paye": True, "payment_token": token}})
+                await push_notif(p["pro_id"], "Consultation payée 💰", f"+{p['pro_amount']} FCFA (après commission)", "info")
+    return {"ok": True}
+
+
+@api.get("/pay/return")
+async def pay_return():
+    """PayDunya return redirect landing page (user comes back here after payment)."""
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse("""
+    <!doctype html><html><head><meta charset="utf-8"><title>Paiement À lo Maman</title>
+    <style>body{font-family:system-ui;padding:40px;text-align:center;background:#FDFBF7;color:#2D332F}
+    h1{color:#C85A40}.box{max-width:420px;margin:auto;background:#fff;padding:32px;border-radius:24px;box-shadow:0 4px 12px rgba(0,0,0,0.06)}
+    a{color:#C85A40;font-weight:700}</style></head>
+    <body><div class="box"><h1>✅ Paiement confirmé</h1>
+    <p>Merci ! Vous pouvez fermer cette fenêtre et retourner sur l'app À lo Maman.</p>
+    <p><a href="javascript:window.close()">Fermer</a></p></div></body></html>
+    """)
 
 
 # ----------------------------------------------------------------------

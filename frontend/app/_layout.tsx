@@ -25,6 +25,7 @@ export default function RootLayout() {
             <Stack.Screen name="fhir" />
             <Stack.Screen name="tele-echo" />
             <Stack.Screen name="naissance" />
+            <Stack.Screen name="premium" />
           </Stack>
         </AuthProvider>
       </SafeAreaProvider>

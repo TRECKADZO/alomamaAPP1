@@ -13,6 +13,8 @@ export interface User {
   avatar?: string | null;
   phone?: string | null;
   specialite?: string | null;
+  premium?: boolean;
+  premium_until?: string | null;
 }
 
 interface AuthContextValue {

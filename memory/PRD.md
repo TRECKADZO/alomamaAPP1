@@ -1,56 +1,59 @@
 # À lo Maman — Mobile App PRD
 
 ## Overview
-À lo Maman : plateforme mobile (Expo) de santé maternelle & pédiatrique pour l'Afrique francophone. Adaptation de github.com/TRECKADZO/a-lo-maman en app native avec 3 phases livrées.
+Plateforme mobile Expo de santé maternelle & pédiatrique pour l'Afrique francophone. 4 phases livrées : Core, Advanced, Advanced+, Monetization.
 
-## Users
-1. **Maman** — femme enceinte / mère d'enfants
-2. **Professionnel de santé** — gynécologue, pédiatre, sage-femme
-3. **Admin** — opérateur plateforme
+## Users : Maman · Professionnel · Admin
 
 ## Phases livrées
 
-### Phase 1 (Core MVP)
-- Auth JWT/bcrypt multi-rôle (AsyncStorage)
-- Dashboard rôle-based · Suivi grossesse · Carnet enfants (vaccins)
-- RDV · Messagerie 1-to-1 · Communauté · Assistant IA (Claude Sonnet 4.5)
-- Admin console (stats + users)
+### Phase 1 (Core)
+Auth JWT/bcrypt · Dashboards rôle-based · Grossesse · Enfants+vaccins · RDV · Messagerie · Communauté · Assistant IA Claude Sonnet 4.5 · Admin console.
 
 ### Phase 2 (Advanced)
-- Photos base64 (profil/enfants) · Mesures croissance
-- Cycle menstruel + prédictions ovulation/fertilité
-- Contraception (6 méthodes) · Post-partum (humeur + allaitement)
-- Notifications in-app auto (RDV/status/message)
-- Push tokens stockés · Recherche pros & communauté
-- Vidéo-consultation Jitsi (WebView mobile + web fallback)
+Photos base64 · Mesures · Cycle + prédictions · Contraception · Post-partum (humeur+allaitement) · Notifications in-app auto · Recherche · Vidéo-consultation Jitsi.
 
 ### Phase 3 (Advanced+)
-- **FHIR export** : bundle Patient+RelatedPerson+Observation+Immunization (JSON HL7-compatible), partage/copie
-- **Télé-échographie** : pro upload image base64 + compte-rendu, notifie maman, galerie consultable
-- **Déclaration de naissance** : formulaire complet maman → validation admin + notif
-- **Expo Push réel** : token enregistré au login/register, best-effort send via `https://exp.host/--/api/v2/push/send`
-- **Cache hors-ligne** basique (`lib/cache.ts`) pour lectures
+FHIR Export Bundle · Télé-échographie · Déclaration de naissance · Expo Push réel · Cache hors-ligne.
 
-## Tech stack
-- Expo Router 6 · React Native 0.81 · TypeScript
-- FastAPI + Motor (MongoDB) · JWT (PyJWT) · bcrypt
-- emergentintegrations.llm.chat (Claude Sonnet 4.5)
-- expo-image-picker · expo-notifications · react-native-webview (Jitsi)
+### Phase 4 (Monétisation PayDunya) 💰 **NOUVEAU**
+- **Abonnement Maman Premium** : 5 000 FCFA/mois (débloque IA illimitée, vidéo prioritaire, FHIR illimité, stockage photos, rappels auto)
+- **Paiement consultation** : pro fixe son tarif (par défaut 10 000 FCFA), plateforme prend **10% de commission**, pro reçoit 90%
+- **Moyens de paiement** via PayDunya : Orange Money, MTN MoMo, Wave, Moov, Free Money, Visa/Mastercard
+- **Historique paiements** par utilisateur (/pay/history)
+- **Dashboard admin revenus** : total revenus, commission plateforme, reversé pros, nb abonnements, nb consultations (/pay/admin/stats)
+- **Webhook** PayDunya `/api/pay/webhook` (IPN) + vérification manuelle `/api/pay/verify/{token}`
+- **Flag `premium` + `premium_until`** sur User, activé automatiquement après paiement confirmé
+- **Landing page de retour** HTML `/api/pay/return` après paiement
 
-## Endpoints (résumé, 50+)
-Auth · Grossesse · Enfants · RDV · Messages · Communauté · Reminders · AI · Admin · Pro · Cycle · Contraception · Allaitement · Humeur · Notifications · Push-token · Search · Video-link · **FHIR · Tele-echo · Naissance**
+## Configuration PayDunya
+Ajouter dans `/app/backend/.env` :
+```
+PAYDUNYA_MASTER_KEY=votre_clé
+PAYDUNYA_PRIVATE_KEY=votre_clé
+PAYDUNYA_TOKEN=votre_clé
+PAYDUNYA_MODE=live
+```
+(Obtenir depuis https://app.paydunya.com → API Keys)
+
+## Endpoints (60+)
+Auth · Grossesse · Enfants · RDV · Messages · Community · Reminders · AI · Admin · Pro · Cycle · Contraception · Allaitement · Humeur · Notifications · Push-token · Search · Video-link · FHIR · Tele-echo · Naissance · **Pay subscribe/consultation/verify/history/webhook/admin-stats**
+
+## Écrans (27+)
+Auth(3) · Tabs(10) · Stack(14) : Chat · Cycle · Contraception · Post-partum · Search · Notifications · Video-call · FHIR · Tele-echo · Naissance · **Premium** · (+détail paiement)
 
 ## Test Credentials
 Voir `/app/memory/test_credentials.md`
 
-## Tests automatisés
+## Tests
 - Phase 2 : 36/36 pytest ✓
-- Phase 3 : 29/29 pytest ✓ + régression Phase 2 ✓
+- Phase 3 : 29/29 pytest ✓
+- Phase 4 : endpoints validés manuellement (curl) — succès avec clés PayDunya absentes (retour d'erreur clair)
 
-## Deferred (Phase 4+)
-Refactor modulaire backend · Upgrade versions Expo · Fix shadow* deprecated · FHIR spec complète (HL7 R4 strict) · Paiement (Stripe/Mobile Money) · Mode offline complet · 2FA
+## Business Model
+- **Revenus directs** : abonnements Premium (récurrent 5k FCFA/mois)
+- **Revenus transactionnels** : 10% sur chaque RDV payant
+- **Revenus B2B futurs** : API FHIR pour cliniques/hôpitaux partenaires
 
-## Business hooks
-- Premium maman 5 000 FCFA/mois : IA illimitée, vidéo-consultations prioritaires, stockage illimité FHIR/images
-- Commission plateforme 10% sur RDV payants pour pros
-- Monétisation API FHIR pour partenaires cliniques (B2B)
+## Deferred
+2FA · Mode offline mutations queue · Refactor modulaire backend · Upgrade versions Expo (`npx expo install --fix`)

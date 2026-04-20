@@ -8,14 +8,20 @@ import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 export default function Admin() {
   const [stats, setStats] = useState<any>({});
+  const [payStats, setPayStats] = useState<any>({});
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
     try {
-      const [s, u] = await Promise.all([api.get("/admin/stats"), api.get("/admin/users")]);
+      const [s, u, p] = await Promise.all([
+        api.get("/admin/stats"),
+        api.get("/admin/users"),
+        api.get("/pay/admin/stats").catch(() => ({ data: {} })),
+      ]);
       setStats(s.data);
       setUsers(u.data);
+      setPayStats(p.data);
     } finally {
       setLoading(false);
     }
@@ -47,8 +53,31 @@ export default function Admin() {
           <StatCard icon="mail" label="Messages" value={stats.messages ?? 0} color={COLORS.primary} />
         </View>
 
-        <Text style={styles.sectionTitle}>Utilisateurs ({users.length})</Text>
-        {users.map((u) => (
+        <Text style={styles.sectionTitle}>💰 Revenus plateforme</Text>
+        <View style={styles.revCard}>
+          <View style={styles.revRow}>
+            <Text style={styles.revLabel}>Revenus totaux</Text>
+            <Text style={styles.revValue}>{(payStats.total_revenu_fcfa ?? 0).toLocaleString()} FCFA</Text>
+          </View>
+          <View style={styles.revRow}>
+            <Text style={styles.revLabel}>Commission plateforme</Text>
+            <Text style={[styles.revValue, { color: COLORS.success }]}>{(payStats.total_commission_plateforme ?? 0).toLocaleString()} F</Text>
+          </View>
+          <View style={styles.revRow}>
+            <Text style={styles.revLabel}>Reversé aux pros</Text>
+            <Text style={styles.revValue}>{(payStats.total_reverse_pros ?? 0).toLocaleString()} F</Text>
+          </View>
+          <View style={styles.revRow}>
+            <Text style={styles.revLabel}>Paiements complétés</Text>
+            <Text style={styles.revValue}>{payStats.nb_paiements ?? 0}</Text>
+          </View>
+          <View style={styles.revRow}>
+            <Text style={styles.revLabel}>Abonnements actifs</Text>
+            <Text style={styles.revValue}>{payStats.nb_abonnements ?? 0}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>Utilisateurs ({users.length})</Text>        {users.map((u) => (
           <View key={u.id} style={styles.userRow}>
             <View style={[styles.avatar, { backgroundColor: roleColor[u.role] || COLORS.primary }]}>
               <Text style={styles.avatarText}>{u.name?.charAt(0).toUpperCase()}</Text>
@@ -102,4 +131,8 @@ const styles = StyleSheet.create({
   userEmail: { color: COLORS.textSecondary, fontSize: 12 },
   roleBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.pill },
   roleBadgeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
+  revCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, marginBottom: SPACING.xl },
+  revRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  revLabel: { color: COLORS.textSecondary, fontSize: 13 },
+  revValue: { color: COLORS.textPrimary, fontWeight: "800", fontSize: 15 },
 });
