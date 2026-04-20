@@ -1,0 +1,132 @@
+{
+  "theme": "Light",
+  "archetype": "1 (Organic & Earthy)",
+  "brand_name": "À lo Maman",
+  "target_audience": "Francophone African mothers, Healthcare professionals",
+  "design_philosophy": "Modern, reassuring, warm, feminine-yet-professional. Emphasizes patient-centered, accessible UI/UX with calm visuals, frictionless navigation (large touch targets for one-handed operation), and high cultural relevance.",
+  "colors": {
+    "background_primary": "#FDFBF7",
+    "background_secondary": "#F4F1EA",
+    "surface": "#FFFFFF",
+    "primary": "#C85A40",
+    "primary_hover": "#A64A35",
+    "primary_light": "#F8EBE8",
+    "secondary": "#8DA399",
+    "secondary_light": "#EAF0ED",
+    "accent": "#D99C4B",
+    "text_primary": "#2D332F",
+    "text_secondary": "#5A504B",
+    "border": "#E6E2D8",
+    "error": "#DC2626",
+    "success": "#16A34A"
+  },
+  "typography": {
+    "font_family_headings": "Outfit, sans-serif",
+    "font_family_body": "Manrope, sans-serif",
+    "h1": "text-4xl font-bold tracking-tight text-[#2D332F]",
+    "h2": "text-2xl font-semibold tracking-tight text-[#2D332F]",
+    "h3": "text-xl font-medium text-[#2D332F]",
+    "body": "text-base font-normal leading-relaxed text-[#5A504B]",
+    "small": "text-sm font-medium text-[#5A504B]",
+    "overline": "text-xs font-bold uppercase tracking-widest text-[#8DA399]"
+  },
+  "spacing_and_layout": {
+    "container_padding": "px-4 md:px-6",
+    "section_gap": "gap-6 md:gap-8",
+    "card_padding": "p-5 md:p-6",
+    "border_radius_card": "rounded-3xl",
+    "border_radius_button": "rounded-full",
+    "mobile_first": true,
+    "touch_targets": "min-h-[48px] min-w-[48px]"
+  },
+  "surfaces_and_shadows": {
+    "card": "bg-white shadow-[0_4px_20px_rgba(45,51,47,0.05)] border border-black/5 rounded-3xl",
+    "header_nav": "bg-white/90 backdrop-blur-xl border-b border-[#E6E2D8] sticky top-0 z-50",
+    "bottom_tab_bar": "bg-white/90 backdrop-blur-xl border-t border-[#E6E2D8] fixed bottom-0 w-full z-50 pb-safe"
+  },
+  "components": {
+    "button_primary": "bg-[#C85A40] text-white hover:bg-[#A64A35] rounded-full px-6 py-3 font-semibold transition-transform active:scale-95 flex items-center justify-center min-h-[48px]",
+    "button_secondary": "bg-[#F8EBE8] text-[#C85A40] hover:bg-[#F0D8D1] rounded-full px-6 py-3 font-semibold transition-transform active:scale-95 flex items-center justify-center min-h-[48px]",
+    "input_field": "w-full bg-[#FDFBF7] border border-[#E6E2D8] rounded-2xl px-4 py-3 text-[#2D332F] focus:outline-none focus:ring-2 focus:ring-[#8DA399] min-h-[48px]",
+    "card_metric": "bg-white p-5 rounded-3xl border border-black/5 flex flex-col gap-2",
+    "badge_status": "px-3 py-1 rounded-full text-xs font-semibold bg-[#EAF0ED] text-[#3E5249]",
+    "message_bubble_in": "bg-[#EAF0ED] text-[#2D332F] rounded-2xl rounded-tl-sm p-4",
+    "message_bubble_out": "bg-[#C85A40] text-white rounded-2xl rounded-tr-sm p-4"
+  },
+  "icons": {
+    "library": "lucide-react",
+    "weight": "regular",
+    "size_default": "24px"
+  },
+  "media": {
+    "images": [
+      {
+        "url": "https://images.unsplash.com/photo-1667422233599-eec3cd543f79?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwxfHxhZnJpY2FuJTIwcHJlZ25hbnQlMjB3b21hbiUyMHNtaWxpbmd8ZW58MHx8fHwxNzc2NzE4MDE0fDA&ixlib=rb-4.1.0&q=85",
+        "category": "hero_maman",
+        "description": "Smiling pregnant African woman, use for onboarding or maternal dashboard hero background with light overlay."
+      },
+      {
+        "url": "https://images.pexels.com/photos/33890101/pexels-photo-33890101.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "category": "hero_enfant",
+        "description": "African mother and baby in vibrant clothing, use for 'Carnet Enfants' section header."
+      },
+      {
+        "url": "https://images.pexels.com/photos/4989165/pexels-photo-4989165.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "category": "hero_doctor",
+        "description": "Cheerful African doctor, use for Telemedicine / 'Rendez-vous' section or professional onboarding."
+      }
+    ],
+    "image_overlay": "bg-gradient-to-t from-black/60 to-transparent"
+  },
+  "screens_blueprint": {
+    "Dashboard_Maman": {
+      "layout": "Mobile-first vertical stack with bottom tab navigation.",
+      "sections": [
+        "Sticky Header: User Avatar (left), Notifications (right).",
+        "Hero Card: Pregnancy Week tracker or Current Cycle Status. Uses primary color bg with white text.",
+        "Quick Actions: 3-4 circular buttons (Rendez-vous, IA Assistant, Carnet, Urgence) horizontally scrollable.",
+        "Today's Reminders: Vertical list of tasks (e.g., 'Prendre vitamines').",
+        "Community Highlights: Horizontal scroll of recent forum posts."
+      ]
+    },
+    "Assistant_IA": {
+      "layout": "Full-screen chat interface.",
+      "sections": [
+        "Header: Title 'Assistant À lo Maman', back button.",
+        "Chat Area: Scrollable list of message bubbles.",
+        "Input Area: Sticky bottom, large text input with send icon button. Respects safe area insets."
+      ]
+    },
+    "Carnet_Enfants": {
+      "layout": "Profile cards layout.",
+      "sections": [
+        "Child Selector: Horizontal tabs to switch between children.",
+        "Summary Card: Age, weight, height.",
+        "Vaccine Schedule: Timeline component showing upcoming and completed vaccines."
+      ]
+    },
+    "Dashboard_Professionnel": {
+      "layout": "Control Room Grid (Dense but readable).",
+      "sections": [
+        "Metrics Row: Total patients, today's appointments.",
+        "Patient List: Searchable table/list of assigned patients.",
+        "Upcoming Appointments: Timeline view."
+      ]
+    }
+  },
+  "accessibility_and_motion": {
+    "animations": "Subtle scale on tap (active:scale-95), smooth transitions for page routing.",
+    "contrast": "Ensure text over images has dark gradient overlay. Buttons must have 4.5:1 contrast.",
+    "touch_targets": "All clickable elements must be at least 48x48px.",
+    "test_attributes": "All interactive and key informational elements MUST include a `data-testid` attribute (e.g., `data-testid=\"login-submit-button\"`)."
+  },
+  "instructions_to_main_agent": [
+    "Build the application using React JS and Tailwind CSS, simulating a mobile app layout (max-width container like max-w-md mx-auto for desktop viewing, full width on mobile).",
+    "Use standard HTML tags (div, section, span) with Tailwind for complex custom layouts, and Shadcn primitives for complex interactions (Dialog, Tabs, Select).",
+    "Do NOT use placeholder text or dummy image services. Use the exact media URLs provided in this JSON.",
+    "Implement bottom tab navigation for the main app sections.",
+    "Use the exact color hex codes provided. Tint all greys slightly with the primary/secondary hue.",
+    "All buttons and clickable areas must follow the touch target rules (min-h-[48px]).",
+    "Add data-testid attributes to all interactive elements."
+  ]
+}
