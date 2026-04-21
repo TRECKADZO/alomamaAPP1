@@ -109,6 +109,45 @@ def require_roles(*roles):
     return _dep
 
 
+def is_premium_active(user: dict) -> bool:
+    if not user.get("premium"):
+        return False
+    pu = user.get("premium_until")
+    if not pu:
+        return False
+    try:
+        return datetime.fromisoformat(pu.replace("Z", "+00:00")) > datetime.now(timezone.utc)
+    except Exception:
+        return False
+
+
+async def check_quota(user: dict, key: str, current_count: int):
+    """Enforce freemium quota. Raises 402 if limit reached and user not Premium."""
+    if is_premium_active(user):
+        return
+    role = user.get("role")
+    quotas = (globals().get("FREE_QUOTAS") or {}).get(role, {})
+    limit = quotas.get(key)
+    if isinstance(limit, int) and current_count >= limit:
+        label = {
+            "enfants_max": f"enfants ({limit} max)",
+            "patientes_max": f"patientes ({limit} max)",
+            "membres_pro_max": f"professionnels ({limit} max)",
+            "rdv_per_month": f"rendez-vous ce mois ({limit} max)",
+            "ia_per_day": f"messages IA aujourd'hui ({limit} max)",
+        }.get(key, key)
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "quota_exceeded",
+                "message": f"Quota gratuit atteint : {label}. Passez Premium pour continuer.",
+                "quota": key,
+                "limit": limit,
+                "upgrade_url": "/premium",
+            },
+        )
+
+
 # ----------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------
@@ -338,12 +377,23 @@ async def register(payload: RegisterIn):
         }
         await db.centres.insert_one(centre_doc)
 
-    # Si pro avec code invitation centre → on lie
+    # Si pro avec code invitation centre → on lie (soumis aux quotas freemium du centre)
     if payload.role == "professionnel" and payload.code_invitation_centre:
         centre = await db.centres.find_one(
             {"code_invitation": payload.code_invitation_centre.upper()}
         )
         if centre:
+            # Vérifier le quota du centre (ignoré si le centre est Premium)
+            owner = await db.users.find_one({"id": centre["user_id"]}, {"_id": 0})
+            current_members = len(centre.get("membres_pro", []) or [])
+            if owner and not is_premium_active(owner):
+                limit = (FREE_QUOTAS.get("centre_sante") or {}).get("membres_pro_max")
+                if isinstance(limit, int) and current_members >= limit:
+                    # On n'empêche pas l'inscription mais on ne lie pas au centre
+                    logger.info(
+                        f"Centre {centre['id']} a atteint sa limite freemium ({limit}). Pro {user_id} non lié."
+                    )
+                    return {"token": create_token(user_id, internal_email, payload.role), "user": serialize_user(doc), "centre_full": True}
             await db.centres.update_one(
                 {"id": centre["id"]},
                 {"$addToSet": {"membres_pro": user_id}},
@@ -454,6 +504,8 @@ async def set_enfant_photo(eid: str, payload: PhotoIn, user=Depends(require_role
 
 @api.post("/enfants")
 async def create_enfant(payload: EnfantIn, user=Depends(require_roles("maman"))):
+    current = await db.enfants.count_documents({"user_id": user["id"]})
+    await check_quota(user, "enfants_max", current)
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
@@ -522,6 +574,15 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
     pro = await db.users.find_one({"id": payload.pro_id, "role": "professionnel"})
     if not pro:
         raise HTTPException(404, "Professionnel introuvable")
+    # Quota freemium — max 10 RDV par mois pour une maman gratuite
+    if not is_premium_active(user):
+        now = datetime.now(timezone.utc)
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        current = await db.rdv.count_documents({
+            "maman_id": user["id"],
+            "created_at": {"$gte": start_of_month},
+        })
+        await check_quota(user, "rdv_per_month", current)
     doc = {
         "id": str(uuid.uuid4()),
         "maman_id": user["id"],
@@ -1651,6 +1712,32 @@ PREMIUM_PLANS = {
         ],
         "free_limits": "Gratuit : 3 pros max · pas de stats avancées",
     },
+    "famille": {
+        "code": "famille",
+        "label": "Famille Premium",
+        "base_price_fcfa": 1500,
+        "color": "#14B8A6",
+        "icon": "people-circle",
+        "description": "Pour les proches (papa, grand-parents) accompagnant la maman.",
+        "features": [
+            "Accès complet au dossier partagé par la maman",
+            "Notifications push des RDV et rappels",
+            "Chat familial privé",
+            "Suivi des mesures des enfants",
+            "Calendrier partagé des rendez-vous médicaux",
+            "IA basique (questions santé)",
+            "Support familial 7j/7",
+        ],
+        "free_limits": "Gratuit : lecture seule du dossier partagé (sans notifications)",
+    },
+}
+
+# Quotas freemium — limites pour les utilisateurs non-Premium
+FREE_QUOTAS = {
+    "maman": {"enfants_max": 2, "rdv_per_month": 10, "ia_per_day": 10},
+    "professionnel": {"patientes_max": 10, "ia_pro_per_day": 0},
+    "centre_sante": {"membres_pro_max": 3},
+    "famille": {"notifications_enabled": False},
 }
 
 # Remises selon la durée

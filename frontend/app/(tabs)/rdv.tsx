@@ -6,7 +6,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
-import { api, formatError } from "../../lib/api";
+import { api, formatError, isQuotaError } from "../../lib/api";
 import { cachedGet, smartPost, smartPatch } from "../../lib/offline";
 import { useAuth } from "../../lib/auth";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
@@ -61,7 +61,16 @@ export default function Rdv() {
       setModal(false);
       if (r.queued) Alert.alert("Enregistré hors ligne", "Le rendez-vous sera envoyé dès la reconnexion.");
       load();
-    } catch (e) { Alert.alert("Erreur", formatError(e)); }
+    } catch (e) {
+      if (isQuotaError(e)) {
+        Alert.alert("Quota atteint 💳", formatError(e), [
+          { text: "Plus tard" },
+          { text: "Passer Premium", onPress: () => router.push("/premium") },
+        ]);
+      } else {
+        Alert.alert("Erreur", formatError(e));
+      }
+    }
   };
 
   const changeStatus = async (rid: string, statusVal: string) => {

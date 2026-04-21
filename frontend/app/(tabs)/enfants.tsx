@@ -15,9 +15,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { api, formatError } from "../../lib/api";
+import { api, formatError, isQuotaError } from "../../lib/api";
 import { cachedGet, smartPost, smartDelete } from "../../lib/offline";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
 import DateField from "../../components/DateField";
@@ -51,6 +51,7 @@ function getProchainVaccin(enfant: any) {
 }
 
 export default function Enfants() {
+  const router = useRouter();
   const [list, setList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
@@ -85,7 +86,14 @@ export default function Enfants() {
       if (r.queued) Alert.alert("Enregistré hors ligne", "L'enfant sera ajouté dès la reconnexion.");
       load();
     } catch (e) {
-      Alert.alert("Erreur", formatError(e));
+      if (isQuotaError(e)) {
+        Alert.alert("Quota atteint 💳", formatError(e), [
+          { text: "Plus tard" },
+          { text: "Passer Premium", onPress: () => router.push("/premium") },
+        ]);
+      } else {
+        Alert.alert("Erreur", formatError(e));
+      }
     }
   };
 

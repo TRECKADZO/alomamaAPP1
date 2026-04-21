@@ -71,6 +71,10 @@ export default function PortailPro() {
               <Ionicons name="phone-portrait-outline" size={16} color={COLORS.primary} />
               <Text style={styles.mobileBtnText}>Je suis maman</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push("/plans")} style={[styles.mobileBtn, { marginLeft: 8 }]}>
+              <Ionicons name="pricetags-outline" size={16} color={COLORS.primary} />
+              <Text style={styles.mobileBtnText}>Nos offres</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.main}>

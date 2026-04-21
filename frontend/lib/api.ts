@@ -38,7 +38,12 @@ export async function getStoredUser() {
 export function formatError(e: any): string {
   const d = e?.response?.data?.detail;
   if (typeof d === "string") return d;
+  if (d && typeof d === "object" && typeof d.message === "string") return d.message;
   if (Array.isArray(d))
     return d.map((x: any) => (typeof x === "string" ? x : x?.msg ?? "")).join(" ");
   return e?.message || "Une erreur est survenue";
+}
+
+export function isQuotaError(e: any): boolean {
+  return e?.response?.status === 402 && e?.response?.data?.detail?.error === "quota_exceeded";
 }
