@@ -1002,6 +1002,7 @@ async def pro_revenus(user=Depends(require_roles("professionnel"))):
 
 @api.get("/pro/patients")
 async def pro_patients(user=Depends(require_roles("professionnel"))):
+    rdvs = await db.rdv.find({"pro_id": user["id"]}, {"_id": 0}).to_list(1000)
     patient_ids = list({r["maman_id"] for r in rdvs})
     users = await db.users.find(
         {"id": {"$in": patient_ids}}, {"_id": 0, "password_hash": 0}
