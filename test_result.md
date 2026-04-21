@@ -296,6 +296,13 @@ backend:
           BUG 2 — GET /admin/cmu/stats returns keys `mamans_total` and `pros_total` (L1397, L1400) instead of the spec's `total_mamans` and `total_pros`. All other 6 keys are correct. FIX: rename on L1397 → "total_mamans" and L1400 → "total_pros" (or add aliases).
 
           Test data cleaned up at end of run (test prestations deleted, maman CMU deleted, pro accepte_cmu reset to false). Script reruns are idempotent.
+      - working: true
+        agent: "main"
+        comment: |
+          BUG 1 (serialize_user) & BUG 2 (/admin/cmu/stats keys) corrigés.
+          - serialize_user (L66-87) expose maintenant `accepte_cmu`, `cmu`, `is_super_admin`.
+          - /admin/cmu/stats (L1383-1410) retourne à la fois `total_mamans`/`mamans_total` et `total_pros`/`pros_total` (alias pour backward-compat).
+          Vérification manuelle : /auth/me (pro@test.com) → accepte_cmu=true, is_super_admin=false. /admin/cmu/stats → 10 clés incluant total_mamans + total_pros.
 
 metadata:
   created_by: "main_agent"

@@ -80,6 +80,9 @@ def serialize_user(u: dict) -> dict:
         "region": u.get("region"),
         "premium": bool(u.get("premium", False)),
         "premium_until": u.get("premium_until"),
+        "accepte_cmu": bool(u.get("accepte_cmu", False)),
+        "cmu": u.get("cmu"),
+        "is_super_admin": bool(u.get("is_super_admin", False)),
         "created_at": u.get("created_at"),
     }
 
@@ -1394,9 +1397,11 @@ async def admin_cmu_stats(user=Depends(require_roles("admin"))):
     ])
     agg = await cursor.to_list(1)
     return {
+        "total_mamans": total_mamans,
         "mamans_total": total_mamans,
         "mamans_avec_cmu": mamans_cmu,
         "mamans_pct_cmu": round(100 * mamans_cmu / total_mamans, 1) if total_mamans else 0,
+        "total_pros": pros_total,
         "pros_total": pros_total,
         "pros_acceptant_cmu": pros_cmu,
         "rdv_cmu_total": rdv_cmu,
