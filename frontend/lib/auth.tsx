@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { api, saveAuth, clearAuth, getStoredUser, TOKEN_KEY } from "./api";
+import { clearCache } from "./offline";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { registerExpoPushToken } from "./push";
 
@@ -78,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await clearAuth();
+    await clearCache();
     setUser(null);
   };
 

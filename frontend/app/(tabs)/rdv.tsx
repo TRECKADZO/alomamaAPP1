@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../../lib/api";
+import { cachedGet, smartPost, smartPatch } from "../../lib/offline";
 import { useAuth } from "../../lib/auth";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 import DateField from "../../components/DateField";
@@ -42,11 +43,11 @@ export default function Rdv() {
 
   const load = async () => {
     try {
-      const { data } = await api.get("/rdv");
-      setRdv(data);
+      const r = await cachedGet("/rdv");
+      setRdv(r.data || []);
       if (user?.role === "maman") {
-        const p = await api.get("/professionnels");
-        setPros(p.data);
+        const p = await cachedGet("/professionnels");
+        setPros(p.data || []);
       }
     } finally { setLoading(false); }
   };
@@ -55,15 +56,16 @@ export default function Rdv() {
   const create = async () => {
     if (!form.pro_id || !form.date || !form.motif || !form.type_consultation) return Alert.alert("Champs requis", "Veuillez remplir tous les champs");
     try {
-      await api.post("/rdv", form);
+      const r = await smartPost("/rdv", form);
       setForm({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel" });
       setModal(false);
+      if (r.queued) Alert.alert("Enregistré hors ligne", "Le rendez-vous sera envoyé dès la reconnexion.");
       load();
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
   };
 
   const changeStatus = async (rid: string, statusVal: string) => {
-    try { await api.patch(`/rdv/${rid}/status?status_val=${statusVal}`); load(); } catch (e) { Alert.alert("Erreur", formatError(e)); }
+    try { await smartPatch(`/rdv/${rid}/status?status_val=${statusVal}`); load(); } catch (e) { Alert.alert("Erreur", formatError(e)); }
   };
 
   if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;

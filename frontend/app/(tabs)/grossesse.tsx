@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api, formatError } from "../../lib/api";
+import { cachedGet, smartPost, smartPatch } from "../../lib/offline";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 import DateField from "../../components/DateField";
 
@@ -53,7 +54,7 @@ export default function Grossesse() {
   const [symptome, setSymptome] = useState("");
 
   const load = async () => {
-    try { const { data } = await api.get("/grossesse"); setG(data); }
+    try { const r = await cachedGet("/grossesse"); setG(r.data || null); }
     catch { setG(null); }
     finally { setLoading(false); }
   };
@@ -62,21 +63,24 @@ export default function Grossesse() {
   const create = async () => {
     if (!dateDebut) return Alert.alert("Date début requise");
     try {
-      const { data } = await api.post("/grossesse", { date_debut: dateDebut, date_terme: dateTerme || undefined, notes, symptomes: [] });
-      setG(data);
+      const r = await smartPost("/grossesse", { date_debut: dateDebut, date_terme: dateTerme || undefined, notes, symptomes: [] });
+      if (r.data) setG(r.data);
       setModal(false);
       setDateDebut(""); setDateTerme(""); setNotes("");
+      if (r.queued) Alert.alert("Enregistré hors ligne", "Votre grossesse sera enregistrée dès la reconnexion.");
+      else load();
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
   };
 
   const addSymptome = async () => {
     if (!symptome.trim() || !g) return;
     try {
-      const { data } = await api.patch(`/grossesse/${g.id}`, {
+      const r = await smartPatch(`/grossesse/${g.id}`, {
         date_debut: g.date_debut,
         symptomes: [...(g.symptomes || []), symptome.trim()],
       });
-      setG(data);
+      if (r.data) setG(r.data);
+      else setG({ ...g, symptomes: [...(g.symptomes || []), symptome.trim()] });
       setSymptome("");
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
   };

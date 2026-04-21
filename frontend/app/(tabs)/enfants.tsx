@@ -18,6 +18,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../lib/api";
+import { cachedGet, smartPost, smartDelete } from "../../lib/offline";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
 import DateField from "../../components/DateField";
 import PickerField from "../../components/PickerField";
@@ -59,8 +60,8 @@ export default function Enfants() {
 
   const load = async () => {
     try {
-      const { data } = await api.get("/enfants");
-      setList(data);
+      const r = await cachedGet("/enfants");
+      setList(r.data || []);
     } finally {
       setLoading(false);
     }
@@ -70,7 +71,7 @@ export default function Enfants() {
   const create = async () => {
     if (!form.nom || !form.date_naissance) return Alert.alert("Champs requis", "Nom et date de naissance");
     try {
-      await api.post("/enfants", {
+      const r = await smartPost("/enfants", {
         nom: form.nom,
         date_naissance: form.date_naissance,
         sexe: form.sexe,
@@ -81,6 +82,7 @@ export default function Enfants() {
       });
       setForm({ nom: "", date_naissance: "", sexe: "F", poids_kg: "", taille_cm: "", groupe_sanguin: "", allergies: "" });
       setModal(false);
+      if (r.queued) Alert.alert("Enregistré hors ligne", "L'enfant sera ajouté dès la reconnexion.");
       load();
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
@@ -90,7 +92,7 @@ export default function Enfants() {
   const addVaccin = async () => {
     if (!vaccin.nom || !vaccin.date || !vaccinModal) return;
     try {
-      await api.post(`/enfants/${vaccinModal}/vaccins`, {
+      const r = await smartPost(`/enfants/${vaccinModal}/vaccins`, {
         nom: vaccin.nom,
         date: vaccin.date,
         fait: true,
@@ -98,6 +100,7 @@ export default function Enfants() {
       });
       setVaccin({ nom: "", date: "", prochain_rappel: "" });
       setVaccinModal(null);
+      if (r.queued) Alert.alert("Enregistré hors ligne", "Le vaccin sera ajouté dès la reconnexion.");
       load();
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
@@ -107,7 +110,7 @@ export default function Enfants() {
   const remove = (id: string) => {
     Alert.alert("Supprimer ?", "Confirmer la suppression", [
       { text: "Annuler" },
-      { text: "Supprimer", style: "destructive", onPress: async () => { await api.delete(`/enfants/${id}`); load(); } },
+      { text: "Supprimer", style: "destructive", onPress: async () => { await smartDelete(`/enfants/${id}`); load(); } },
     ]);
   };
 

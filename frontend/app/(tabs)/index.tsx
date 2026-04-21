@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../lib/auth";
 import { api } from "../../lib/api";
+import { cachedGet } from "../../lib/offline";
 import { COLORS, IMAGES, RADIUS, SHADOW, SPACING } from "../../constants/theme";
 
 export default function DashboardHome() {
@@ -29,20 +30,20 @@ export default function DashboardHome() {
     try {
       if (user?.role === "maman") {
         const [g, enfants, rdv, rem] = await Promise.all([
-          api.get("/grossesse").catch(() => ({ data: null })),
-          api.get("/enfants").catch(() => ({ data: [] })),
-          api.get("/rdv").catch(() => ({ data: [] })),
-          api.get("/reminders").catch(() => ({ data: [] })),
+          cachedGet("/grossesse").catch(() => ({ data: null })),
+          cachedGet("/enfants").catch(() => ({ data: [] })),
+          cachedGet("/rdv").catch(() => ({ data: [] })),
+          cachedGet("/reminders").catch(() => ({ data: [] })),
         ]);
         setData({ grossesse: g.data, enfants: enfants.data, rdv: rdv.data, reminders: rem.data });
       } else if (user?.role === "professionnel") {
         const [patients, rdv] = await Promise.all([
-          api.get("/pro/patients").catch(() => ({ data: [] })),
-          api.get("/rdv").catch(() => ({ data: [] })),
+          cachedGet("/pro/patients").catch(() => ({ data: [] })),
+          cachedGet("/rdv").catch(() => ({ data: [] })),
         ]);
         setData({ patients: patients.data, rdv: rdv.data });
       } else if (user?.role === "admin") {
-        const stats = await api.get("/admin/stats").catch(() => ({ data: {} }));
+        const stats = await cachedGet("/admin/stats").catch(() => ({ data: {} }));
         setData({ stats: stats.data });
       }
     } finally {
