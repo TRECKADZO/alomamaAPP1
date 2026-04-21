@@ -5,17 +5,31 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+
+const CATEGORIES = [
+  { value: "toutes", label: "Toutes", icon: "\u{1F4AC}", color: "#9CA3AF" },
+  { value: "grossesse", label: "Grossesse", icon: "\u{1F930}", color: "#EC4899" },
+  { value: "accouchement", label: "Accouchement", icon: "\u{1F476}", color: "#A855F7" },
+  { value: "allaitement", label: "Allaitement", icon: "\u{1F37C}", color: "#F59E0B" },
+  { value: "post_partum", label: "Post-partum", icon: "\u{1F495}", color: "#F472B6" },
+  { value: "nutrition", label: "Nutrition", icon: "\u{1F957}", color: "#10B981" },
+  { value: "sante_enfant", label: "Santé enfant", icon: "\u{1F9D2}", color: "#3B82F6" },
+  { value: "questions_specialistes", label: "Spécialistes", icon: "\u{1F468}\u200D\u2695\uFE0F", color: "#06B6D4" },
+  { value: "general", label: "Général", icon: "\u{1F4AC}", color: "#6B7280" },
+];
 
 export default function Communaute() {
   const { user } = useAuth();
-  const router = useRouter();
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectedCat, setSelectedCat] = useState("toutes");
   const [form, setForm] = useState({ title: "", content: "", category: "general" });
   const [commentModal, setCommentModal] = useState<string | null>(null);
   const [commentText, setCommentText] = useState("");
@@ -32,7 +46,7 @@ export default function Communaute() {
   useFocusEffect(useCallback(() => { load(); }, []));
 
   const createPost = async () => {
-    if (!form.title || !form.content) return Alert.alert("Titre et contenu requis");
+    if (!form.title || !form.content) return Alert.alert("Champs requis", "Titre et contenu requis");
     try {
       await api.post("/community", form);
       setForm({ title: "", content: "", category: "general" });
@@ -42,154 +56,221 @@ export default function Communaute() {
   };
 
   const toggleLike = async (pid: string) => {
-    try {
-      await api.post(`/community/${pid}/like`);
-      load();
-    } catch {}
+    try { await api.post(`/community/${pid}/like`); load(); } catch {}
   };
 
-  const addComment = async () => {
-    if (!commentText || !commentModal) return;
+  const addComment = async (pid: string) => {
+    if (!commentText.trim()) return;
     try {
-      await api.post(`/community/${commentModal}/comment`, { content: commentText });
+      await api.post(`/community/${pid}/comment`, { content: commentText });
       setCommentText("");
       setCommentModal(null);
       load();
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
   };
 
-  if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
+  const filtered = posts.filter((p) => {
+    const matchSearch = !search || (p.title?.toLowerCase().includes(search.toLowerCase()) || p.content?.toLowerCase().includes(search.toLowerCase()));
+    const matchCat = selectedCat === "toutes" || p.category === selectedCat;
+    return matchSearch && matchCat;
+  });
 
-  const currentPost = posts.find((p) => p.id === commentModal);
+  const stats = {
+    total: posts.length,
+    membres: new Set(posts.map((p) => p.user_id)).size,
+    aujourdhui: posts.filter((p) => new Date(p.created_at).toDateString() === new Date().toDateString()).length,
+  };
+
+  if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Communauté</Text>
-        <TouchableOpacity style={styles.addHeader} onPress={() => setModal(true)} testID="new-post-btn">
-          <Ionicons name="add" size={22} color="#fff" />
-        </TouchableOpacity>
+      {/* Header gradient amber-orange */}
+      <LinearGradient colors={["#FEF3C7", "#FFEDD5"]} style={styles.header}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            <LinearGradient colors={["#F59E0B", "#EA580C"]} style={styles.headerIcon}>
+              <Ionicons name="chatbubbles" size={24} color="#fff" />
+            </LinearGradient>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerTitle}>Communauté</Text>
+              <Text style={styles.headerSub}>Partagez et échangez</Text>
+            </View>
+          </View>
+          <TouchableOpacity onPress={() => setModal(true)} testID="new-post-btn">
+            <LinearGradient colors={["#F59E0B", "#EA580C"]} style={styles.headerBtn}>
+              <Ionicons name="add" size={20} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+        {/* Stats */}
+        <View style={styles.statsRow}>
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>{stats.total}</Text>
+            <Text style={styles.statLabel}>Discussions</Text>
+          </View>
+          <View style={styles.statSep} />
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>{stats.membres}</Text>
+            <Text style={styles.statLabel}>Membres</Text>
+          </View>
+          <View style={styles.statSep} />
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>{stats.aujourdhui}</Text>
+            <Text style={styles.statLabel}>Aujourd'hui</Text>
+          </View>
+        </View>
+      </LinearGradient>
+
+      {/* Search bar */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchInputWrap}>
+          <Ionicons name="search" size={16} color={COLORS.textMuted} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Rechercher une discussion..."
+            placeholderTextColor={COLORS.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: SPACING.xl, paddingTop: 10, paddingBottom: 60 }}>
-        {posts.length === 0 ? (
-          <Text style={styles.empty}>Aucune publication pour le moment</Text>
+      {/* Category chips */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catScroll} contentContainerStyle={{ paddingHorizontal: SPACING.lg, gap: 6 }}>
+        {CATEGORIES.map((c) => (
+          <TouchableOpacity
+            key={c.value}
+            onPress={() => setSelectedCat(c.value)}
+            style={[
+              styles.catChip,
+              selectedCat === c.value && { backgroundColor: c.color, borderColor: c.color },
+            ]}
+          >
+            <Text style={[styles.catChipText, selectedCat === c.value && { color: "#fff" }]}>
+              {c.icon} {c.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* Posts list */}
+      <ScrollView contentContainerStyle={{ padding: SPACING.lg, paddingTop: 4, paddingBottom: 60 }}>
+        {filtered.length === 0 ? (
+          <View style={styles.empty}>
+            <Ionicons name="chatbubbles-outline" size={48} color={COLORS.textMuted} />
+            <Text style={styles.emptyTitle}>Aucune discussion</Text>
+            <Text style={styles.emptyText}>Soyez le premier à publier !</Text>
+          </View>
         ) : (
-          posts.map((p) => (
-            <View key={p.id} style={styles.post} testID={`post-${p.id}`}>
-              <View style={styles.postHead}>
-                <View style={[styles.avatar, { backgroundColor: p.user_role === "professionnel" ? COLORS.secondary : COLORS.primary }]}>
-                  <Text style={styles.avatarText}>{p.user_name?.charAt(0).toUpperCase()}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Text style={styles.postName}>{p.user_name}</Text>
-                    {p.user_role === "professionnel" && (
-                      <View style={styles.proBadge}>
-                        <Ionicons name="shield-checkmark" size={10} color="#fff" />
-                        <Text style={styles.proBadgeText}>Pro</Text>
-                      </View>
-                    )}
+          filtered.map((p) => {
+            const cat = CATEGORIES.find((c) => c.value === p.category) || CATEGORIES[CATEGORIES.length - 1];
+            const liked = (p.likes || []).includes(user?.id);
+            const isPro = p.user_role === "professionnel";
+            return (
+              <View key={p.id} style={styles.card}>
+                <View style={styles.cardHead}>
+                  <View style={[styles.userAvatar, { backgroundColor: cat.color + "22" }]}>
+                    <Text style={[styles.userAvatarText, { color: cat.color }]}>
+                      {(p.user_name || "?").charAt(0).toUpperCase()}
+                    </Text>
                   </View>
-                  <Text style={styles.postDate}>{new Date(p.created_at).toLocaleDateString("fr-FR")}</Text>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text style={styles.userName}>{p.user_name || "Anonyme"}</Text>
+                      {isPro && (
+                        <View style={styles.proBadge}>
+                          <Ionicons name="medical" size={9} color="#fff" />
+                          <Text style={styles.proBadgeText}>PRO</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.userMeta}>{new Date(p.created_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
+                  </View>
+                  <View style={[styles.catTag, { backgroundColor: cat.color + "22" }]}>
+                    <Text style={[styles.catTagText, { color: cat.color }]}>{cat.icon} {cat.label}</Text>
+                  </View>
                 </View>
-                <View style={styles.catChip}>
-                  <Text style={styles.catText}>{p.category}</Text>
+                <Text style={styles.postTitle}>{p.title}</Text>
+                <Text style={styles.postContent}>{p.content}</Text>
+                <View style={styles.actionsRow}>
+                  <TouchableOpacity style={styles.actionBtn} onPress={() => toggleLike(p.id)}>
+                    <Ionicons name={liked ? "heart" : "heart-outline"} size={18} color={liked ? "#EC4899" : COLORS.textSecondary} />
+                    <Text style={[styles.actionText, liked && { color: "#EC4899" }]}>{(p.likes || []).length}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.actionBtn} onPress={() => setCommentModal(p.id)}>
+                    <Ionicons name="chatbubble-outline" size={18} color={COLORS.textSecondary} />
+                    <Text style={styles.actionText}>{(p.comments || []).length}</Text>
+                  </TouchableOpacity>
                 </View>
+                {(p.comments || []).length > 0 && (
+                  <View style={styles.commentsList}>
+                    {(p.comments || []).slice(-2).map((c: any) => (
+                      <View key={c.id} style={styles.commentRow}>
+                        <View style={styles.commentAvatar}><Text style={styles.commentAvatarText}>{(c.user_name || "?").charAt(0).toUpperCase()}</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.commentName}>{c.user_name}</Text>
+                          <Text style={styles.commentText}>{c.content}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </View>
-              <Text style={styles.postTitle}>{p.title}</Text>
-              <Text style={styles.postContent}>{p.content}</Text>
-
-              <View style={styles.postActions}>
-                <TouchableOpacity style={styles.postAction} onPress={() => toggleLike(p.id)} testID={`like-${p.id}`}>
-                  <Ionicons
-                    name={p.likes?.includes(user?.id) ? "heart" : "heart-outline"}
-                    size={20}
-                    color={p.likes?.includes(user?.id) ? COLORS.primary : COLORS.textSecondary}
-                  />
-                  <Text style={styles.postActionText}>{p.likes?.length || 0}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.postAction} onPress={() => setCommentModal(p.id)} testID={`comment-${p.id}`}>
-                  <Ionicons name="chatbubble-outline" size={20} color={COLORS.textSecondary} />
-                  <Text style={styles.postActionText}>{p.comments?.length || 0}</Text>
-                </TouchableOpacity>
-              </View>
-
-              {(p.comments || []).slice(0, 2).map((c: any) => (
-                <View key={c.id} style={styles.comment}>
-                  <Text style={styles.commentName}>{c.user_name}</Text>
-                  <Text style={styles.commentText}>{c.content}</Text>
-                </View>
-              ))}
-            </View>
-          ))
+            );
+          })
         )}
       </ScrollView>
 
-      {/* New post modal */}
+      {/* Create post modal */}
       <Modal visible={modal} animationType="slide" transparent>
         <KeyboardAvoidingView style={styles.modalWrap} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHead}>
-              <Text style={styles.modalTitle}>Nouvelle publication</Text>
-              <TouchableOpacity onPress={() => setModal(false)}>
-                <Ionicons name="close" size={24} color={COLORS.textPrimary} />
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <View style={styles.modalCard}>
+              <View style={styles.modalHead}>
+                <Text style={styles.modalTitle}>Nouvelle discussion</Text>
+                <TouchableOpacity onPress={() => setModal(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
+              </View>
+              <Text style={styles.label}>Catégorie</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {CATEGORIES.filter((c) => c.value !== "toutes").map((c) => (
+                  <TouchableOpacity
+                    key={c.value}
+                    onPress={() => setForm({ ...form, category: c.value })}
+                    style={[styles.catChip, { marginRight: 6 }, form.category === c.value && { backgroundColor: c.color, borderColor: c.color }]}
+                  >
+                    <Text style={[styles.catChipText, form.category === c.value && { color: "#fff" }]}>{c.icon} {c.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <Text style={styles.label}>Titre</Text>
+              <TextInput style={styles.input} value={form.title} onChangeText={(v) => setForm({ ...form, title: v })} placeholder="Posez votre question..." placeholderTextColor={COLORS.textMuted} testID="post-title" />
+              <Text style={styles.label}>Contenu</Text>
+              <TextInput style={[styles.input, { height: 120, textAlignVertical: "top" }]} multiline value={form.content} onChangeText={(v) => setForm({ ...form, content: v })} placeholder="Détails, contexte, vos pensées..." placeholderTextColor={COLORS.textMuted} testID="post-content" />
+              <TouchableOpacity onPress={createPost} testID="submit-post-btn">
+                <LinearGradient colors={["#F59E0B", "#EA580C"]} style={styles.btnPrimary}>
+                  <Text style={styles.btnPrimaryText}>Publier</Text>
+                </LinearGradient>
               </TouchableOpacity>
             </View>
-            <Text style={styles.label}>Titre</Text>
-            <TextInput style={styles.input} value={form.title} onChangeText={(v) => setForm({ ...form, title: v })} testID="post-title" />
-            <Text style={styles.label}>Message</Text>
-            <TextInput style={[styles.input, { height: 120 }]} multiline value={form.content} onChangeText={(v) => setForm({ ...form, content: v })} testID="post-content" />
-            <Text style={styles.label}>Catégorie</Text>
-            <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-              {["general", "grossesse", "allaitement", "enfant", "post-partum"].map((c) => (
-                <TouchableOpacity key={c} style={[styles.catBtn, form.category === c && styles.catBtnActive]} onPress={() => setForm({ ...form, category: c })}>
-                  <Text style={[styles.catBtnText, form.category === c && { color: "#fff" }]}>{c}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <TouchableOpacity style={styles.btnPrimary} onPress={createPost} testID="save-post-btn">
-              <Text style={styles.btnPrimaryText}>Publier</Text>
-            </TouchableOpacity>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
 
       {/* Comment modal */}
       <Modal visible={!!commentModal} animationType="slide" transparent>
         <KeyboardAvoidingView style={styles.modalWrap} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          <View style={[styles.modalCard, { maxHeight: "80%" }]}>
+          <View style={styles.modalCard}>
             <View style={styles.modalHead}>
-              <Text style={styles.modalTitle}>Commentaires</Text>
-              <TouchableOpacity onPress={() => setCommentModal(null)}>
-                <Ionicons name="close" size={24} color={COLORS.textPrimary} />
-              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Ajouter un commentaire</Text>
+              <TouchableOpacity onPress={() => setCommentModal(null)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
             </View>
-            <ScrollView style={{ maxHeight: 300 }}>
-              {(currentPost?.comments || []).map((c: any) => (
-                <View key={c.id} style={styles.commentFull}>
-                  <Text style={styles.commentName}>{c.user_name}</Text>
-                  <Text style={styles.commentText}>{c.content}</Text>
-                  <Text style={styles.commentDate}>{new Date(c.created_at).toLocaleString("fr-FR")}</Text>
-                </View>
-              ))}
-              {(!currentPost?.comments || currentPost.comments.length === 0) && (
-                <Text style={styles.empty}>Soyez la première à commenter</Text>
-              )}
-            </ScrollView>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                placeholder="Votre commentaire..."
-                placeholderTextColor={COLORS.textMuted}
-                value={commentText}
-                onChangeText={setCommentText}
-                testID="comment-input"
-              />
-              <TouchableOpacity style={styles.sendBtn} onPress={addComment} testID="send-comment-btn">
-                <Ionicons name="send" size={20} color="#fff" />
-              </TouchableOpacity>
-            </View>
+            <TextInput style={[styles.input, { height: 100, textAlignVertical: "top" }]} multiline value={commentText} onChangeText={setCommentText} placeholder="Votre réponse..." placeholderTextColor={COLORS.textMuted} />
+            <TouchableOpacity onPress={() => commentModal && addComment(commentModal)}>
+              <LinearGradient colors={["#F59E0B", "#EA580C"]} style={styles.btnPrimary}>
+                <Text style={styles.btnPrimaryText}>Envoyer</Text>
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -199,41 +280,59 @@ export default function Communaute() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bgPrimary },
-  loading: { flex: 1, backgroundColor: COLORS.bgPrimary, alignItems: "center", justifyContent: "center" },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: SPACING.xl },
-  title: { fontSize: 24, fontWeight: "800", color: COLORS.textPrimary },
-  addHeader: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
-  empty: { color: COLORS.textMuted, textAlign: "center", marginTop: 30, fontStyle: "italic" },
-  post: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: 12, borderWidth: 1, borderColor: COLORS.border },
-  postHead: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
-  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  avatarText: { color: "#fff", fontWeight: "800" },
-  postName: { fontWeight: "700", color: COLORS.textPrimary },
-  postDate: { color: COLORS.textMuted, fontSize: 11 },
-  proBadge: { flexDirection: "row", alignItems: "center", gap: 2, backgroundColor: COLORS.secondary, paddingHorizontal: 6, paddingVertical: 2, borderRadius: RADIUS.pill },
-  proBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
-  catChip: { backgroundColor: COLORS.secondaryLight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.pill },
-  catText: { color: COLORS.textSecondary, fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.bgPrimary },
+  header: { padding: SPACING.lg, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 },
+  headerRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  headerLeft: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12 },
+  headerIcon: { width: 50, height: 50, borderRadius: 18, alignItems: "center", justifyContent: "center", ...SHADOW },
+  headerTitle: { fontSize: 22, fontWeight: "800", color: "#7C2D12" },
+  headerSub: { fontSize: 12, color: "#9A3412", marginTop: 2 },
+  headerBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", ...SHADOW },
+  statsRow: { flexDirection: "row", marginTop: 16, backgroundColor: "rgba(255,255,255,0.6)", borderRadius: RADIUS.md, paddingVertical: 12 },
+  statItem: { flex: 1, alignItems: "center" },
+  statValue: { fontSize: 18, fontWeight: "800", color: "#7C2D12" },
+  statLabel: { fontSize: 10, color: "#9A3412", marginTop: 2, fontWeight: "600" },
+  statSep: { width: 1, backgroundColor: "rgba(124,45,18,0.2)" },
+
+  searchRow: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.md },
+  searchInputWrap: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, paddingHorizontal: 12, height: 42 },
+  searchInput: { flex: 1, color: COLORS.textPrimary, fontSize: 14 },
+  catScroll: { marginTop: 10, marginBottom: 6, maxHeight: 40 },
+  catChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
+  catChipText: { fontSize: 12, fontWeight: "600", color: COLORS.textPrimary },
+
+  empty: { alignItems: "center", padding: 40 },
+  emptyTitle: { fontSize: 16, fontWeight: "800", color: COLORS.textPrimary, marginTop: 12 },
+  emptyText: { color: COLORS.textSecondary, marginTop: 4 },
+
+  card: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, marginBottom: 12, borderWidth: 1, borderColor: COLORS.border, ...SHADOW },
+  cardHead: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 10 },
+  userAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  userAvatarText: { fontWeight: "800", fontSize: 14 },
+  userName: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 13 },
+  userMeta: { color: COLORS.textMuted, fontSize: 11, marginTop: 2 },
+  proBadge: { flexDirection: "row", alignItems: "center", gap: 2, backgroundColor: "#06B6D4", paddingHorizontal: 6, paddingVertical: 2, borderRadius: RADIUS.pill },
+  proBadgeText: { color: "#fff", fontSize: 9, fontWeight: "800" },
+  catTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.pill },
+  catTagText: { fontSize: 10, fontWeight: "700" },
   postTitle: { fontSize: 16, fontWeight: "800", color: COLORS.textPrimary, marginBottom: 6 },
-  postContent: { color: COLORS.textSecondary, lineHeight: 20 },
-  postActions: { flexDirection: "row", gap: 20, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: COLORS.border },
-  postAction: { flexDirection: "row", alignItems: "center", gap: 6 },
-  postActionText: { color: COLORS.textSecondary, fontWeight: "600" },
-  comment: { padding: 10, backgroundColor: COLORS.bgSecondary, borderRadius: RADIUS.md, marginTop: 6 },
-  commentFull: { padding: 12, backgroundColor: COLORS.bgSecondary, borderRadius: RADIUS.md, marginBottom: 6 },
-  commentName: { fontWeight: "700", color: COLORS.textPrimary, fontSize: 13 },
-  commentText: { color: COLORS.textSecondary, marginTop: 2 },
-  commentDate: { color: COLORS.textMuted, fontSize: 10, marginTop: 4 },
+  postContent: { color: COLORS.textSecondary, fontSize: 13, lineHeight: 19 },
+  actionsRow: { flexDirection: "row", gap: 16, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: COLORS.border },
+  actionBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  actionText: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "600" },
+  commentsList: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 8 },
+  commentRow: { flexDirection: "row", gap: 8 },
+  commentAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: COLORS.bgSecondary, alignItems: "center", justifyContent: "center" },
+  commentAvatarText: { fontSize: 11, fontWeight: "800", color: COLORS.textPrimary },
+  commentName: { fontWeight: "700", color: COLORS.textPrimary, fontSize: 12 },
+  commentText: { color: COLORS.textSecondary, fontSize: 12, marginTop: 2 },
+
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  modalCard: { backgroundColor: COLORS.bgPrimary, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: SPACING.xl },
-  modalHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  modalTitle: { fontSize: 20, fontWeight: "800", color: COLORS.textPrimary },
-  label: { fontSize: 13, fontWeight: "600", color: COLORS.textPrimary, marginTop: 10, marginBottom: 6 },
-  input: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: 12, color: COLORS.textPrimary },
-  catBtn: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: COLORS.surface, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border },
-  catBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  catBtnText: { color: COLORS.textPrimary, fontSize: 12, fontWeight: "600" },
-  btnPrimary: { backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: RADIUS.pill, alignItems: "center", marginTop: 20 },
-  btnPrimaryText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  sendBtn: { width: 48, height: 48, backgroundColor: COLORS.primary, borderRadius: RADIUS.md, alignItems: "center", justifyContent: "center" },
+  modalCard: { backgroundColor: COLORS.bgPrimary, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: SPACING.xl, maxHeight: "92%" },
+  modalHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: COLORS.textPrimary },
+  label: { fontSize: 13, color: COLORS.textPrimary, fontWeight: "700", marginBottom: 6, marginTop: 10 },
+  input: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: 12, color: COLORS.textPrimary, fontSize: 14 },
+  btnPrimary: { paddingVertical: 14, borderRadius: RADIUS.pill, alignItems: "center", marginTop: 18 },
+  btnPrimaryText: { color: "#fff", fontWeight: "800", fontSize: 15 },
 });
