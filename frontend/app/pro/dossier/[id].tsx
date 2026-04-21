@@ -6,6 +6,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
+import DateField from "../../../components/DateField";
 
 export default function DossierPatient() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -227,7 +228,7 @@ export default function DossierPatient() {
                 <TouchableOpacity onPress={() => setNoteModal(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
               </View>
               <Label text="Date" />
-              <TextInput style={styles.input} value={note.date} onChangeText={(v) => setNote({ ...note, date: v })} placeholder="YYYY-MM-DD" placeholderTextColor={COLORS.textMuted} />
+              <DateField value={note.date} onChange={(v) => setNote({ ...note, date: v })} placeholder="Choisir la date" />
               <Label text="Diagnostic" />
               <TextInput style={styles.input} value={note.diagnostic} onChangeText={(v) => setNote({ ...note, diagnostic: v })} placeholder="Diagnostic préliminaire..." placeholderTextColor={COLORS.textMuted} />
               <Label text="Traitement" />
@@ -254,8 +255,8 @@ export default function DossierPatient() {
             </View>
             <Label text="Titre *" />
             <TextInput style={styles.input} value={rappel.title} onChangeText={(v) => setRappel({ ...rappel, title: v })} placeholder="Ex: Prise de médicament, RDV de suivi..." placeholderTextColor={COLORS.textMuted} />
-            <Label text="Échéance (YYYY-MM-DD)" />
-            <TextInput style={styles.input} value={rappel.due_at} onChangeText={(v) => setRappel({ ...rappel, due_at: v })} placeholder="2026-05-01" placeholderTextColor={COLORS.textMuted} />
+            <Label text="Échéance" />
+            <DateField value={rappel.due_at} onChange={(v) => setRappel({ ...rappel, due_at: v })} placeholder="Choisir la date" />
             <Label text="Notes" />
             <TextInput style={[styles.input, { height: 80, textAlignVertical: "top" }]} multiline value={rappel.notes} onChangeText={(v) => setRappel({ ...rappel, notes: v })} />
             <TouchableOpacity onPress={saveRappel}>

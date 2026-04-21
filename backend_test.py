@@ -1,13 +1,13 @@
 """
 Backend tests for À lo Maman — Pro role new endpoints.
-Target: https://maman-mobile-mvp.preview.emergentagent.com/api
+Target: https://maman-rdv-booking.preview.emergentagent.com/api
 """
 import os
 import sys
 import uuid
 import requests
 
-BASE = os.environ.get("BACKEND_URL", "https://maman-mobile-mvp.preview.emergentagent.com/api")
+BASE = os.environ.get("BACKEND_URL", "https://maman-rdv-booking.preview.emergentagent.com/api")
 
 PRO_EMAIL = "pro@test.com"
 PRO_PW = "Pro123!"

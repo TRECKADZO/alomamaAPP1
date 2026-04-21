@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../lib/api";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
+import DateField from "../components/DateField";
 
 const SYMPTOMES = ["Tristesse", "Anxiété", "Fatigue extrême", "Insomnie", "Irritabilité", "Pleurs fréquents", "Perte d'appétit"];
 
@@ -156,8 +157,8 @@ export default function PostPartum() {
                 <Text style={styles.modalTitle}>Mon humeur aujourd'hui</Text>
                 <TouchableOpacity onPress={() => setModalH(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
               </View>
-              <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
-              <TextInput style={styles.input} value={humForm.date} onChangeText={(v) => setHumForm({ ...humForm, date: v })} placeholder="2026-04-20" placeholderTextColor={COLORS.textMuted} testID="humeur-date" />
+              <Text style={styles.label}>Date</Text>
+              <DateField value={humForm.date} onChange={(v) => setHumForm({ ...humForm, date: v })} maximumDate={new Date()} placeholder="Choisir la date" testID="humeur-date" />
               <Text style={styles.label}>Score: {humForm.score}/10</Text>
               <View style={styles.scoreRow}>
                 {[1,2,3,4,5,6,7,8,9,10].map((n) => (
@@ -199,8 +200,8 @@ export default function PostPartum() {
                   <Text>{e.sexe === "F" ? "👧" : "👦"} {e.nom}</Text>
                 </TouchableOpacity>
               ))}
-              <Text style={styles.label}>Date & heure (YYYY-MM-DDTHH:MM)</Text>
-              <TextInput style={styles.input} value={allForm.date} onChangeText={(v) => setAllForm({ ...allForm, date: v })} placeholder="2026-04-20T14:30" placeholderTextColor={COLORS.textMuted} />
+              <Text style={styles.label}>Date & heure</Text>
+              <DateField value={allForm.date} onChange={(v) => setAllForm({ ...allForm, date: v })} mode="datetime" placeholder="Choisir date et heure" />
               <Text style={styles.label}>Durée (min)</Text>
               <TextInput style={styles.input} value={allForm.duree_minutes} onChangeText={(v) => setAllForm({ ...allForm, duree_minutes: v })} keyboardType="number-pad" />
               <Text style={styles.label}>Côté</Text>

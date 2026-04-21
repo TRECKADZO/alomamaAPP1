@@ -9,6 +9,9 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import DateField from "../../components/DateField";
+import PickerField from "../../components/PickerField";
+import { TYPES_CONSULTATION } from "../../lib/data";
 
 const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 const JOURS_FR = ["L", "M", "M", "J", "V", "S", "D"];
@@ -35,7 +38,7 @@ export default function Rdv() {
   const [cursor, setCursor] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [filterStatut, setFilterStatut] = useState("tous");
-  const [form, setForm] = useState({ pro_id: "", date: "", motif: "" });
+  const [form, setForm] = useState({ pro_id: "", date: "", motif: "", type_consultation: "" });
 
   const load = async () => {
     try {
@@ -50,10 +53,10 @@ export default function Rdv() {
   useFocusEffect(useCallback(() => { load(); }, [user]));
 
   const create = async () => {
-    if (!form.pro_id || !form.date || !form.motif) return Alert.alert("Champs requis");
+    if (!form.pro_id || !form.date || !form.motif || !form.type_consultation) return Alert.alert("Champs requis", "Veuillez remplir tous les champs");
     try {
       await api.post("/rdv", form);
-      setForm({ pro_id: "", date: "", motif: "" });
+      setForm({ pro_id: "", date: "", motif: "", type_consultation: "" });
       setModal(false);
       load();
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
@@ -210,10 +213,29 @@ export default function Rdv() {
                 </TouchableOpacity>
               ))}
 
-              <Text style={styles.label}>Date et heure (YYYY-MM-DDTHH:MM)</Text>
-              <TextInput style={styles.input} value={form.date} onChangeText={(v) => setForm({ ...form, date: v })} placeholder="2026-05-15T10:30" placeholderTextColor={COLORS.textMuted} testID="rdv-date" />
+              <Text style={styles.label}>Type de consultation *</Text>
+              <View style={styles.input}>
+                <PickerField
+                  value={form.type_consultation}
+                  onChange={(v) => setForm({ ...form, type_consultation: v })}
+                  options={TYPES_CONSULTATION.map((t) => ({ value: t.id, label: t.label }))}
+                  placeholder="Choisir un type"
+                  searchable
+                  testID="rdv-type"
+                />
+              </View>
 
-              <Text style={styles.label}>Motif de consultation</Text>
+              <Text style={styles.label}>Date et heure *</Text>
+              <DateField
+                value={form.date}
+                onChange={(v) => setForm({ ...form, date: v })}
+                mode="datetime"
+                minimumDate={new Date()}
+                placeholder="Choisir date et heure"
+                testID="rdv-date"
+              />
+
+              <Text style={styles.label}>Motif de consultation *</Text>
               <TextInput style={[styles.input, { height: 80 }]} value={form.motif} onChangeText={(v) => setForm({ ...form, motif: v })} multiline placeholder="Ex: Consultation prénatale" placeholderTextColor={COLORS.textMuted} testID="rdv-motif" />
 
               <TouchableOpacity style={styles.btnPrimary} onPress={create} testID="save-rdv-btn">

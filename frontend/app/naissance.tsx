@@ -9,6 +9,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
+import DateField from "../components/DateField";
 
 export default function Naissance() {
   const router = useRouter();
@@ -122,7 +123,7 @@ export default function Naissance() {
               ))}
 
               <Field label="Lieu de naissance *" value={form.lieu_naissance} onChange={(v) => setForm({ ...form, lieu_naissance: v })} placeholder="Hôpital / Maternité / Ville" />
-              <Field label="Heure de naissance *" value={form.heure_naissance} onChange={(v) => setForm({ ...form, heure_naissance: v })} placeholder="14:30" />
+              <Field label="Heure de naissance *" value={form.heure_naissance} onChange={(v) => setForm({ ...form, heure_naissance: v })} placeholder="14:30" time />
 
               <View style={{ flexDirection: "row", gap: 10 }}>
                 <View style={{ flex: 1 }}>
@@ -166,11 +167,15 @@ function Detail({ icon, label, value }: any) {
   );
 }
 
-function Field({ label, value, onChange, placeholder, keyboard }: any) {
+function Field({ label, value, onChange, placeholder, keyboard, time }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; keyboard?: any; time?: boolean }) {
   return (
     <>
       <Text style={styles.label}>{label}</Text>
-      <TextInput style={styles.input} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={COLORS.textMuted} keyboardType={keyboard || "default"} />
+      {time ? (
+        <DateField value={value} onChange={onChange} mode="time" placeholder={placeholder || "Choisir l'heure"} />
+      ) : (
+        <TextInput style={styles.input} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={COLORS.textMuted} keyboardType={keyboard || "default"} />
+      )}
     </>
   );
 }

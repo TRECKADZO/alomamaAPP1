@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../lib/auth";
 import { formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import PickerField from "../../components/PickerField";
+import { REGIONS_CI, SPECIALITES } from "../../lib/data";
 
 type Role = "maman" | "professionnel" | "centre_sante" | "famille";
 
@@ -178,9 +180,20 @@ export default function Register() {
 
           {role === "professionnel" && (
             <>
-              <Field label="Spécialité" icon="briefcase-outline">
-                <TextInput style={styles.input} value={form.specialite} onChangeText={(v) => update("specialite", v)} placeholder="Gynécologue, Pédiatre…" placeholderTextColor={COLORS.textMuted} testID="reg-specialite-input" />
-              </Field>
+              <View style={styles.field}>
+                <Text style={styles.label}>Spécialité</Text>
+                <View style={styles.inputWrap}>
+                  <Ionicons name="briefcase-outline" size={18} color={COLORS.textMuted} />
+                  <PickerField
+                    value={form.specialite}
+                    onChange={(v) => update("specialite", v)}
+                    options={SPECIALITES}
+                    placeholder="Choisir une spécialité"
+                    searchable
+                    testID="reg-specialite-picker"
+                  />
+                </View>
+              </View>
               <Field label="Code d'invitation centre (optionnel)" icon="key-outline">
                 <TextInput style={styles.input} value={form.code_invitation_centre} onChangeText={(v) => update("code_invitation_centre", v.toUpperCase())} autoCapitalize="characters" placeholder="ABCD12" placeholderTextColor={COLORS.textMuted} maxLength={8} />
               </Field>
@@ -226,18 +239,36 @@ export default function Register() {
           )}
 
           {(role === "maman" || role === "centre_sante" || role === "famille" || role === "professionnel") && (
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Field label="Ville" icon="location-outline">
-                  <TextInput style={styles.input} value={form.ville} onChangeText={(v) => update("ville", v)} placeholder="Abidjan" placeholderTextColor={COLORS.textMuted} />
-                </Field>
+            <>
+              <View style={styles.field}>
+                <Text style={styles.label}>Région</Text>
+                <View style={styles.inputWrap}>
+                  <Ionicons name="map-outline" size={18} color={COLORS.textMuted} />
+                  <PickerField
+                    value={form.region}
+                    onChange={(v) => { update("region", v); update("ville", ""); }}
+                    options={REGIONS_CI.map((r) => r.name)}
+                    placeholder="Choisir une région"
+                    searchable
+                    testID="reg-region-picker"
+                  />
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Field label="Région" icon="map-outline">
-                  <TextInput style={styles.input} value={form.region} onChangeText={(v) => update("region", v)} placeholder="Lagunes" placeholderTextColor={COLORS.textMuted} />
-                </Field>
+              <View style={styles.field}>
+                <Text style={styles.label}>Ville</Text>
+                <View style={styles.inputWrap}>
+                  <Ionicons name="location-outline" size={18} color={COLORS.textMuted} />
+                  <PickerField
+                    value={form.ville}
+                    onChange={(v) => update("ville", v)}
+                    options={form.region ? (REGIONS_CI.find((r) => r.name === form.region)?.villes || []) : []}
+                    placeholder={form.region ? "Choisir une ville" : "Sélectionnez d'abord une région"}
+                    searchable
+                    testID="reg-ville-picker"
+                  />
+                </View>
               </View>
-            </View>
+            </>
           )}
 
           <TouchableOpacity style={styles.btnPrimary} onPress={handleRegister} disabled={loading} testID="register-submit-btn">

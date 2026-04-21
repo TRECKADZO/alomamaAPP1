@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../lib/api";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
+import DateField from "../components/DateField";
 
 const METHODES = [
   { key: "pilule", label: "Pilule", icon: "medical" },
@@ -101,7 +102,7 @@ export default function Contraception() {
               ))}
             </View>
             <Text style={styles.label}>Date de début</Text>
-            <TextInput style={styles.input} value={form.date_debut} onChangeText={(v) => setForm({ ...form, date_debut: v })} placeholder="YYYY-MM-DD" placeholderTextColor={COLORS.textMuted} testID="contra-date" />
+            <DateField value={form.date_debut} onChange={(v) => setForm({ ...form, date_debut: v })} placeholder="Choisir la date" testID="contra-date" />
             <Text style={styles.label}>Notes</Text>
             <TextInput style={[styles.input, { height: 60 }]} multiline value={form.notes} onChangeText={(v) => setForm({ ...form, notes: v })} />
             <TouchableOpacity style={styles.btnPrimary} onPress={create} testID="save-contra-btn">

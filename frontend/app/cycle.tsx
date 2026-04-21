@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../lib/api";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
+import DateField from "../components/DateField";
 
 const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 const JOURS_FR = ["L", "M", "M", "J", "V", "S", "D"];
@@ -237,8 +238,8 @@ export default function Cycle() {
               <Text style={styles.modalTitle}>Nouveau cycle</Text>
               <TouchableOpacity onPress={() => setModal(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
             </View>
-            <Text style={styles.label}>Date début des règles (YYYY-MM-DD)</Text>
-            <TextInput style={styles.input} value={form.date_debut_regles} onChangeText={(v) => setForm({ ...form, date_debut_regles: v })} placeholder="2026-04-15" placeholderTextColor={COLORS.textMuted} testID="cycle-date" />
+            <Text style={styles.label}>Date début des règles</Text>
+            <DateField value={form.date_debut_regles} onChange={(v) => setForm({ ...form, date_debut_regles: v })} maximumDate={new Date()} placeholder="Choisir la date" testID="cycle-date" />
             <View style={{ flexDirection: "row", gap: 10 }}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Durée règles (j)</Text>

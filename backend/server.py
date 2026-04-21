@@ -178,6 +178,7 @@ class RdvIn(BaseModel):
     date: str  # ISO
     motif: str
     tarif_fcfa: int = 10000
+    type_consultation: Optional[str] = None
 
 
 class MessageIn(BaseModel):
@@ -527,6 +528,7 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "date": payload.date,
         "motif": payload.motif,
         "tarif_fcfa": payload.tarif_fcfa,
+        "type_consultation": payload.type_consultation,
         "paye": False,
         "status": "en_attente",
         "created_at": datetime.now(timezone.utc).isoformat(),

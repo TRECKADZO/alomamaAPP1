@@ -8,6 +8,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import DateField from "../../components/DateField";
 
 // Consultations prénatales (base44 source)
 const CONSULTATIONS_PRENATALES = [
@@ -274,9 +275,9 @@ export default function Grossesse() {
               <TouchableOpacity onPress={() => setModal(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
             </View>
             <Text style={styles.label}>Date des dernières règles (DDR) *</Text>
-            <TextInput style={styles.modalInput} value={dateDebut} onChangeText={setDateDebut} placeholder="2026-01-15" placeholderTextColor={COLORS.textMuted} testID="date-debut-input" />
+            <DateField value={dateDebut} onChange={setDateDebut} maximumDate={new Date()} placeholder="Choisir la date des DDR" testID="date-debut-input" />
             <Text style={styles.label}>Date prévue d'accouchement (DPA, optionnelle)</Text>
-            <TextInput style={styles.modalInput} value={dateTerme} onChangeText={setDateTerme} placeholder="2026-10-22" placeholderTextColor={COLORS.textMuted} />
+            <DateField value={dateTerme} onChange={setDateTerme} placeholder="Choisir la DPA" />
             <Text style={styles.helperTxt}>Si vide, calculée automatiquement (DDR + 280 jours)</Text>
             <Text style={styles.label}>Notes</Text>
             <TextInput style={[styles.modalInput, { height: 70 }]} value={notes} onChangeText={setNotes} multiline placeholder="Observations, antécédents..." placeholderTextColor={COLORS.textMuted} testID="notes-input" />

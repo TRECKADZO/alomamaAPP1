@@ -19,6 +19,7 @@ import { useFocusEffect } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import DateField from "../../components/DateField";
 
 const FRENCH_MONTHS = [
   "janv.", "févr.", "mars", "avr.", "mai", "juin",
@@ -346,8 +347,8 @@ export default function Enfants() {
               </View>
               <Label text="Nom / Prénom *" />
               <TextInput style={styles.input} value={form.nom} onChangeText={(v) => setForm({ ...form, nom: v })} testID="enfant-nom" />
-              <Label text="Date de naissance (YYYY-MM-DD) *" />
-              <TextInput style={styles.input} value={form.date_naissance} onChangeText={(v) => setForm({ ...form, date_naissance: v })} placeholder="2024-06-15" placeholderTextColor={COLORS.textMuted} testID="enfant-dob" />
+              <Label text="Date de naissance *" />
+              <DateField value={form.date_naissance} onChange={(v) => setForm({ ...form, date_naissance: v })} maximumDate={new Date()} placeholder="Choisir la date de naissance" testID="enfant-dob" />
               <Label text="Sexe" />
               <View style={{ flexDirection: "row", gap: 10 }}>
                 {["F", "M"].map((s) => (
@@ -390,10 +391,10 @@ export default function Enfants() {
             </View>
             <Label text="Nom du vaccin *" />
             <TextInput style={styles.input} value={vaccin.nom} onChangeText={(v) => setVaccin({ ...vaccin, nom: v })} placeholder="BCG, DTP, ROR..." placeholderTextColor={COLORS.textMuted} testID="vaccin-nom" />
-            <Label text="Date administrée (YYYY-MM-DD) *" />
-            <TextInput style={styles.input} value={vaccin.date} onChangeText={(v) => setVaccin({ ...vaccin, date: v })} placeholder="2026-01-15" placeholderTextColor={COLORS.textMuted} testID="vaccin-date" />
+            <Label text="Date administrée *" />
+            <DateField value={vaccin.date} onChange={(v) => setVaccin({ ...vaccin, date: v })} maximumDate={new Date()} placeholder="Choisir la date" testID="vaccin-date" />
             <Label text="Prochain rappel (optionnel)" />
-            <TextInput style={styles.input} value={vaccin.prochain_rappel} onChangeText={(v) => setVaccin({ ...vaccin, prochain_rappel: v })} placeholder="2027-01-15" placeholderTextColor={COLORS.textMuted} />
+            <DateField value={vaccin.prochain_rappel} onChange={(v) => setVaccin({ ...vaccin, prochain_rappel: v })} placeholder="Choisir la date de rappel" />
             <TouchableOpacity style={styles.btnPrimary} onPress={addVaccin} testID="save-vaccin-btn">
               <Text style={styles.btnPrimaryText}>Enregistrer</Text>
             </TouchableOpacity>

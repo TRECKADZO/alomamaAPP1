@@ -6,6 +6,8 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import DateField from "../../components/DateField";
+import { TYPES_CONSULTATION } from "../../lib/data";
 
 const JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
 
@@ -26,10 +28,17 @@ export default function GestionDisponibilites() {
   useFocusEffect(useCallback(() => { load(); }, []));
 
   const addSlot = (jour: string) => {
-    setSlots((prev) => [...prev, { jour, heure_debut: "08:00", heure_fin: "12:00", actif: true }]);
+    setSlots((prev) => [...prev, { jour, heure_debut: "08:00", heure_fin: "12:00", actif: true, types: ["generale"] }]);
   };
   const updateSlot = (idx: number, patch: any) => {
     setSlots((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  };
+  const toggleType = (idx: number, typeId: string) => {
+    setSlots((prev) => prev.map((s, i) => {
+      if (i !== idx) return s;
+      const types = s.types || [];
+      return { ...s, types: types.includes(typeId) ? types.filter((t: string) => t !== typeId) : [...types, typeId] };
+    }));
   };
   const removeSlot = (idx: number) => {
     setSlots((prev) => prev.filter((_, i) => i !== idx));
@@ -90,16 +99,38 @@ export default function GestionDisponibilites() {
                 <Text style={styles.emptyDay}>Repos</Text>
               ) : (
                 jourSlots.map((s) => (
-                  <View key={s._idx} style={styles.slotRow}>
-                    <TextInput style={styles.timeInput} value={s.heure_debut} onChangeText={(v) => updateSlot(s._idx, { heure_debut: v })} placeholder="08:00" placeholderTextColor={COLORS.textMuted} />
-                    <Text style={{ color: COLORS.textSecondary }}>→</Text>
-                    <TextInput style={styles.timeInput} value={s.heure_fin} onChangeText={(v) => updateSlot(s._idx, { heure_fin: v })} placeholder="12:00" placeholderTextColor={COLORS.textMuted} />
-                    <TouchableOpacity onPress={() => updateSlot(s._idx, { actif: !s.actif })} style={styles.toggleWrap}>
-                      <View style={[styles.toggle, s.actif && { backgroundColor: "#2DD4BF" }]}>
-                        <View style={[styles.toggleDot, s.actif && { transform: [{ translateX: 14 }] }]} />
+                  <View key={s._idx} style={styles.slotCard}>
+                    <View style={styles.slotRow}>
+                      <View style={{ flex: 1 }}>
+                        <DateField value={s.heure_debut} mode="time" onChange={(v) => updateSlot(s._idx, { heure_debut: v })} />
                       </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => removeSlot(s._idx)}><Ionicons name="trash-outline" size={18} color={COLORS.error} /></TouchableOpacity>
+                      <Text style={{ color: COLORS.textSecondary, fontWeight: "700" }}>→</Text>
+                      <View style={{ flex: 1 }}>
+                        <DateField value={s.heure_fin} mode="time" onChange={(v) => updateSlot(s._idx, { heure_fin: v })} />
+                      </View>
+                      <TouchableOpacity onPress={() => updateSlot(s._idx, { actif: !s.actif })} style={styles.toggleWrap}>
+                        <View style={[styles.toggle, s.actif && { backgroundColor: "#2DD4BF" }]}>
+                          <View style={[styles.toggleDot, s.actif && { transform: [{ translateX: 14 }] }]} />
+                        </View>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => removeSlot(s._idx)}><Ionicons name="trash-outline" size={18} color={COLORS.error} /></TouchableOpacity>
+                    </View>
+                    {/* Types de consultation */}
+                    <Text style={styles.typesLabel}>Types de consultation</Text>
+                    <View style={styles.typesRow}>
+                      {TYPES_CONSULTATION.map((t) => {
+                        const active = (s.types || []).includes(t.id);
+                        return (
+                          <TouchableOpacity
+                            key={t.id}
+                            onPress={() => toggleType(s._idx, t.id)}
+                            style={[styles.typePill, active && { backgroundColor: t.color, borderColor: t.color }]}
+                          >
+                            <Text style={[styles.typePillText, active && { color: "#fff" }]}>{t.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   </View>
                 ))
               )}
@@ -136,7 +167,12 @@ const styles = StyleSheet.create({
   addSlotBtn: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#CFFAFE", paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.pill },
   addSlotText: { color: "#0E7490", fontWeight: "800", fontSize: 12 },
   emptyDay: { fontStyle: "italic", color: COLORS.textMuted, textAlign: "center", paddingVertical: 10 },
-  slotRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6, borderTopWidth: 1, borderTopColor: COLORS.border },
+  slotRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6 },
+  slotCard: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 8, marginTop: 8 },
+  typesLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "700", marginTop: 8, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 },
+  typesRow: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
+  typePill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgSecondary },
+  typePillText: { fontSize: 10, fontWeight: "700", color: COLORS.textPrimary },
   timeInput: { flex: 1, backgroundColor: COLORS.bgSecondary, borderRadius: RADIUS.md, padding: 10, color: COLORS.textPrimary, fontWeight: "700", textAlign: "center" },
   toggleWrap: { padding: 4 },
   toggle: { width: 36, height: 22, borderRadius: 11, backgroundColor: COLORS.border, padding: 3 },

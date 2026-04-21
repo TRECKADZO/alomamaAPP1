@@ -7,6 +7,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { pickImageBase64 } from "../lib/imagePicker";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../constants/theme";
+import DateField from "../components/DateField";
 
 const KEY = "documents_v1";
 const CATS = [
@@ -140,7 +141,7 @@ export default function MesDocuments() {
               <Text style={styles.label}>Titre *</Text>
               <TextInput style={styles.input} value={form.titre} onChangeText={(v) => setForm({ ...form, titre: v })} placeholder="Échographie 22 SA..." placeholderTextColor={COLORS.textMuted} />
               <Text style={styles.label}>Date</Text>
-              <TextInput style={styles.input} value={form.date} onChangeText={(v) => setForm({ ...form, date: v })} placeholder="YYYY-MM-DD" placeholderTextColor={COLORS.textMuted} />
+              <DateField value={form.date} onChange={(v) => setForm({ ...form, date: v })} placeholder="Choisir la date" />
               <Text style={styles.label}>Notes</Text>
               <TextInput style={[styles.input, { height: 70, textAlignVertical: "top" }]} multiline value={form.notes} onChangeText={(v) => setForm({ ...form, notes: v })} />
               <Text style={styles.label}>Photo (optionnelle)</Text>

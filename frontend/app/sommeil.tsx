@@ -6,6 +6,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../constants/theme";
+import DateField from "../components/DateField";
 
 const KEY = "sommeil_entries_v1";
 
@@ -109,8 +110,8 @@ export default function SuiviSommeil() {
               <Text style={styles.modalTitle}>Nouvelle entrée</Text>
               <TouchableOpacity onPress={() => setModal(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
             </View>
-            <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
-            <TextInput style={styles.input} value={form.date} onChangeText={(v) => setForm({ ...form, date: v })} />
+            <Text style={styles.label}>Date</Text>
+            <DateField value={form.date} onChange={(v) => setForm({ ...form, date: v })} maximumDate={new Date()} placeholder="Choisir la date" />
             <Text style={styles.label}>Heures de sommeil</Text>
             <TextInput style={styles.input} value={form.heures} onChangeText={(v) => setForm({ ...form, heures: v })} keyboardType="decimal-pad" />
             <Text style={styles.label}>Qualité (1-5)</Text>

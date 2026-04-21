@@ -4,9 +4,9 @@ import requests
 import sys
 from datetime import datetime, timezone
 
-BASE = "https://maman-mobile-mvp.preview.emergentagent.com/api"
+BASE = "https://maman-rdv-booking.preview.emergentagent.com/api"
 # User said http://localhost:8001/api — try that first, fallback to public
-CANDIDATES = ["http://localhost:8001/api", "https://maman-mobile-mvp.preview.emergentagent.com/api"]
+CANDIDATES = ["http://localhost:8001/api", "https://maman-rdv-booking.preview.emergentagent.com/api"]
 
 
 def pick_base():
