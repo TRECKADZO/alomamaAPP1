@@ -499,6 +499,16 @@ function AdminDash({ user, data, router }: any) {
         >
           <Text style={styles.btnText}>Gérer les utilisateurs</Text>
         </TouchableOpacity>
+
+        <Text style={styles.sectionTitle}>Console Admin</Text>
+        <View style={styles.quickGrid}>
+          <QuickAction icon="people" label="Utilisateurs" onPress={() => router.push("/(tabs)/admin")} color="#C85A40" />
+          <QuickAction icon="analytics" label="Analytics" onPress={() => router.push("/admin/analytics")} color="#3B82F6" />
+          <QuickAction icon="document-text" label="Audit" onPress={() => router.push("/admin/audit")} color="#A855F7" />
+          <QuickAction icon="business" label="Centres" onPress={() => router.push("/centres")} color="#10B981" />
+          <QuickAction icon="chatbubbles-outline" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} color="#F59E0B" />
+          <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} color="#F59E0B" />
+        </View>
       </View>
     </View>
   );
@@ -594,9 +604,13 @@ function CentreDash({ user, router }: any) {
 
             <Text style={styles.sectionTitle}>Actions</Text>
             <View style={styles.quickGrid}>
-              <QuickAction icon="people" label="Pros" onPress={() => router.push("/(tabs)/patients")} color="#A855F7" />
-              <QuickAction icon="calendar" label="Agenda" onPress={() => router.push("/(tabs)/rdv")} color="#3B82F6" />
-              <QuickAction icon="search" label="Annuaire" onPress={() => router.push("/centres")} color="#10B981" />
+              <QuickAction icon="people" label="Pros" onPress={() => router.push("/centre/membres")} color="#A855F7" />
+              <QuickAction icon="calendar" label="Agenda" onPress={() => router.push("/centre/calendrier")} color="#3B82F6" />
+              <QuickAction icon="pricetag" label="Tarifs" onPress={() => router.push("/centre/tarifs")} color="#10B981" />
+              <QuickAction icon="search" label="Annuaire" onPress={() => router.push("/centres")} color="#06B6D4" />
+              <QuickAction icon="chatbubbles" label="Messages" onPress={() => router.push("/(tabs)/messages")} color="#3B82F6" />
+              <QuickAction icon="chatbubbles-outline" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} color="#F59E0B" />
+              <QuickAction icon="sparkles" label="Assistant" onPress={() => router.push("/(tabs)/assistant")} color="#EC4899" />
               <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} color="#F59E0B" />
             </View>
           </>

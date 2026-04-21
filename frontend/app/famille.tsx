@@ -247,15 +247,20 @@ export default function FamillePage() {
             <>
               <Text style={[styles.subHeader, { marginTop: 14 }]}>Mes familles ({memberOf.length})</Text>
               {memberOf.map((f: any) => (
-                <View key={f.id} style={styles.memberRow}>
+                <TouchableOpacity
+                  key={f.id}
+                  style={styles.memberRow}
+                  onPress={() => router.push(`/famille/view?email=${encodeURIComponent(f.owner_email)}`)}
+                >
                   <View style={styles.memberAvatar}>
                     <Ionicons name="people" size={18} color={COLORS.primary} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.memberName}>{f.owner_name || f.owner_email}</Text>
-                    <Text style={styles.memberRelation}>Famille de {f.owner_email}</Text>
+                    <Text style={styles.memberRelation}>Voir les données partagées</Text>
                   </View>
-                </View>
+                  <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+                </TouchableOpacity>
               ))}
             </>
           )}

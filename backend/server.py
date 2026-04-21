@@ -1815,6 +1815,254 @@ async def update_centre(
     return _ser_centre(new)
 
 
+@api.get("/centre/membres")
+async def centre_membres(user=Depends(require_roles("centre_sante"))):
+    """Liste des pros membres du centre + leurs stats."""
+    c = await db.centres.find_one({"owner_id": user["id"]})
+    if not c:
+        raise HTTPException(status_code=404, detail="Centre introuvable")
+    membres_ids = c.get("membres_pro", [])
+    pros = await db.users.find(
+        {"id": {"$in": membres_ids}}, {"_id": 0, "password_hash": 0}
+    ).to_list(500)
+    for p in pros:
+        p["rdv_count"] = await db.rdv.count_documents({"pro_id": p["id"]})
+        p["patients_count"] = len(
+            list({r["maman_id"] async for r in db.rdv.find({"pro_id": p["id"]}, {"maman_id": 1, "_id": 0})})
+        )
+    return pros
+
+
+class CentreActionIn(BaseModel):
+    pro_id: str
+
+
+@api.post("/centre/membres/remove")
+async def centre_remove_membre(payload: CentreActionIn, user=Depends(require_roles("centre_sante"))):
+    c = await db.centres.find_one({"owner_id": user["id"]})
+    if not c:
+        raise HTTPException(status_code=404, detail="Centre introuvable")
+    await db.centres.update_one(
+        {"id": c["id"]}, {"$pull": {"membres_pro": payload.pro_id}}
+    )
+    return {"ok": True}
+
+
+@api.get("/centre/rdv")
+async def centre_rdv(user=Depends(require_roles("centre_sante"))):
+    """Tous les RDV des pros du centre."""
+    c = await db.centres.find_one({"owner_id": user["id"]})
+    if not c:
+        return []
+    membres_ids = c.get("membres_pro", [])
+    rdvs = await db.rdv.find({"pro_id": {"$in": membres_ids}}, {"_id": 0}).sort("date", -1).to_list(1000)
+    # Enrichir avec noms pro et maman
+    for r in rdvs:
+        pro = await db.users.find_one({"id": r["pro_id"]}, {"name": 1, "specialite": 1, "_id": 0})
+        maman = await db.users.find_one({"id": r["maman_id"]}, {"name": 1, "_id": 0})
+        r["pro_name"] = pro.get("name") if pro else "?"
+        r["pro_specialite"] = pro.get("specialite") if pro else None
+        r["maman_name"] = maman.get("name") if maman else "?"
+    return rdvs
+
+
+class TarifIn(BaseModel):
+    acte: str
+    prix_fcfa: int
+    description: Optional[str] = ""
+
+
+@api.get("/centre/tarifs")
+async def get_tarifs(user=Depends(require_roles("centre_sante"))):
+    c = await db.centres.find_one({"owner_id": user["id"]}, {"_id": 0})
+    if not c:
+        return []
+    return c.get("tarifs", [])
+
+
+@api.put("/centre/tarifs")
+async def set_tarifs(payload: List[TarifIn], user=Depends(require_roles("centre_sante"))):
+    c = await db.centres.find_one({"owner_id": user["id"]})
+    if not c:
+        raise HTTPException(status_code=404, detail="Centre introuvable")
+    tarifs = [
+        {
+            "id": str(uuid.uuid4()),
+            **t.model_dump(),
+        }
+        for t in payload
+    ]
+    await db.centres.update_one({"id": c["id"]}, {"$set": {"tarifs": tarifs}})
+    return tarifs
+
+
+# ----------------------------------------------------------------------
+# Admin Analytics & Audit
+# ----------------------------------------------------------------------
+@api.get("/admin/analytics")
+async def admin_analytics(user=Depends(require_roles("admin"))):
+    """Statistiques détaillées pour la console admin."""
+    # Activité des 7 derniers jours
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    seven_days_ago = now - timedelta(days=7)
+    thirty_days_ago = now - timedelta(days=30)
+
+    new_users_7d = await db.users.count_documents({"created_at": {"$gte": seven_days_ago.isoformat()}})
+    new_rdv_7d = await db.rdv.count_documents({"created_at": {"$gte": seven_days_ago.isoformat()}})
+    new_posts_7d = await db.posts.count_documents({"created_at": {"$gte": seven_days_ago.isoformat()}})
+
+    # Répartition par rôle
+    roles = {}
+    async for u in db.users.find({}, {"role": 1, "_id": 0}):
+        r = u.get("role", "unknown")
+        roles[r] = roles.get(r, 0) + 1
+
+    # Top villes
+    villes = {}
+    async for u in db.users.find({"ville": {"$exists": True, "$ne": None}}, {"ville": 1, "_id": 0}):
+        v = u.get("ville") or "Autre"
+        villes[v] = villes.get(v, 0) + 1
+    top_villes = sorted(villes.items(), key=lambda x: -x[1])[:5]
+
+    # Premium
+    premium_count = await db.users.count_documents({"premium": True})
+
+    # RDV par statut
+    statuts = {}
+    async for r in db.rdv.find({}, {"statut": 1, "_id": 0}):
+        s = r.get("statut", "en_attente")
+        statuts[s] = statuts.get(s, 0) + 1
+
+    return {
+        "activity_7d": {
+            "new_users": new_users_7d,
+            "new_rdv": new_rdv_7d,
+            "new_posts": new_posts_7d,
+        },
+        "roles_distribution": roles,
+        "top_villes": [{"ville": v, "count": c} for v, c in top_villes],
+        "premium_users": premium_count,
+        "rdv_par_statut": statuts,
+    }
+
+
+class AdminUserUpdateIn(BaseModel):
+    premium: Optional[bool] = None
+    role: Optional[Role] = None
+    banned: Optional[bool] = None
+
+
+@api.patch("/admin/users/{user_id}")
+async def admin_update_user(
+    user_id: str, payload: AdminUserUpdateIn, user=Depends(require_roles("admin"))
+):
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    upd = payload.model_dump(exclude_none=True)
+    if "premium" in upd and upd["premium"]:
+        upd["premium_until"] = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    await db.users.update_one({"id": user_id}, {"$set": upd})
+    return {"ok": True, "updated": upd}
+
+
+@api.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, user=Depends(require_roles("admin"))):
+    if user_id == user["id"]:
+        raise HTTPException(status_code=400, detail="Ne peut pas se supprimer soi-même")
+    await db.users.delete_one({"id": user_id})
+    return {"ok": True}
+
+
+@api.get("/admin/audit")
+async def admin_audit(user=Depends(require_roles("admin")), limit: int = 100):
+    """Logs des derniers login et actions critiques."""
+    # On renvoie simplement les derniers utilisateurs créés + RDV + posts
+    recent_users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).limit(20).to_list(20)
+    recent_rdv = await db.rdv.find({}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
+    recent_centres = await db.centres.find({}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
+    return {
+        "recent_users": recent_users,
+        "recent_rdv": recent_rdv,
+        "recent_centres": recent_centres,
+    }
+
+
+# ----------------------------------------------------------------------
+# Famille : vues partagées (données de la maman visibles par les proches)
+# ----------------------------------------------------------------------
+@api.get("/famille/shared/{owner_email}")
+async def famille_shared_data(owner_email: str, user=Depends(get_current_user)):
+    """Retourne les données de la maman filtrées selon les permissions du membre."""
+    f = await db.familles.find_one({"owner_email": owner_email})
+    if not f:
+        raise HTTPException(status_code=404, detail="Famille introuvable")
+    # Trouver le membre
+    membre = None
+    for m in f.get("membres", []):
+        if m.get("email") == user["email"] and m.get("statut") == "accepte":
+            membre = m
+            break
+    if not membre:
+        raise HTTPException(status_code=403, detail="Vous n'êtes pas membre accepté de cette famille")
+
+    perms = membre.get("permissions", {})
+    owner = await db.users.find_one({"email": owner_email}, {"_id": 0, "password_hash": 0})
+    result: Dict = {"owner": owner, "permissions": perms}
+    if perms.get("grossesse"):
+        g = await db.grossesses.find_one({"user_id": owner["id"], "active": True}, {"_id": 0})
+        result["grossesse"] = g
+    if perms.get("enfants"):
+        enfants = await db.enfants.find({"user_id": owner["id"]}, {"_id": 0}).to_list(100)
+        if not perms.get("enfants_details"):
+            # Masquer les détails médicaux
+            enfants = [{"id": e["id"], "nom": e["nom"], "date_naissance": e["date_naissance"], "sexe": e.get("sexe")} for e in enfants]
+        result["enfants"] = enfants
+    if perms.get("rendez_vous"):
+        rdvs = await db.rdv.find({"maman_id": owner["id"]}, {"_id": 0}).sort("date", -1).to_list(50)
+        result["rdvs"] = rdvs
+    return result
+
+
+# ----------------------------------------------------------------------
+# Questions Spécialistes (maman)
+# ----------------------------------------------------------------------
+class QuestionIn(BaseModel):
+    title: str
+    content: str
+    specialite_cible: Optional[str] = None  # gyneco, pediatre, sage_femme, etc.
+
+
+@api.post("/questions-specialistes")
+async def create_question(payload: QuestionIn, user=Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "title": payload.title,
+        "content": payload.content,
+        "specialite_cible": payload.specialite_cible,
+        "category": "questions_specialistes",
+        "user_id": user["id"],
+        "user_name": user.get("name"),
+        "user_role": user.get("role"),
+        "likes": [],
+        "comments": [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.posts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/questions-specialistes")
+async def list_questions(specialite: Optional[str] = None):
+    flt = {"category": "questions_specialistes"}
+    if specialite:
+        flt["specialite_cible"] = specialite
+    cursor = db.posts.find(flt, {"_id": 0}).sort("created_at", -1).limit(100)
+    return [q async for q in cursor]
+
+
 # ----------------------------------------------------------------------
 # Famille connectée
 # ----------------------------------------------------------------------
