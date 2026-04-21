@@ -33,6 +33,7 @@ export default function RootLayout() {
                 <Stack.Screen name="tele-echo" />
                 <Stack.Screen name="naissance" />
                 <Stack.Screen name="premium" />
+                <Stack.Screen name="portail-pro" options={{ title: "Portail Pro - À lo Maman" }} />
               </Stack>
             </View>
           </View>

@@ -64,6 +64,15 @@ export default function Landing() {
         >
           <Text style={styles.btnSecondaryText}>J'ai déjà un compte</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.btnPro}
+          onPress={() => router.push("/portail-pro")}
+          testID="goto-portail-pro"
+        >
+          <Ionicons name="medkit-outline" size={16} color={COLORS.primary} />
+          <Text style={styles.btnProText}>Portail Professionnel / Centre de santé</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -148,4 +157,6 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   btnSecondaryText: { color: COLORS.textPrimary, fontWeight: "600", fontSize: 14 },
+  btnPro: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 6, paddingVertical: 10, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border },
+  btnProText: { color: COLORS.primary, fontWeight: "700", fontSize: 12 },
 });
