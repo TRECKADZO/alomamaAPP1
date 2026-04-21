@@ -42,6 +42,13 @@ export default function DashboardHome() {
           cachedGet("/rdv").catch(() => ({ data: [] })),
         ]);
         setData({ patients: patients.data, rdv: rdv.data });
+      } else if (user?.role === "centre_sante") {
+        const [membres, rdv, centre] = await Promise.all([
+          cachedGet("/centre/membres").catch(() => ({ data: [] })),
+          cachedGet("/centre/rdv").catch(() => ({ data: [] })),
+          cachedGet("/centres/mine").catch(() => ({ data: null })),
+        ]);
+        setData({ membres: membres.data, rdv: rdv.data, centre: centre.data });
       } else if (user?.role === "admin") {
         const stats = await cachedGet("/admin/stats").catch(() => ({ data: {} }));
         setData({ stats: stats.data });
