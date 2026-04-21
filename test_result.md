@@ -122,15 +122,18 @@ backend:
 
   - task: "Endpoints Pro: patients enrichis, dossier, notes, disponibilités, rappels, téléconsultation"
     implemented: true
-    working: false
+    working: true
     file: "/app/backend/server.py"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: false
         agent: "testing"
-        comment: "31/33 tests PASS against https://maman-mobile-mvp.preview.emergentagent.com/api (see /app/backend_test.py). CRITICAL BUG identified: the enrichment/dossier queries use the WRONG collection & field names. In server.py lines 776, 777, 798, 799: (a) `db.grossesse` (singular) is queried but all maman endpoints write to `db.grossesses` (plural, e.g. line 349, 371, 1325). (b) `db.grossesse.find_one({'maman_id': uid})` + `db.enfants.count_documents({'maman_id': uid})` + `db.enfants.find({'maman_id': patient_id})` use field `maman_id`, but those collections actually store the owner under `user_id` (see create_grossesse line 363, create_enfant line 418, list_enfants line 391). Consequence: (1) GET /pro/patients returns `has_grossesse=False`, `grossesse_sa=None`, `enfants_count=0` for EVERY patient even when they have an active grossesse and children. (2) GET /pro/dossier/{patient_id} returns `grossesse: null` and `enfants: []` even when populated. Verified by seeding an active grossesse + 1 enfant for maman@test.com then calling both endpoints — values remained empty. FIX: change `db.grossesse` → `db.grossesses` and filter by `user_id` instead of `maman_id` in both endpoints (lines 776, 777, 798, 799). WORKING correctly (no changes needed): POST/DELETE /pro/consultation-notes, GET/PUT /pro/disponibilites, POST /pro/rappels-patient (rappel appears in maman /reminders with source=pro, source_pro_id set), GET /pro/rappels-envoyes, POST /teleconsultation/room/{rdv_id} (returns room_name+room_url, persists teleconsultation_url on rdv, 403 for unrelated user), role guards (maman gets 403 on /pro/*), access control (unknown patient_id → 403), and regression on /auth/login (admin/maman/pro), /grossesse, /enfants, /community, /rdv."
+        comment: "31/33 tests PASS against https://maman-mobile-mvp.preview.emergentagent.com/api (see /app/backend_test.py). CRITICAL BUG identified: the enrichment/dossier queries use the WRONG collection & field names. In server.py lines 776, 777, 798, 799: (a) `db.grossesse` (singular) is queried but all maman endpoints write to `db.grossesses` (plural). (b) filters use `maman_id` but the collections actually store the owner under `user_id`. Consequence: /pro/patients returns has_grossesse=False, grossesse_sa=None, enfants_count=0 for every patient, and /pro/dossier returns grossesse:null, enfants:[]. FIX: change `db.grossesse` → `db.grossesses` and filter by `user_id` in both endpoints."
+      - working: true
+        agent: "testing"
+        comment: "RETEST after main-agent fix — PASS. Verified on http://localhost:8001/api with seeded data (maman@test.com: grossesse date_debut=2026-01-01 active, 1 enfant). (1) GET /pro/patients returns the maman with has_grossesse=True, grossesse_sa=15 (computed from date_debut), enfants_count=1, last_rdv_date set. (2) GET /pro/dossier/{patient_id} returns non-null grossesse (date_debut=2026-01-01T00:00:00Z), enfants array with 1 child, rdvs=1, notes=0, patient.name='Aminata Koné'. Both queries now correctly use db.grossesses + user_id field. Script: /app/retest_pro.py."
 
 frontend:
   - task: "Refonte UI Dashboard Maman (index.tsx)"

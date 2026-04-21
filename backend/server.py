@@ -773,8 +773,8 @@ async def pro_patients(user=Depends(require_roles("professionnel"))):
     # Enrichir avec dernières données
     for u in users:
         uid = u["id"]
-        gross = await db.grossesse.find_one({"maman_id": uid}, {"_id": 0})
-        enfants_count = await db.enfants.count_documents({"maman_id": uid})
+        gross = await db.grossesses.find_one({"user_id": uid, "active": True}, {"_id": 0})
+        enfants_count = await db.enfants.count_documents({"user_id": uid})
         last_rdv = await db.rdv.find_one({"maman_id": uid, "pro_id": user["id"]}, {"_id": 0}, sort=[("date", -1)])
         u["has_grossesse"] = bool(gross)
         u["grossesse_sa"] = None
@@ -795,8 +795,8 @@ async def pro_dossier(patient_id: str, user=Depends(require_roles("professionnel
     patient = await db.users.find_one({"id": patient_id}, {"_id": 0, "password_hash": 0})
     if not patient:
         raise HTTPException(status_code=404, detail="Patient introuvable")
-    gross = await db.grossesse.find_one({"maman_id": patient_id}, {"_id": 0})
-    enfants = await db.enfants.find({"maman_id": patient_id}, {"_id": 0}).to_list(100)
+    gross = await db.grossesses.find_one({"user_id": patient_id, "active": True}, {"_id": 0})
+    enfants = await db.enfants.find({"user_id": patient_id}, {"_id": 0}).to_list(100)
     rdvs = await db.rdv.find({"maman_id": patient_id, "pro_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(100)
     notes = await db.consultation_notes.find({"patient_id": patient_id, "pro_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(200)
     return {
