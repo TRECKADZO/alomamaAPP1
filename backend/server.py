@@ -1592,21 +1592,140 @@ class SubscribeIn(BaseModel):
     months: int = 1
 
 
+# ----------------------------------------------------------------------
+# Premium plans (role-aware)
+# ----------------------------------------------------------------------
+PREMIUM_PLANS = {
+    "maman": {
+        "code": "maman",
+        "label": "Maman Premium",
+        "base_price_fcfa": 2000,
+        "color": "#EC4899",
+        "icon": "heart",
+        "description": "Accompagnement complet de la grossesse aux premiers pas de bébé.",
+        "features": [
+            "Assistant IA (Claude Sonnet) illimité",
+            "Téléconsultations prioritaires",
+            "Export PDF/FHIR du dossier illimité",
+            "Stockage photos & échographies",
+            "Rappels santé automatisés (vaccins, RDV)",
+            "Contenus éducatifs Premium",
+            "Support 24/7",
+        ],
+        "free_limits": "Gratuit : 2 enfants · 10 RDV/mois · IA basique",
+    },
+    "professionnel": {
+        "code": "pro",
+        "label": "Pro Premium",
+        "base_price_fcfa": 10000,
+        "color": "#0EA5E9",
+        "icon": "medkit",
+        "description": "Pour les professionnels de santé indépendants.",
+        "features": [
+            "Patientes illimitées",
+            "Agenda & disponibilités avancées",
+            "Téléconsultation vidéo HD",
+            "IA Pro (aide à la rédaction, synthèses dossier)",
+            "Statistiques & revenus",
+            "Badge « Pro Certifié » visible dans l'annuaire",
+            "Export comptabilité mensuelle",
+        ],
+        "free_limits": "Gratuit : 10 patientes · pas d'IA Pro",
+    },
+    "centre_sante": {
+        "code": "centre",
+        "label": "Centre Premium",
+        "base_price_fcfa": 25000,
+        "color": "#A855F7",
+        "icon": "business",
+        "description": "Pour cliniques, centres de santé et structures médicales.",
+        "features": [
+            "Pros membres illimités",
+            "Tableau de bord multi-pros (stats agrégées)",
+            "Calendrier consolidé du centre",
+            "Tarifs personnalisés par prestation",
+            "Gestion financière (paiements, revenus par pro)",
+            "API / export pour logiciel de gestion",
+            "Annuaire public du centre",
+            "Support dédié + formation en ligne",
+        ],
+        "free_limits": "Gratuit : 3 pros max · pas de stats avancées",
+    },
+}
+
+# Remises selon la durée
+DURATION_DISCOUNTS = {1: 0.0, 3: 0.05, 6: 0.10, 12: 0.20}
+
+
+def compute_plan_price(role: str, months: int) -> tuple[int, float, int]:
+    """Return (amount, discount_rate, base)."""
+    plan = PREMIUM_PLANS.get(role)
+    if not plan:
+        raise HTTPException(400, "Aucun plan Premium disponible pour votre rôle.")
+    base = plan["base_price_fcfa"]
+    discount = DURATION_DISCOUNTS.get(months, 0.0)
+    full = base * months
+    amount = int(round(full * (1 - discount)))
+    return amount, discount, full
+
+
+@api.get("/plans")
+async def list_plans():
+    """Liste des plans premium disponibles."""
+    return {
+        "plans": PREMIUM_PLANS,
+        "durations": [
+            {"months": m, "discount": d, "label": f"{m} mois" + (f" · -{int(d*100)}%" if d else "")}
+            for m, d in DURATION_DISCOUNTS.items()
+        ],
+    }
+
+
+@api.get("/plans/me")
+async def my_plan(user=Depends(get_current_user)):
+    """Plan premium applicable à l'utilisateur courant."""
+    role = user.get("role")
+    plan = PREMIUM_PLANS.get(role)
+    quotes: list[dict] = []
+    if plan:
+        for m, d in DURATION_DISCOUNTS.items():
+            amount, disc, full = compute_plan_price(role, m)
+            quotes.append({"months": m, "amount": amount, "discount": disc, "full_price": full})
+    return {
+        "role": role,
+        "plan": plan,
+        "quotes": quotes,
+        "is_premium": bool(user.get("premium") and user.get("premium_until") and datetime.fromisoformat(user["premium_until"].replace("Z", "+00:00")) > datetime.now(timezone.utc)) if user.get("premium_until") else bool(user.get("premium", False)),
+        "premium_until": user.get("premium_until"),
+    }
+
+
 @api.post("/pay/subscribe")
-async def pay_subscribe(payload: SubscribeIn, user=Depends(require_roles("maman"))):
+async def pay_subscribe(payload: SubscribeIn, user=Depends(get_current_user)):
+    # Autoriser maman, pro & centre
+    role = user.get("role")
+    if role not in PREMIUM_PLANS:
+        raise HTTPException(403, "Aucun plan Premium disponible pour votre rôle.")
     months = max(1, min(payload.months, 12))
-    amount = 2000 * months
-    desc = f"Abonnement À lo Maman Premium · {months} mois"
+    amount, discount, full = compute_plan_price(role, months)
+    plan = PREMIUM_PLANS[role]
+    desc = f"{plan['label']} · {months} mois"
     return_url = f"{os.environ.get('APP_URL', '')}/api/pay/return"
     inv = await paydunya_create_invoice(
-        amount, desc, user, {"kind": "subscription", "user_id": user["id"], "months": months}, return_url
+        amount, desc, user,
+        {"kind": "subscription", "user_id": user["id"], "months": months, "plan": plan["code"], "role": role},
+        return_url,
     )
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "kind": "subscription",
+        "plan": plan["code"],
+        "role": role,
         "amount": amount,
         "months": months,
+        "discount": discount,
+        "full_price": full,
         "token": inv.get("token"),
         "status": "pending" if inv.get("success") else "error",
         "error": inv.get("error"),
@@ -1615,6 +1734,10 @@ async def pay_subscribe(payload: SubscribeIn, user=Depends(require_roles("maman"
     await db.payments.insert_one(doc)
     doc.pop("_id", None)
     return {"payment": doc, "payment_url": inv.get("url"), "success": inv.get("success", False), "error": inv.get("error")}
+
+
+# LEGACY: kept for backward-compat (older clients calling without role guard)
+_legacy_pay_subscribe = pay_subscribe
 
 
 class ConsultationPayIn(BaseModel):
