@@ -20,6 +20,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
 import DateField from "../../components/DateField";
+import PickerField from "../../components/PickerField";
+import { GROUPES_SANGUINS, VACCINS_ENFANTS } from "../../lib/data";
 
 const FRENCH_MONTHS = [
   "janv.", "févr.", "mars", "avr.", "mai", "juin",
@@ -367,8 +369,16 @@ export default function Enfants() {
                   <TextInput style={styles.input} value={form.taille_cm} onChangeText={(v) => setForm({ ...form, taille_cm: v })} keyboardType="decimal-pad" />
                 </View>
               </View>
-              <Label text="Groupe sanguin (ex: O+)" />
-              <TextInput style={styles.input} value={form.groupe_sanguin} onChangeText={(v) => setForm({ ...form, groupe_sanguin: v })} placeholder="A+, B-, O+..." placeholderTextColor={COLORS.textMuted} />
+              <Label text="Groupe sanguin" />
+              <View style={styles.input}>
+                <PickerField
+                  value={form.groupe_sanguin}
+                  onChange={(v) => setForm({ ...form, groupe_sanguin: v })}
+                  options={GROUPES_SANGUINS}
+                  placeholder="Choisir un groupe sanguin"
+                  testID="enfant-groupe-sanguin"
+                />
+              </View>
               <Label text="Allergies (séparées par des virgules)" />
               <TextInput style={styles.input} value={form.allergies} onChangeText={(v) => setForm({ ...form, allergies: v })} placeholder="arachides, lait..." placeholderTextColor={COLORS.textMuted} />
               <TouchableOpacity style={styles.btnPrimary} onPress={create} testID="save-enfant-btn">
@@ -390,7 +400,16 @@ export default function Enfants() {
               </TouchableOpacity>
             </View>
             <Label text="Nom du vaccin *" />
-            <TextInput style={styles.input} value={vaccin.nom} onChangeText={(v) => setVaccin({ ...vaccin, nom: v })} placeholder="BCG, DTP, ROR..." placeholderTextColor={COLORS.textMuted} testID="vaccin-nom" />
+            <View style={styles.input}>
+              <PickerField
+                value={vaccin.nom}
+                onChange={(v) => setVaccin({ ...vaccin, nom: v })}
+                options={VACCINS_ENFANTS}
+                placeholder="Choisir un vaccin"
+                searchable
+                testID="vaccin-nom"
+              />
+            </View>
             <Label text="Date administrée *" />
             <DateField value={vaccin.date} onChange={(v) => setVaccin({ ...vaccin, date: v })} maximumDate={new Date()} placeholder="Choisir la date" testID="vaccin-date" />
             <Label text="Prochain rappel (optionnel)" />

@@ -73,3 +73,24 @@ export const TYPES_CONSULTATION = [
 ];
 
 export const GROUPES_SANGUINS = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"];
+
+// Vaccins recommandés pour enfants (PEV Côte d'Ivoire / OMS)
+export const VACCINS_ENFANTS = [
+  "BCG (Tuberculose)",
+  "Hépatite B (HepB)",
+  "Pentavalent (DTC-HepB-Hib)",
+  "DTC (Diphtérie-Tétanos-Coqueluche)",
+  "VPO (Polio oral)",
+  "VPI (Polio injectable)",
+  "Pneumocoque (PCV)",
+  "Rotavirus",
+  "Rougeole",
+  "ROR (Rougeole-Oreillons-Rubéole)",
+  "Fièvre jaune",
+  "Méningocoque (MenA)",
+  "HPV (Papillomavirus)",
+  "Varicelle",
+  "Typhoïde",
+  "Grippe saisonnière",
+  "Autre",
+];
