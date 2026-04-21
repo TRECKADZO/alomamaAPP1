@@ -770,7 +770,172 @@ async def pro_patients(user=Depends(require_roles("professionnel"))):
     users = await db.users.find(
         {"id": {"$in": patient_ids}}, {"_id": 0, "password_hash": 0}
     ).to_list(1000)
+    # Enrichir avec dernières données
+    for u in users:
+        uid = u["id"]
+        gross = await db.grossesse.find_one({"maman_id": uid}, {"_id": 0})
+        enfants_count = await db.enfants.count_documents({"maman_id": uid})
+        last_rdv = await db.rdv.find_one({"maman_id": uid, "pro_id": user["id"]}, {"_id": 0}, sort=[("date", -1)])
+        u["has_grossesse"] = bool(gross)
+        u["grossesse_sa"] = None
+        if gross and gross.get("date_debut"):
+            weeks = int((datetime.now(timezone.utc) - datetime.fromisoformat(gross["date_debut"].replace("Z", "+00:00"))).total_seconds() / (7 * 24 * 3600))
+            u["grossesse_sa"] = max(0, min(weeks, 42))
+        u["enfants_count"] = enfants_count
+        u["last_rdv_date"] = last_rdv.get("date") if last_rdv else None
     return users
+
+
+@api.get("/pro/dossier/{patient_id}")
+async def pro_dossier(patient_id: str, user=Depends(require_roles("professionnel"))):
+    """Dossier patient complet pour un professionnel ayant eu au moins un RDV."""
+    has_rdv = await db.rdv.count_documents({"pro_id": user["id"], "maman_id": patient_id})
+    if has_rdv == 0:
+        raise HTTPException(status_code=403, detail="Accès refusé à ce patient")
+    patient = await db.users.find_one({"id": patient_id}, {"_id": 0, "password_hash": 0})
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient introuvable")
+    gross = await db.grossesse.find_one({"maman_id": patient_id}, {"_id": 0})
+    enfants = await db.enfants.find({"maman_id": patient_id}, {"_id": 0}).to_list(100)
+    rdvs = await db.rdv.find({"maman_id": patient_id, "pro_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(100)
+    notes = await db.consultation_notes.find({"patient_id": patient_id, "pro_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(200)
+    return {
+        "patient": patient,
+        "grossesse": gross,
+        "enfants": enfants,
+        "rdvs": rdvs,
+        "notes": notes,
+    }
+
+
+class ConsultationNoteIn(BaseModel):
+    patient_id: str
+    date: Optional[str] = None
+    diagnostic: Optional[str] = ""
+    traitement: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+@api.post("/pro/consultation-notes")
+async def create_consultation_note(payload: ConsultationNoteIn, user=Depends(require_roles("professionnel"))):
+    has_rdv = await db.rdv.count_documents({"pro_id": user["id"], "maman_id": payload.patient_id})
+    if has_rdv == 0:
+        raise HTTPException(status_code=403, detail="Vous n'avez pas accès à ce patient")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "pro_id": user["id"],
+        "pro_name": user.get("name"),
+        "patient_id": payload.patient_id,
+        "date": payload.date or datetime.now(timezone.utc).isoformat(),
+        "diagnostic": payload.diagnostic,
+        "traitement": payload.traitement,
+        "notes": payload.notes,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.consultation_notes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/pro/consultation-notes/{note_id}")
+async def delete_consultation_note(note_id: str, user=Depends(require_roles("professionnel"))):
+    res = await db.consultation_notes.delete_one({"id": note_id, "pro_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Note introuvable")
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# Disponibilités Pro
+# ----------------------------------------------------------------------
+class DisponibiliteIn(BaseModel):
+    jour: str  # "lundi", "mardi"...
+    heure_debut: str  # "08:00"
+    heure_fin: str  # "12:00"
+    actif: bool = True
+
+
+@api.get("/pro/disponibilites")
+async def get_disponibilites(user=Depends(require_roles("professionnel"))):
+    doc = await db.pro_disponibilites.find_one({"pro_id": user["id"]}, {"_id": 0})
+    return doc or {"pro_id": user["id"], "slots": [], "duree_consultation": 30}
+
+
+class DisposSetIn(BaseModel):
+    slots: List[DisponibiliteIn]
+    duree_consultation: int = 30
+
+
+@api.put("/pro/disponibilites")
+async def set_disponibilites(payload: DisposSetIn, user=Depends(require_roles("professionnel"))):
+    doc = {
+        "pro_id": user["id"],
+        "slots": [s.model_dump() for s in payload.slots],
+        "duree_consultation": payload.duree_consultation,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.pro_disponibilites.update_one({"pro_id": user["id"]}, {"$set": doc}, upsert=True)
+    return doc
+
+
+# ----------------------------------------------------------------------
+# Rappels pour patients (envoyés par Pro)
+# ----------------------------------------------------------------------
+class PatientRappelIn(BaseModel):
+    patient_id: str
+    title: str
+    due_at: str
+    notes: Optional[str] = None
+
+
+@api.post("/pro/rappels-patient")
+async def create_patient_rappel(payload: PatientRappelIn, user=Depends(require_roles("professionnel"))):
+    has_rdv = await db.rdv.count_documents({"pro_id": user["id"], "maman_id": payload.patient_id})
+    if has_rdv == 0:
+        raise HTTPException(status_code=403, detail="Patient non autorisé")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": payload.patient_id,
+        "title": payload.title,
+        "due_at": payload.due_at,
+        "notes": payload.notes,
+        "done": False,
+        "source": "pro",
+        "source_pro_id": user["id"],
+        "source_pro_name": user.get("name"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.reminders.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/pro/rappels-envoyes")
+async def get_rappels_envoyes(user=Depends(require_roles("professionnel"))):
+    cursor = db.reminders.find({"source_pro_id": user["id"]}, {"_id": 0}).sort("due_at", -1).limit(200)
+    return [r async for r in cursor]
+
+
+# ----------------------------------------------------------------------
+# Téléconsultation - Room link (Jitsi)
+# ----------------------------------------------------------------------
+@api.post("/teleconsultation/room/{rdv_id}")
+async def create_teleconsultation_room(rdv_id: str, user=Depends(get_current_user)):
+    rdv = await db.rdv.find_one({"id": rdv_id})
+    if not rdv:
+        raise HTTPException(status_code=404, detail="RDV introuvable")
+    if user["id"] not in [rdv.get("maman_id"), rdv.get("pro_id")]:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+    room_name = f"alomaman-{rdv_id[:8]}"
+    room_url = f"https://meet.jit.si/{room_name}"
+    await db.rdv.update_one(
+        {"id": rdv_id},
+        {"$set": {"teleconsultation_room": room_name, "teleconsultation_url": room_url}},
+    )
+    return {"room_name": room_name, "room_url": room_url, "rdv": {**rdv, "_id": None}}
+
+
+# ----------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------

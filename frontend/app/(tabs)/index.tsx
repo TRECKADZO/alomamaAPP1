@@ -450,6 +450,18 @@ function ProDash({ user, data, router }: any) {
         >
           <Text style={styles.btnText}>Voir mes patientes</Text>
         </TouchableOpacity>
+
+        <Text style={styles.sectionTitle}>Accès rapide Pro</Text>
+        <View style={styles.quickGrid}>
+          <QuickAction icon="people" label="Patientes" onPress={() => router.push("/(tabs)/patients")} color="#2DD4BF" />
+          <QuickAction icon="calendar" label="Dispo." onPress={() => router.push("/pro/disponibilites")} color="#06B6D4" />
+          <QuickAction icon="alarm" label="Rappels" onPress={() => router.push("/pro/rappels")} color="#F59E0B" />
+          <QuickAction icon="sparkles" label="IA Pro" onPress={() => router.push("/pro/ia")} color="#A855F7" />
+          <QuickAction icon="chatbubbles" label="Messages" onPress={() => router.push("/(tabs)/messages")} color="#3B82F6" />
+          <QuickAction icon="chatbubbles-outline" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} color="#10B981" />
+          <QuickAction icon="videocam" label="Téléconsult." onPress={() => router.push("/(tabs)/rdv")} color="#EC4899" />
+          <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} color="#F59E0B" />
+        </View>
       </View>
     </View>
   );

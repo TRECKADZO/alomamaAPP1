@@ -1,355 +1,387 @@
 """
-Backend tests for À lo Maman API — focused on new Centre de santé and Famille roles/endpoints.
+Backend tests for À lo Maman — Pro role new endpoints.
+Target: https://maman-mobile-mvp.preview.emergentagent.com/api
 """
 import os
 import sys
 import uuid
 import requests
 
-BASE = os.environ.get("BACKEND_URL") or "https://maman-mobile-mvp.preview.emergentagent.com"
-API = f"{BASE}/api"
+BASE = os.environ.get("BACKEND_URL", "https://maman-mobile-mvp.preview.emergentagent.com/api")
 
-# Unique suffix so tests are idempotent across runs
-SUFFIX = uuid.uuid4().hex[:6]
-
-CENTRE_EMAIL = f"centre1+{SUFFIX}@test.com"
-CENTRE_PW = "Centre123!"
-PAPA_EMAIL = f"papa1+{SUFFIX}@test.com"
-PAPA_PW = "Papa123!"
-NEW_PRO_EMAIL = f"newpro+{SUFFIX}@test.com"
-NEW_PRO_PW = "Pro123!"
-
+PRO_EMAIL = "pro@test.com"
+PRO_PW = "Pro123!"
 MAMAN_EMAIL = "maman@test.com"
 MAMAN_PW = "Maman123!"
+ADMIN_EMAIL = "admin@alomaman.com"
+ADMIN_PW = "Admin123!"
+
 
 results = []
 
-
-def log(name, ok, info=""):
-    mark = "PASS" if ok else "FAIL"
-    line = f"[{mark}] {name}" + (f" — {info}" if info else "")
-    print(line)
-    results.append((name, ok, info))
+def record(name, ok, detail=""):
+    icon = "OK " if ok else "FAIL"
+    msg = f"[{icon}] {name}"
+    if detail:
+        msg += f" — {detail}"
+    print(msg)
+    results.append((ok, name, detail))
     return ok
 
 
-def post(path, token=None, json=None):
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    return requests.post(f"{API}{path}", json=json, headers=headers, timeout=30)
+def login(email, pw):
+    r = requests.post(f"{BASE}/auth/login", json={"email": email, "password": pw}, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    return data["token"], data["user"]
 
 
-def get(path, token=None, params=None):
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    return requests.get(f"{API}{path}", params=params, headers=headers, timeout=30)
-
-
-def patch(path, token=None, json=None):
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    return requests.patch(f"{API}{path}", json=json, headers=headers, timeout=30)
-
-
-def delete(path, token=None):
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    return requests.delete(f"{API}{path}", headers=headers, timeout=30)
+def h(token):
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
 def main():
-    # -------------------------------------------------------------
-    # 1. Register Centre de santé
-    # -------------------------------------------------------------
-    payload = {
-        "role": "centre_sante",
-        "name": "Admin Centre Test",
-        "email": CENTRE_EMAIL,
-        "password": CENTRE_PW,
-        "nom_centre": "Clinique Test Mobile",
-        "type_etablissement": "clinique_privee",
-        "adresse": "Rue 12, Yopougon",
-        "ville": "Abidjan",
-        "region": "Lagunes",
-        "email_contact": "contact@cliniquetest.ci",
-        "phone": "+22501234567",
-    }
-    r = post("/auth/register", json=payload)
-    ok = r.status_code == 200
-    centre_token = None
-    centre_user_id = None
-    if ok:
-        data = r.json()
-        centre_token = data.get("token")
-        u = data.get("user", {})
-        centre_user_id = u.get("id")
-        ok = bool(centre_token) and u.get("role") == "centre_sante"
-    log("1. Register Centre de santé (role=centre_sante, token+user)", ok,
-        f"status={r.status_code} body={r.text[:200]}")
+    print(f"=== Testing PRO endpoints @ {BASE} ===\n")
 
-    # -------------------------------------------------------------
-    # 2. Register Famille
-    # -------------------------------------------------------------
-    r = post("/auth/register", json={
-        "role": "famille", "name": "Père Test",
-        "email": PAPA_EMAIL, "password": PAPA_PW,
-    })
-    ok = r.status_code == 200
-    papa_token = None
-    if ok:
-        data = r.json()
-        papa_token = data.get("token")
-        ok = bool(papa_token) and data.get("user", {}).get("role") == "famille"
-    log("2. Register Famille (role=famille)", ok,
-        f"status={r.status_code} body={r.text[:200]}")
+    try:
+        pro_tok, pro_user = login(PRO_EMAIL, PRO_PW)
+        record("Login pro@test.com", True, f"id={pro_user['id']}")
+    except Exception as e:
+        record("Login pro@test.com", False, str(e))
+        return
 
-    # -------------------------------------------------------------
-    # 3. GET /centres/mine as centre_sante — verifies auto-created centre + code_invitation
-    # -------------------------------------------------------------
-    centre_id = None
-    centre_code = None
-    if centre_token:
-        r = get("/centres/mine", token=centre_token)
-        ok = r.status_code == 200
-        if ok:
-            c = r.json()
-            centre_id = c.get("id")
-            centre_code = c.get("code_invitation")
-            ok = bool(centre_id) and bool(centre_code) and len(centre_code) == 6
-        log("3. GET /centres/mine (auto-created centre with 6-char code)", ok,
-            f"status={r.status_code} code_invitation={centre_code}")
+    try:
+        maman_tok, maman_user = login(MAMAN_EMAIL, MAMAN_PW)
+        record("Login maman@test.com", True, f"id={maman_user['id']}")
+    except Exception as e:
+        record("Login maman@test.com", False, str(e))
+        return
+
+    try:
+        sagefemme_tok, _ = login("sagefemme@test.com", "Pro123!")
+    except Exception:
+        sagefemme_tok = None
+
+    # Seed a RDV maman→pro if none
+    r = requests.get(f"{BASE}/rdv", headers=h(maman_tok), timeout=30)
+    rdvs_maman = r.json() if r.status_code == 200 else []
+    has_rdv_with_pro = any(x for x in rdvs_maman if x.get("pro_id") == pro_user["id"])
+    if not has_rdv_with_pro:
+        rr = requests.post(
+            f"{BASE}/rdv",
+            headers=h(maman_tok),
+            json={
+                "pro_id": pro_user["id"],
+                "date": "2026-05-15T10:00:00Z",
+                "motif": "Suivi grossesse - consultation test",
+                "tarif_fcfa": 10000,
+            },
+            timeout=30,
+        )
+        if rr.status_code == 200:
+            record("Create RDV maman→pro (seed)", True, f"rdv_id={rr.json().get('id')}")
+        else:
+            record("Create RDV maman→pro (seed)", False, f"{rr.status_code} {rr.text[:200]}")
     else:
-        log("3. GET /centres/mine", False, "skipped — no centre_token")
+        record("Maman already has RDV with pro", True)
 
-    # -------------------------------------------------------------
-    # 4. GET /centres (public, with q + region filters)
-    # -------------------------------------------------------------
-    r = get("/centres")
+    # Ensure maman has a grossesse + enfant to verify enrichment
+    r = requests.get(f"{BASE}/grossesse", headers=h(maman_tok), timeout=30)
+    if r.status_code == 200 and not r.json():
+        rr = requests.post(
+            f"{BASE}/grossesse",
+            headers=h(maman_tok),
+            json={"date_debut": "2026-01-01T00:00:00Z", "date_terme": "2026-10-10T00:00:00Z", "symptomes": ["nausees"]},
+            timeout=30,
+        )
+        record("Seed grossesse for maman", rr.status_code == 200, f"status={rr.status_code}")
+
+    r = requests.get(f"{BASE}/enfants", headers=h(maman_tok), timeout=30)
+    if r.status_code == 200 and len(r.json()) == 0:
+        rr = requests.post(
+            f"{BASE}/enfants",
+            headers=h(maman_tok),
+            json={"nom": "Kofi Test", "date_naissance": "2024-01-15", "sexe": "M", "poids_kg": 3.2, "taille_cm": 50},
+            timeout=30,
+        )
+        record("Seed enfant for maman", rr.status_code == 200, f"status={rr.status_code}")
+
+    # ==== 1. GET /pro/patients (enriched) ====
+    r = requests.get(f"{BASE}/pro/patients", headers=h(pro_tok), timeout=30)
     ok = r.status_code == 200 and isinstance(r.json(), list)
-    found = False
+    patients = r.json() if ok else []
     if ok:
-        found = any(c.get("id") == centre_id for c in r.json())
-    log("4a. GET /centres (public list contains new centre)", ok and found,
-        f"status={r.status_code} found={found}")
-
-    r = get("/centres", params={"q": "Clinique"})
-    ok = r.status_code == 200 and any(c.get("id") == centre_id for c in r.json())
-    log("4b. GET /centres?q=Clinique matches new centre", ok,
-        f"status={r.status_code}")
-
-    r = get("/centres", params={"region": "Lagunes"})
-    ok = r.status_code == 200 and any(c.get("id") == centre_id for c in r.json())
-    log("4c. GET /centres?region=Lagunes matches new centre", ok,
-        f"status={r.status_code}")
-
-    # -------------------------------------------------------------
-    # 5. GET /centres/{id} public
-    # -------------------------------------------------------------
-    if centre_id:
-        r = get(f"/centres/{centre_id}")
-        ok = r.status_code == 200 and r.json().get("id") == centre_id
-        log("5. GET /centres/{id} (public detail)", ok, f"status={r.status_code}")
+        if not patients:
+            record("GET /pro/patients (enriched)", False, "list empty; expected maman as patient")
+        else:
+            p0 = next((p for p in patients if p.get("id") == maman_user["id"]), patients[0])
+            required = ["has_grossesse", "grossesse_sa", "enfants_count", "last_rdv_date"]
+            missing = [f for f in required if f not in p0]
+            if missing:
+                record("GET /pro/patients enriched fields", False, f"missing {missing}")
+            else:
+                record(
+                    "GET /pro/patients enriched fields present",
+                    True,
+                    f"n={len(patients)} sample={ {k:p0.get(k) for k in required} }",
+                )
+                # Deeper check: should reflect actual data in DB
+                exp_gross = True
+                exp_enfants_min = 1
+                if p0.get("has_grossesse") != exp_gross or (p0.get("enfants_count") or 0) < exp_enfants_min:
+                    record(
+                        "Enrichment values reflect DB (has_grossesse + enfants_count)",
+                        False,
+                        f"has_grossesse={p0.get('has_grossesse')} enfants_count={p0.get('enfants_count')} (expected True and >=1)",
+                    )
+                else:
+                    record("Enrichment values reflect DB (has_grossesse + enfants_count)", True)
+                if not p0.get("last_rdv_date"):
+                    record("Enrichment last_rdv_date populated", False, "last_rdv_date is null")
+                else:
+                    record("Enrichment last_rdv_date populated", True, f"last_rdv_date={p0.get('last_rdv_date')}")
     else:
-        log("5. GET /centres/{id}", False, "no centre_id")
+        record("GET /pro/patients", False, f"{r.status_code} {r.text[:200]}")
 
-    # -------------------------------------------------------------
-    # 6. PATCH /centres/{id} as owner
-    # -------------------------------------------------------------
-    if centre_id and centre_token:
-        patch_body = {
-            "nom_centre": "Clinique Test Mobile",
-            "services": ["Maternité", "Échographie"],
-            "horaires": "Lun-Ven 8h-17h",
+    patient_id = None
+    for p in patients:
+        if p.get("id") == maman_user["id"]:
+            patient_id = p["id"]
+            break
+    if not patient_id and patients:
+        patient_id = patients[0]["id"]
+
+    # ==== 2. GET /pro/dossier/{patient_id} ====
+    if patient_id:
+        r = requests.get(f"{BASE}/pro/dossier/{patient_id}", headers=h(pro_tok), timeout=30)
+        if r.status_code == 200:
+            d = r.json()
+            keys = {"patient", "grossesse", "enfants", "rdvs", "notes"}
+            missing = keys - set(d.keys())
+            if missing:
+                record("GET /pro/dossier shape", False, f"missing keys {missing}")
+            else:
+                record(
+                    "GET /pro/dossier shape",
+                    True,
+                    f"rdvs={len(d.get('rdvs') or [])} enfants={len(d.get('enfants') or [])} grossesse={bool(d.get('grossesse'))}",
+                )
+                # Deeper: we expect grossesse + at least 1 enfant
+                dossier_ok = bool(d.get("grossesse")) and len(d.get("enfants") or []) >= 1
+                if not dossier_ok:
+                    record(
+                        "Dossier contains grossesse + enfants",
+                        False,
+                        f"grossesse={bool(d.get('grossesse'))} enfants={len(d.get('enfants') or [])} (expected both populated)",
+                    )
+                else:
+                    record("Dossier contains grossesse + enfants", True)
+        else:
+            record("GET /pro/dossier/{patient_id}", False, f"{r.status_code} {r.text[:200]}")
+    else:
+        record("GET /pro/dossier/{patient_id}", False, "no patient_id available")
+
+    fake_id = str(uuid.uuid4())
+    r = requests.get(f"{BASE}/pro/dossier/{fake_id}", headers=h(pro_tok), timeout=30)
+    record(
+        "GET /pro/dossier (no-rdv/unknown patient → 403/404)",
+        r.status_code in (403, 404),
+        f"status={r.status_code}",
+    )
+
+    # ==== 3. POST /pro/consultation-notes ====
+    note_id = None
+    if patient_id:
+        body = {
+            "patient_id": patient_id,
+            "date": "2026-04-20",
+            "diagnostic": "Anémie légère",
+            "traitement": "Fer 80mg x2/j",
+            "notes": "Revoir dans 1 mois",
         }
-        r = patch(f"/centres/{centre_id}", token=centre_token, json=patch_body)
-        ok = r.status_code == 200
-        if ok:
-            c = r.json()
-            ok = c.get("services") == ["Maternité", "Échographie"] and c.get("horaires") == "Lun-Ven 8h-17h"
-        log("6. PATCH /centres/{id} as owner (update services+horaires)", ok,
-            f"status={r.status_code} body={r.text[:200]}")
+        r = requests.post(f"{BASE}/pro/consultation-notes", headers=h(pro_tok), json=body, timeout=30)
+        if r.status_code == 200 and r.json().get("id"):
+            note_id = r.json()["id"]
+            jd = r.json()
+            ok_fields = (
+                jd.get("diagnostic") == "Anémie légère"
+                and jd.get("traitement") == "Fer 80mg x2/j"
+                and jd.get("pro_id") == pro_user["id"]
+            )
+            record("POST /pro/consultation-notes", ok_fields, f"id={note_id}")
+        else:
+            record("POST /pro/consultation-notes", False, f"{r.status_code} {r.text[:200]}")
+
+    # ==== 4. dossier should list the note ====
+    if patient_id and note_id:
+        r = requests.get(f"{BASE}/pro/dossier/{patient_id}", headers=h(pro_tok), timeout=30)
+        if r.status_code == 200:
+            notes = r.json().get("notes") or []
+            found = any(n.get("id") == note_id for n in notes)
+            record("Dossier now contains new note", found, f"notes_count={len(notes)}")
+        else:
+            record("Dossier recheck", False, f"{r.status_code}")
+
+    # ==== 5. DELETE /pro/consultation-notes/{id} ====
+    if note_id:
+        r = requests.delete(f"{BASE}/pro/consultation-notes/{note_id}", headers=h(pro_tok), timeout=30)
+        ok = r.status_code == 200 and r.json().get("ok") is True
+        record("DELETE /pro/consultation-notes/{id}", ok, f"status={r.status_code}")
+        if ok and patient_id:
+            r2 = requests.get(f"{BASE}/pro/dossier/{patient_id}", headers=h(pro_tok), timeout=30)
+            notes = r2.json().get("notes") or []
+            record("Deleted note removed from dossier", not any(n.get("id") == note_id for n in notes))
+
+    # ==== 6. GET /pro/disponibilites initial ====
+    r = requests.get(f"{BASE}/pro/disponibilites", headers=h(pro_tok), timeout=30)
+    if r.status_code == 200:
+        d = r.json()
+        ok = "slots" in d and "duree_consultation" in d and d.get("pro_id") == pro_user["id"]
+        record(
+            "GET /pro/disponibilites (initial shape)",
+            ok,
+            f"slots={len(d.get('slots') or [])} duree={d.get('duree_consultation')}",
+        )
     else:
-        log("6. PATCH /centres/{id}", False, "missing id/token")
+        record("GET /pro/disponibilites (initial)", False, f"{r.status_code} {r.text[:200]}")
 
-    # -------------------------------------------------------------
-    # Login as maman
-    # -------------------------------------------------------------
-    r = post("/auth/login", json={"email": MAMAN_EMAIL, "password": MAMAN_PW})
-    ok = r.status_code == 200
-    maman_token = r.json().get("token") if ok else None
-    log("Login maman@test.com (regression)", ok, f"status={r.status_code}")
-
-    # -------------------------------------------------------------
-    # 7. POST /famille/create as maman — idempotent
-    # -------------------------------------------------------------
-    code_partage = None
-    if maman_token:
-        # Clean existing famille to test fresh create? The API is idempotent, so keeping existing is fine.
-        r = post("/famille/create", token=maman_token)
-        ok = r.status_code == 200
-        f1 = r.json() if ok else {}
-        code_partage = f1.get("code_partage")
-        ok = ok and bool(code_partage) and len(code_partage) == 6
-        log("7a. POST /famille/create (returns 6-char code_partage)", ok,
-            f"status={r.status_code} code={code_partage}")
-
-        # call again
-        r = post("/famille/create", token=maman_token)
-        ok = r.status_code == 200 and r.json().get("code_partage") == code_partage
-        log("7b. POST /famille/create idempotent (same code)", ok,
-            f"status={r.status_code}")
+    # ==== 7. PUT /pro/disponibilites ====
+    new_dispos = {
+        "slots": [
+            {"jour": "lundi", "heure_debut": "08:00", "heure_fin": "12:00", "actif": True},
+            {"jour": "mercredi", "heure_debut": "14:00", "heure_fin": "18:00", "actif": True},
+        ],
+        "duree_consultation": 30,
+    }
+    r = requests.put(f"{BASE}/pro/disponibilites", headers=h(pro_tok), json=new_dispos, timeout=30)
+    if r.status_code == 200:
+        d = r.json()
+        ok = len(d.get("slots") or []) == 2 and d.get("duree_consultation") == 30
+        record("PUT /pro/disponibilites", ok, f"saved {len(d.get('slots') or [])} slots")
     else:
-        log("7. POST /famille/create", False, "no maman_token")
+        record("PUT /pro/disponibilites", False, f"{r.status_code} {r.text[:200]}")
 
-    # -------------------------------------------------------------
-    # 8. GET /famille as maman
-    # -------------------------------------------------------------
-    if maman_token:
-        r = get("/famille", token=maman_token)
-        ok = r.status_code == 200
-        if ok:
-            data = r.json()
-            owned = data.get("owned") or {}
-            ok = owned.get("code_partage") == code_partage and isinstance(owned.get("membres"), list)
-        log("8. GET /famille as maman (owned.code_partage + membres list)", ok,
-            f"status={r.status_code}")
-
-    # -------------------------------------------------------------
-    # 9. POST /famille/join as papa
-    # -------------------------------------------------------------
-    if papa_token and code_partage:
-        r = post("/famille/join", token=papa_token,
-                 json={"code": code_partage, "relation": "partenaire"})
-        ok = r.status_code == 200
-        if ok:
-            f = r.json()
-            members = f.get("membres", [])
-            match = next((m for m in members if m.get("email") == PAPA_EMAIL), None)
-            ok = bool(match) and match.get("statut") == "en_attente"
-        log("9. POST /famille/join as papa (statut=en_attente)", ok,
-            f"status={r.status_code} body={r.text[:200]}")
+    # ==== 8. GET after PUT ====
+    r = requests.get(f"{BASE}/pro/disponibilites", headers=h(pro_tok), timeout=30)
+    if r.status_code == 200:
+        d = r.json()
+        slots = d.get("slots") or []
+        jours = sorted([s.get("jour") for s in slots])
+        ok = jours == ["lundi", "mercredi"] and d.get("duree_consultation") == 30
+        record("GET /pro/disponibilites after PUT", ok, f"jours={jours}")
     else:
-        log("9. POST /famille/join", False, "missing papa_token or code")
+        record("GET /pro/disponibilites after PUT", False, f"{r.status_code}")
 
-    # -------------------------------------------------------------
-    # 10. GET /famille as maman — should now have 1 member
-    # -------------------------------------------------------------
-    if maman_token:
-        r = get("/famille", token=maman_token)
-        ok = r.status_code == 200
-        if ok:
-            owned = r.json().get("owned") or {}
-            membres = owned.get("membres", [])
-            match = next((m for m in membres if m.get("email") == PAPA_EMAIL), None)
-            ok = bool(match) and match.get("statut") == "en_attente"
-        log("10. GET /famille as maman (member papa en_attente)", ok,
-            f"status={r.status_code}")
+    # ==== 9. POST /pro/rappels-patient ====
+    rappel_id = None
+    if patient_id:
+        body = {
+            "patient_id": patient_id,
+            "title": "Prise de fer",
+            "due_at": "2026-05-01",
+            "notes": "2 comprimés/jour",
+        }
+        r = requests.post(f"{BASE}/pro/rappels-patient", headers=h(pro_tok), json=body, timeout=30)
+        if r.status_code == 200:
+            jd = r.json()
+            rappel_id = jd.get("id")
+            ok = (
+                jd.get("source") == "pro"
+                and jd.get("source_pro_id") == pro_user["id"]
+                and jd.get("title") == "Prise de fer"
+                and jd.get("user_id") == patient_id
+            )
+            record(
+                "POST /pro/rappels-patient",
+                ok,
+                f"source={jd.get('source')} src_pro_id_ok={jd.get('source_pro_id')==pro_user['id']}",
+            )
+        else:
+            record("POST /pro/rappels-patient", False, f"{r.status_code} {r.text[:200]}")
 
-    # -------------------------------------------------------------
-    # 11. PATCH /famille/members/{email} — statut + permissions
-    # -------------------------------------------------------------
-    if maman_token:
-        r = patch(f"/famille/members/{PAPA_EMAIL}", token=maman_token,
-                  json={"statut": "accepte"})
-        ok = r.status_code == 200
-        if ok:
-            membres = r.json().get("membres", [])
-            match = next((m for m in membres if m.get("email") == PAPA_EMAIL), None)
-            ok = bool(match) and match.get("statut") == "accepte"
-        log("11a. PATCH /famille/members (statut=accepte)", ok,
-            f"status={r.status_code}")
+    # ==== 10. GET /reminders as maman ====
+    if rappel_id and patient_id == maman_user["id"]:
+        r = requests.get(f"{BASE}/reminders", headers=h(maman_tok), timeout=30)
+        if r.status_code == 200:
+            items = r.json() or []
+            found = any(x.get("id") == rappel_id for x in items)
+            record("Rappel appears in maman GET /reminders", found, f"n={len(items)}")
+        else:
+            record("Rappel appears in maman GET /reminders", False, f"{r.status_code}")
 
-        r = patch(f"/famille/members/{PAPA_EMAIL}", token=maman_token,
-                  json={"permissions": {"grossesse": False, "enfants": True}})
-        ok = r.status_code == 200
-        if ok:
-            membres = r.json().get("membres", [])
-            match = next((m for m in membres if m.get("email") == PAPA_EMAIL), None)
-            perms = (match or {}).get("permissions") or {}
-            ok = perms.get("grossesse") is False and perms.get("enfants") is True
-        log("11b. PATCH /famille/members (permissions updated)", ok,
-            f"status={r.status_code} perms={perms if ok else 'N/A'}")
-
-    # -------------------------------------------------------------
-    # 12. GET /famille as papa — member_of should contain maman's family
-    # -------------------------------------------------------------
-    if papa_token:
-        r = get("/famille", token=papa_token)
-        ok = r.status_code == 200
-        if ok:
-            member_of = r.json().get("member_of") or []
-            ok = any(f.get("code_partage") == code_partage for f in member_of)
-        log("12. GET /famille as papa (member_of contains maman family)", ok,
-            f"status={r.status_code}")
-
-    # -------------------------------------------------------------
-    # 13. DELETE /famille/members/{email}
-    # -------------------------------------------------------------
-    if maman_token:
-        r = delete(f"/famille/members/{PAPA_EMAIL}", token=maman_token)
-        ok = r.status_code == 200
-        # verify gone
-        r2 = get("/famille", token=maman_token)
-        if r2.status_code == 200:
-            membres = (r2.json().get("owned") or {}).get("membres", [])
-            removed = not any(m.get("email") == PAPA_EMAIL for m in membres)
-            ok = ok and removed
-        log("13. DELETE /famille/members (removal works)", ok,
-            f"status={r.status_code}")
-
-    # -------------------------------------------------------------
-    # 14. Regression — login existing Maman/Pro (already did maman above)
-    # -------------------------------------------------------------
-    r = post("/auth/login", json={"email": "pro@test.com", "password": "Pro123!"})
-    ok = r.status_code == 200 and r.json().get("user", {}).get("role") == "professionnel"
-    log("14a. Regression login pro@test.com", ok, f"status={r.status_code}")
-
-    # Register new maman as regression
-    maman_new_email = f"maman+{SUFFIX}@test.com"
-    r = post("/auth/register", json={
-        "role": "maman", "name": "Nouvelle Maman",
-        "email": maman_new_email, "password": "Maman123!",
-    })
-    ok = r.status_code == 200 and r.json().get("user", {}).get("role") == "maman"
-    log("14b. Regression register role=maman", ok, f"status={r.status_code}")
-
-    # -------------------------------------------------------------
-    # 15. Register Pro with code_invitation_centre
-    # -------------------------------------------------------------
-    if centre_code and centre_id:
-        r = post("/auth/register", json={
-            "role": "professionnel",
-            "name": "Dr. Invité",
-            "email": NEW_PRO_EMAIL,
-            "password": NEW_PRO_PW,
-            "specialite": "Gynécologue",
-            "code_invitation_centre": centre_code,
-        })
-        ok = r.status_code == 200
-        pro_id = r.json().get("user", {}).get("id") if ok else None
-        log("15a. Register Pro with code_invitation_centre", ok,
-            f"status={r.status_code}")
-
-        # Verify centre.membres_pro contains pro_id
-        if centre_token and pro_id:
-            r = get("/centres/mine", token=centre_token)
-            ok2 = r.status_code == 200
-            if ok2:
-                membres_pro = r.json().get("membres_pro", [])
-                ok2 = pro_id in membres_pro
-            log("15b. Centre membres_pro contains new pro", ok2,
-                f"membres_pro={r.json().get('membres_pro') if r.status_code==200 else 'N/A'}")
+    # ==== 11. GET /pro/rappels-envoyes ====
+    r = requests.get(f"{BASE}/pro/rappels-envoyes", headers=h(pro_tok), timeout=30)
+    if r.status_code == 200:
+        items = r.json() or []
+        found = rappel_id is None or any(x.get("id") == rappel_id for x in items)
+        record("GET /pro/rappels-envoyes", found, f"n={len(items)}")
     else:
-        log("15. Pro with code invitation", False, "no centre code")
+        record("GET /pro/rappels-envoyes", False, f"{r.status_code}")
 
-    # -------------------------------------------------------------
+    # ==== 12. POST /teleconsultation/room/{rdv_id} ====
+    r = requests.get(f"{BASE}/rdv", headers=h(pro_tok), timeout=30)
+    pro_rdvs = r.json() if r.status_code == 200 else []
+    target_rdv = pro_rdvs[0] if pro_rdvs else None
+    if target_rdv:
+        rid = target_rdv["id"]
+        r = requests.post(f"{BASE}/teleconsultation/room/{rid}", headers=h(pro_tok), timeout=30)
+        if r.status_code == 200:
+            jd = r.json()
+            ok = bool(jd.get("room_name")) and bool(jd.get("room_url"))
+            record("POST /teleconsultation/room (as pro)", ok, f"room={jd.get('room_name')}")
+            r2 = requests.get(f"{BASE}/rdv", headers=h(pro_tok), timeout=30)
+            updated = next((x for x in r2.json() if x.get("id") == rid), {})
+            record(
+                "RDV updated with teleconsultation_url",
+                updated.get("teleconsultation_url") == jd.get("room_url"),
+                f"url={updated.get('teleconsultation_url')}",
+            )
+        else:
+            record("POST /teleconsultation/room (as pro)", False, f"{r.status_code} {r.text[:200]}")
+
+        if sagefemme_tok:
+            r = requests.post(f"{BASE}/teleconsultation/room/{rid}", headers=h(sagefemme_tok), timeout=30)
+            record("Teleconsultation unrelated user → 403", r.status_code == 403, f"status={r.status_code}")
+    else:
+        record("POST /teleconsultation/room", False, "no rdv available for pro")
+
+    # ==== 13. Role checks ====
+    for path, method, body in [
+        ("/pro/patients", "GET", None),
+        ("/pro/disponibilites", "GET", None),
+        ("/pro/rappels-envoyes", "GET", None),
+        ("/pro/consultation-notes", "POST", {"patient_id": "x", "diagnostic": "t"}),
+    ]:
+        if method == "GET":
+            r = requests.get(f"{BASE}{path}", headers=h(maman_tok), timeout=30)
+        else:
+            r = requests.post(f"{BASE}{path}", headers=h(maman_tok), json=body, timeout=30)
+        record(f"Role check: maman on {method} {path} → 403", r.status_code == 403, f"status={r.status_code}")
+
+    # ==== 14. Regression ====
+    r = requests.get(f"{BASE}/grossesse", headers=h(maman_tok), timeout=30)
+    record("Regression GET /grossesse (maman)", r.status_code == 200, f"status={r.status_code}")
+    r = requests.get(f"{BASE}/enfants", headers=h(maman_tok), timeout=30)
+    record("Regression GET /enfants (maman)", r.status_code == 200 and isinstance(r.json(), list), f"status={r.status_code}")
+    r = requests.get(f"{BASE}/community", headers=h(maman_tok), timeout=30)
+    record("Regression GET /community", r.status_code == 200 and isinstance(r.json(), list), f"status={r.status_code}")
+    r = requests.get(f"{BASE}/rdv", headers=h(pro_tok), timeout=30)
+    record("Regression GET /rdv (pro)", r.status_code == 200 and isinstance(r.json(), list), f"status={r.status_code}")
+    try:
+        login(ADMIN_EMAIL, ADMIN_PW)
+        record("Regression admin login", True)
+    except Exception as e:
+        record("Regression admin login", False, str(e))
+
     # Summary
-    # -------------------------------------------------------------
-    print("\n" + "=" * 70)
-    passed = sum(1 for _, ok, _ in results if ok)
+    passed = sum(1 for r_, _, _ in results if r_)
     total = len(results)
-    print(f"Passed: {passed}/{total}")
-    failures = [(n, i) for n, ok, i in results if not ok]
-    if failures:
+    print(f"\n=== {passed}/{total} passed ===")
+    if passed < total:
         print("\nFailures:")
-        for n, i in failures:
-            print(f"  - {n}: {i}")
+        for ok, name, detail in results:
+            if not ok:
+                print(f"  FAIL {name} — {detail}")
     return 0 if passed == total else 1
 
 
