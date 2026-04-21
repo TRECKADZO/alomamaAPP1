@@ -32,6 +32,7 @@ export default function Register() {
   const router = useRouter();
   const { register } = useAuth();
   const [role, setRole] = useState<Role>("maman");
+  const [mode, setMode] = useState<"email" | "phone">("email");
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -52,8 +53,16 @@ export default function Register() {
   const update = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const handleRegister = async () => {
-    if (!form.name || !form.email || !form.password) {
-      Alert.alert("Champs requis", "Nom, email et mot de passe sont requis");
+    if (!form.name || !form.password) {
+      Alert.alert("Champs requis", "Nom et mot de passe sont requis");
+      return;
+    }
+    if (mode === "email" && !form.email) {
+      Alert.alert("Email requis", "Saisissez votre email");
+      return;
+    }
+    if (mode === "phone" && !form.phone) {
+      Alert.alert("Téléphone requis", "Saisissez votre numéro");
       return;
     }
     if (form.password.length < 6) {
@@ -68,9 +77,9 @@ export default function Register() {
     try {
       await register({
         name: form.name.trim(),
-        email: form.email.trim().toLowerCase(),
+        email: mode === "email" ? form.email.trim().toLowerCase() : undefined,
+        phone: mode === "phone" ? form.phone.trim() : (form.phone || undefined),
         password: form.password,
-        phone: form.phone || undefined,
         role,
         specialite: role === "professionnel" ? form.specialite : undefined,
         code_invitation_centre: role === "professionnel" ? form.code_invitation_centre : undefined,
@@ -127,17 +136,45 @@ export default function Register() {
             <TextInput style={styles.input} value={form.name} onChangeText={(v) => update("name", v)} placeholder="Votre nom" placeholderTextColor={COLORS.textMuted} testID="reg-name-input" />
           </Field>
 
-          <Field label="Email *" icon="mail-outline">
-            <TextInput style={styles.input} value={form.email} onChangeText={(v) => update("email", v)} autoCapitalize="none" keyboardType="email-address" placeholder="vous@exemple.com" placeholderTextColor={COLORS.textMuted} testID="reg-email-input" />
-          </Field>
+          {/* Toggle email / téléphone */}
+          <View style={styles.modeToggle}>
+            <TouchableOpacity
+              style={[styles.modeBtn, mode === "email" && styles.modeBtnActive]}
+              onPress={() => setMode("email")}
+              testID="reg-mode-email"
+            >
+              <Ionicons name="mail" size={14} color={mode === "email" ? "#fff" : COLORS.textPrimary} />
+              <Text style={[styles.modeBtnText, mode === "email" && { color: "#fff" }]}>S'inscrire par email</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modeBtn, mode === "phone" && styles.modeBtnActive]}
+              onPress={() => setMode("phone")}
+              testID="reg-mode-phone"
+            >
+              <Ionicons name="call" size={14} color={mode === "phone" ? "#fff" : COLORS.textPrimary} />
+              <Text style={[styles.modeBtnText, mode === "phone" && { color: "#fff" }]}>Par téléphone</Text>
+            </TouchableOpacity>
+          </View>
+
+          {mode === "email" ? (
+            <Field label="Email *" icon="mail-outline">
+              <TextInput style={styles.input} value={form.email} onChangeText={(v) => update("email", v)} autoCapitalize="none" keyboardType="email-address" placeholder="vous@exemple.com" placeholderTextColor={COLORS.textMuted} testID="reg-email-input" />
+            </Field>
+          ) : (
+            <Field label="Numéro de téléphone *" icon="call-outline">
+              <TextInput style={styles.input} value={form.phone} onChangeText={(v) => update("phone", v)} keyboardType="phone-pad" placeholder="+225 XX XX XX XX" placeholderTextColor={COLORS.textMuted} testID="reg-phone-input" />
+            </Field>
+          )}
 
           <Field label="Mot de passe *" icon="lock-closed-outline">
             <TextInput style={styles.input} value={form.password} onChangeText={(v) => update("password", v)} secureTextEntry placeholder="Min. 6 caractères" placeholderTextColor={COLORS.textMuted} testID="reg-password-input" />
           </Field>
 
-          <Field label="Téléphone" icon="call-outline">
-            <TextInput style={styles.input} value={form.phone} onChangeText={(v) => update("phone", v)} keyboardType="phone-pad" placeholder="+225 ..." placeholderTextColor={COLORS.textMuted} testID="reg-phone-input" />
-          </Field>
+          {mode === "email" && (
+            <Field label="Téléphone (optionnel)" icon="call-outline">
+              <TextInput style={styles.input} value={form.phone} onChangeText={(v) => update("phone", v)} keyboardType="phone-pad" placeholder="+225 ..." placeholderTextColor={COLORS.textMuted} testID="reg-phone-optional-input" />
+            </Field>
+          )}
 
           {role === "professionnel" && (
             <>
@@ -240,6 +277,10 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: "800", color: COLORS.textPrimary, marginTop: 10 },
   subtitle: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4, marginBottom: SPACING.xl },
   rolesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: SPACING.xl },
+  modeToggle: { flexDirection: "row", gap: 6, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.pill, padding: 4, marginBottom: SPACING.md },
+  modeBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: RADIUS.pill },
+  modeBtnActive: { backgroundColor: COLORS.primary },
+  modeBtnText: { color: COLORS.textPrimary, fontWeight: "700", fontSize: 12 },
   roleCard: {
     width: "48%",
     backgroundColor: COLORS.surface,

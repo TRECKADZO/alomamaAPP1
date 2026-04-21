@@ -60,8 +60,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const { data } = await api.post("/auth/login", { email, password });
+  const login = async (credentials: { email?: string; phone?: string; password: string }) => {
+    const { data } = await api.post("/auth/login", credentials);
     await saveAuth(data.token, data.user);
     setUser(data.user);
     registerExpoPushToken().catch(() => {});

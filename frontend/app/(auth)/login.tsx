@@ -21,19 +21,22 @@ import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 export default function Login() {
   const router = useRouter();
   const { login } = useAuth();
-  const [email, setEmail] = useState("");
+  const [mode, setMode] = useState<"email" | "phone">("email");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert("Champs requis", "Veuillez renseigner email et mot de passe");
+    if (!identifier || !password) {
+      Alert.alert("Champs requis", `Veuillez renseigner ${mode === "email" ? "email" : "téléphone"} et mot de passe`);
       return;
     }
     setLoading(true);
     try {
-      await login(email.trim().toLowerCase(), password);
+      await login(
+        { [mode]: mode === "email" ? identifier.trim().toLowerCase() : identifier.trim(), password } as any
+      );
       router.replace("/(tabs)");
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
@@ -43,14 +46,15 @@ export default function Login() {
   };
 
   const fillDemo = (type: string) => {
+    setMode("email");
     if (type === "maman") {
-      setEmail("maman@test.com");
+      setIdentifier("maman@test.com");
       setPassword("Maman123!");
     } else if (type === "pro") {
-      setEmail("pro@test.com");
+      setIdentifier("pro@test.com");
       setPassword("Pro123!");
     } else {
-      setEmail("admin@alomaman.com");
+      setIdentifier("admin@alomaman.com");
       setPassword("Admin123!");
     }
   };
@@ -73,19 +77,39 @@ export default function Login() {
           <Text style={styles.title}>Bon retour 👋</Text>
           <Text style={styles.subtitle}>Connectez-vous pour accéder à votre espace</Text>
 
+          {/* Toggle email / téléphone */}
+          <View style={styles.modeToggle}>
+            <TouchableOpacity
+              style={[styles.modeBtn, mode === "email" && styles.modeBtnActive]}
+              onPress={() => { setMode("email"); setIdentifier(""); }}
+              testID="mode-email-btn"
+            >
+              <Ionicons name="mail" size={14} color={mode === "email" ? "#fff" : COLORS.textPrimary} />
+              <Text style={[styles.modeBtnText, mode === "email" && { color: "#fff" }]}>Email</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modeBtn, mode === "phone" && styles.modeBtnActive]}
+              onPress={() => { setMode("phone"); setIdentifier(""); }}
+              testID="mode-phone-btn"
+            >
+              <Ionicons name="call" size={14} color={mode === "phone" ? "#fff" : COLORS.textPrimary} />
+              <Text style={[styles.modeBtnText, mode === "phone" && { color: "#fff" }]}>Téléphone</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.field}>
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>{mode === "email" ? "Email" : "Numéro de téléphone"}</Text>
             <View style={styles.inputWrap}>
-              <Ionicons name="mail-outline" size={18} color={COLORS.textMuted} />
+              <Ionicons name={mode === "email" ? "mail-outline" : "call-outline"} size={18} color={COLORS.textMuted} />
               <TextInput
                 style={styles.input}
-                value={email}
-                onChangeText={setEmail}
+                value={identifier}
+                onChangeText={setIdentifier}
                 autoCapitalize="none"
-                keyboardType="email-address"
-                placeholder="vous@exemple.com"
+                keyboardType={mode === "email" ? "email-address" : "phone-pad"}
+                placeholder={mode === "email" ? "vous@exemple.com" : "+225 XX XX XX XX"}
                 placeholderTextColor={COLORS.textMuted}
-                testID="login-email-input"
+                testID="login-identifier-input"
               />
             </View>
           </View>
@@ -162,6 +186,10 @@ const styles = StyleSheet.create({
   title: { fontSize: 32, fontWeight: "800", color: COLORS.textPrimary, marginTop: 10 },
   subtitle: { fontSize: 15, color: COLORS.textSecondary, marginTop: 6, marginBottom: SPACING.xl },
   field: { marginBottom: SPACING.lg },
+  modeToggle: { flexDirection: "row", gap: 6, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.pill, padding: 4, marginBottom: SPACING.lg },
+  modeBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: RADIUS.pill },
+  modeBtnActive: { backgroundColor: COLORS.primary },
+  modeBtnText: { color: COLORS.textPrimary, fontWeight: "700", fontSize: 13 },
   label: { fontSize: 13, fontWeight: "600", color: COLORS.textPrimary, marginBottom: 8 },
   inputWrap: {
     flexDirection: "row",

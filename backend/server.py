@@ -64,13 +64,20 @@ def create_token(user_id: str, email: str, role: str) -> str:
 
 
 def serialize_user(u: dict) -> dict:
+    email = u.get("email", "")
+    # Si email est un synthétique (xxx@phone.alomaman.local), on ne l'expose pas
+    email_public = u.get("email_public") or (email if not email.endswith("@phone.alomaman.local") else None)
     return {
         "id": u["id"],
-        "email": u["email"],
+        "email": email_public or "",  # email affichable
+        "internal_email": email,
         "name": u.get("name", ""),
         "role": u["role"],
         "avatar": u.get("avatar"),
         "phone": u.get("phone"),
+        "specialite": u.get("specialite"),
+        "ville": u.get("ville"),
+        "region": u.get("region"),
         "premium": bool(u.get("premium", False)),
         "premium_until": u.get("premium_until"),
         "created_at": u.get("created_at"),
@@ -109,11 +116,11 @@ Role = Literal["maman", "professionnel", "admin", "centre_sante", "famille"]
 
 
 class RegisterIn(BaseModel):
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
     password: str = Field(min_length=6)
     name: str = Field(min_length=2)
     role: Role = "maman"
-    phone: Optional[str] = None
     specialite: Optional[str] = None  # for professionals
     # Centre de santé
     nom_centre: Optional[str] = None
@@ -128,8 +135,20 @@ class RegisterIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
     password: str
+
+
+def _normalize_phone(p: str) -> str:
+    """Normalise un numéro : enlève espaces, tirets, et ajoute + si manquant."""
+    if not p:
+        return p
+    clean = "".join(c for c in p if c.isdigit() or c == "+")
+    if clean and not clean.startswith("+") and len(clean) >= 8:
+        # Par défaut Côte d'Ivoire si pas de préfixe
+        clean = "+225" + clean.lstrip("0")
+    return clean
 
 
 class GrossesseIn(BaseModel):
@@ -263,18 +282,31 @@ class TeleEchoIn(BaseModel):
 # ----------------------------------------------------------------------
 @api.post("/auth/register")
 async def register(payload: RegisterIn):
-    email = payload.email.lower().strip()
-    existing = await db.users.find_one({"email": email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Cet email est déjà utilisé")
+    if not payload.email and not payload.phone:
+        raise HTTPException(status_code=400, detail="Email ou téléphone requis")
+
+    email = payload.email.lower().strip() if payload.email else None
+    phone = _normalize_phone(payload.phone) if payload.phone else None
+
+    # Vérifier unicité
+    if email:
+        if await db.users.find_one({"email": email}):
+            raise HTTPException(status_code=400, detail="Cet email est déjà utilisé")
+    if phone:
+        if await db.users.find_one({"phone": phone}):
+            raise HTTPException(status_code=400, detail="Ce numéro est déjà utilisé")
+
     user_id = str(uuid.uuid4())
+    # Si pas d'email, en synthétiser un pour la clé interne (login email)
+    internal_email = email or f"{phone.replace('+', '')}@phone.alomaman.local"
     doc = {
         "id": user_id,
-        "email": email,
+        "email": internal_email,
+        "email_public": email,  # email réel (peut être null)
+        "phone": phone,
         "password_hash": hash_password(payload.password),
         "name": payload.name,
         "role": payload.role,
-        "phone": payload.phone,
         "specialite": payload.specialite,
         "ville": payload.ville,
         "region": payload.region,
@@ -288,7 +320,7 @@ async def register(payload: RegisterIn):
         centre_doc = {
             "id": str(uuid.uuid4()),
             "owner_id": user_id,
-            "owner_email": email,
+            "owner_email": internal_email,
             "nom_centre": payload.nom_centre,
             "type_etablissement": payload.type_etablissement or "clinique_privee",
             "numero_agrement": payload.numero_agrement,
@@ -296,7 +328,7 @@ async def register(payload: RegisterIn):
             "ville": payload.ville,
             "region": payload.region,
             "email_contact": payload.email_contact or email,
-            "telephone": payload.phone,
+            "telephone": phone,
             "code_invitation": _gen_code(6),
             "services": [],
             "horaires": "",
@@ -315,7 +347,7 @@ async def register(payload: RegisterIn):
                 {"$addToSet": {"membres_pro": user_id}},
             )
 
-    token = create_token(user_id, email, payload.role)
+    token = create_token(user_id, internal_email, payload.role)
     return {"token": token, "user": serialize_user(doc)}
 
 
@@ -328,8 +360,15 @@ def _gen_code(n: int = 6) -> str:
 
 @api.post("/auth/login")
 async def login(payload: LoginIn):
-    email = payload.email.lower().strip()
-    user = await db.users.find_one({"email": email})
+    if not payload.email and not payload.phone:
+        raise HTTPException(status_code=400, detail="Email ou téléphone requis")
+    user = None
+    if payload.email:
+        email = payload.email.lower().strip()
+        user = await db.users.find_one({"email": email})
+    if not user and payload.phone:
+        phone = _normalize_phone(payload.phone)
+        user = await db.users.find_one({"phone": phone})
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Identifiants incorrects")
     token = create_token(user["id"], user["email"], user["role"])
