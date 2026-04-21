@@ -1429,6 +1429,84 @@ async def fhir_export(user=Depends(get_current_user)):
 
 
 # ----------------------------------------------------------------------
+# Dossier médical lisible (pour UI + PDF + lien partageable)
+# ----------------------------------------------------------------------
+async def _build_dossier(user_id: str) -> dict:
+    u = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not u:
+        return {}
+    grossesse = await db.grossesses.find_one({"user_id": user_id, "active": True}, {"_id": 0})
+    enfants = await db.enfants.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+    rdv = await db.rdv.find({"maman_id": user_id}, {"_id": 0}).sort("date", -1).to_list(50)
+    cycles = await db.cycles.find({"user_id": user_id}, {"_id": 0}).sort("date_debut_regles", -1).to_list(20)
+    # Pros snapshot for RDV display
+    pro_ids = list({r.get("pro_id") for r in rdv if r.get("pro_id")})
+    pros_map: dict = {}
+    if pro_ids:
+        async for p in db.users.find({"id": {"$in": pro_ids}}, {"_id": 0, "id": 1, "name": 1, "specialite": 1}):
+            pros_map[p["id"]] = {"name": p.get("name"), "specialite": p.get("specialite")}
+    for r in rdv:
+        r["pro"] = pros_map.get(r.get("pro_id"), {})
+    return {
+        "patient": {
+            "id": u["id"],
+            "nom": u.get("name"),
+            "email": u.get("email_public") or u.get("email"),
+            "phone": u.get("phone"),
+            "ville": u.get("ville"),
+            "region": u.get("region"),
+            "created_at": u.get("created_at"),
+        },
+        "grossesse": grossesse,
+        "enfants": enfants,
+        "rdv": rdv,
+        "cycles": cycles,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@api.get("/dossier")
+async def dossier_me(user=Depends(get_current_user)):
+    if user["role"] != "maman":
+        raise HTTPException(403, "Dossier médical réservé aux mamans")
+    return await _build_dossier(user["id"])
+
+
+@api.post("/dossier/share")
+async def dossier_share(user=Depends(get_current_user)):
+    """Créer un lien public à durée limitée (7 jours) pour partager le dossier avec un pro."""
+    if user["role"] != "maman":
+        raise HTTPException(403, "Réservé aux mamans")
+    token = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    await db.dossier_shares.insert_one({
+        "token": token,
+        "user_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": expires_at.isoformat(),
+    })
+    public_base = os.environ.get("APP_URL") or os.environ.get("PUBLIC_BASE_URL") or ""
+    # L'app mobile ouvrira cette URL sur un navigateur. Le path /dossier/partage/:token est rendu par le frontend ou renvoie du JSON.
+    url = f"{public_base.rstrip('/')}/api/dossier/public/{token}" if public_base else f"/api/dossier/public/{token}"
+    return {"token": token, "url": url, "expires_at": expires_at.isoformat()}
+
+
+@api.get("/dossier/public/{token}")
+async def dossier_public(token: str):
+    s = await db.dossier_shares.find_one({"token": token}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Lien invalide ou expiré")
+    try:
+        exp = datetime.fromisoformat(s["expires_at"].replace("Z", "+00:00"))
+    except Exception:
+        exp = datetime.now(timezone.utc)
+    if exp < datetime.now(timezone.utc):
+        raise HTTPException(410, "Lien expiré")
+    dossier = await _build_dossier(s["user_id"])
+    return dossier
+
+
+# ----------------------------------------------------------------------
 # Send Expo Push (real push, best-effort)
 # ----------------------------------------------------------------------
 async def send_expo_push(token: str, title: str, body: str, data: Optional[dict] = None):
