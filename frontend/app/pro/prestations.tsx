@@ -14,7 +14,7 @@ export default function Prestations() {
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [form, setForm] = useState({ nom: "", prix_fcfa: "10000", duree_min: "30", description: "", active: true });
+  const [form, setForm] = useState({ nom: "", prix_fcfa: "10000", duree_min: "30", description: "", active: true, cmu_prise_en_charge: false, cmu_taux: "0.70" });
 
   const load = async () => {
     setLoading(true);
@@ -29,7 +29,7 @@ export default function Prestations() {
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ nom: "", prix_fcfa: "10000", duree_min: "30", description: "", active: true });
+    setForm({ nom: "", prix_fcfa: "10000", duree_min: "30", description: "", active: true, cmu_prise_en_charge: false, cmu_taux: "0.70" });
     setModal(true);
   };
 
@@ -41,6 +41,8 @@ export default function Prestations() {
       duree_min: String(p.duree_min || 30),
       description: p.description || "",
       active: p.active !== false,
+      cmu_prise_en_charge: !!p.cmu_prise_en_charge,
+      cmu_taux: String(p.cmu_taux ?? 0.70),
     });
     setModal(true);
   };
@@ -55,6 +57,8 @@ export default function Prestations() {
       duree_min: parseInt(form.duree_min || "30"),
       description: form.description.trim() || undefined,
       active: form.active,
+      cmu_prise_en_charge: form.cmu_prise_en_charge,
+      cmu_taux: parseFloat(form.cmu_taux || "0.70"),
     };
     try {
       if (editing) await api.patch(`/pro/prestations/${editing.id}`, body);
@@ -147,6 +151,36 @@ export default function Prestations() {
                 </View>
                 <Switch value={form.active} onValueChange={(v) => setForm({ ...form, active: v })} />
               </View>
+
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>🏥 Prise en charge CMU</Text>
+                  <Text style={styles.switchHelp}>La Couverture Maladie Universelle rembourse cette prestation</Text>
+                </View>
+                <Switch value={form.cmu_prise_en_charge} onValueChange={(v) => setForm({ ...form, cmu_prise_en_charge: v })} />
+              </View>
+
+              {form.cmu_prise_en_charge && (
+                <>
+                  <Text style={styles.label}>Taux de prise en charge CMU</Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <TouchableOpacity
+                      style={[{ flex: 1, padding: 12, borderRadius: 12, borderWidth: 1.5, borderColor: "#059669", alignItems: "center", backgroundColor: form.cmu_taux === "0.70" ? "#D1FAE5" : "#fff" }]}
+                      onPress={() => setForm({ ...form, cmu_taux: "0.70" })}
+                    >
+                      <Text style={{ fontWeight: "800", color: "#059669" }}>70%</Text>
+                      <Text style={{ fontSize: 10, color: COLORS.textSecondary, marginTop: 2 }}>Standard</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[{ flex: 1, padding: 12, borderRadius: 12, borderWidth: 1.5, borderColor: "#059669", alignItems: "center", backgroundColor: form.cmu_taux === "1.00" ? "#D1FAE5" : "#fff" }]}
+                      onPress={() => setForm({ ...form, cmu_taux: "1.00" })}
+                    >
+                      <Text style={{ fontWeight: "800", color: "#059669" }}>100%</Text>
+                      <Text style={{ fontSize: 10, color: COLORS.textSecondary, marginTop: 2 }}>Prénatal / Accouch.</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
 
               <TouchableOpacity style={styles.save} onPress={save}>
                 <Text style={styles.saveText}>{editing ? "Enregistrer" : "Créer"}</Text>

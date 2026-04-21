@@ -2,7 +2,7 @@
 import requests
 import sys
 
-BASE = "https://maman-rdv-booking.preview.emergentagent.com/api"
+BASE = "https://health-prestation.preview.emergentagent.com/api"
 
 def main():
     results = []

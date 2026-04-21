@@ -6,7 +6,7 @@ import os
 import sys
 import requests
 
-BASE = os.environ.get("BACKEND_URL", "https://maman-rdv-booking.preview.emergentagent.com") + "/api"
+BASE = os.environ.get("BACKEND_URL", "https://health-prestation.preview.emergentagent.com") + "/api"
 MAMAN_EMAIL = "maman@test.com"
 MAMAN_PASSWORD = "Maman123!"
 

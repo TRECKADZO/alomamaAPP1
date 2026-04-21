@@ -596,6 +596,19 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
             "created_at": {"$gte": start_of_month},
         })
         await check_quota(user, "rdv_per_month", current)
+    # Appliquer la CMU si : maman a CMU actif, pro accepte CMU, prestation marquée "prise en charge CMU"
+    cmu_applique = False
+    cmu_taux = 0.0
+    cmu_montant = 0
+    reste_a_charge = tarif_fcfa
+    maman_cmu = (user.get("cmu") or {}) if isinstance(user.get("cmu"), dict) else {}
+    pro_accepte = bool(pro.get("accepte_cmu"))
+    cmu_status = cmu_statut(maman_cmu)
+    if prestation and prestation.get("cmu_prise_en_charge") and pro_accepte and cmu_status == "actif":
+        cmu_taux = float(prestation.get("cmu_taux", 0.70))
+        cmu_montant = int(round(tarif_fcfa * cmu_taux))
+        reste_a_charge = tarif_fcfa - cmu_montant
+        cmu_applique = True
     doc = {
         "id": str(uuid.uuid4()),
         "maman_id": user["id"],
@@ -607,6 +620,11 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "mode": payload.mode or "presentiel",
         "prestation_id": payload.prestation_id,
         "prestation_nom": prestation.get("nom") if prestation else None,
+        "cmu_applique": cmu_applique,
+        "cmu_taux": cmu_taux,
+        "cmu_montant_fcfa": cmu_montant,
+        "reste_a_charge_fcfa": reste_a_charge,
+        "cmu_numero": maman_cmu.get("numero") if cmu_applique else None,
         "paye": False,
         "status": "en_attente",
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -892,6 +910,8 @@ class PrestationIn(BaseModel):
     duree_min: int = 30
     description: Optional[str] = None
     active: bool = True
+    cmu_prise_en_charge: bool = False
+    cmu_taux: float = 0.70  # 0.70 ou 1.00
 
 
 @api.get("/pro/prestations")
@@ -912,6 +932,8 @@ async def create_prestation(payload: PrestationIn, user=Depends(require_roles("p
         "duree_min": payload.duree_min,
         "description": payload.description,
         "active": payload.active,
+        "cmu_prise_en_charge": payload.cmu_prise_en_charge,
+        "cmu_taux": max(0.0, min(1.0, payload.cmu_taux)),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.prestations.insert_one(doc)
@@ -929,6 +951,8 @@ async def update_prestation(pid: str, payload: PrestationIn, user=Depends(requir
             "duree_min": payload.duree_min,
             "description": payload.description,
             "active": payload.active,
+            "cmu_prise_en_charge": payload.cmu_prise_en_charge,
+            "cmu_taux": max(0.0, min(1.0, payload.cmu_taux)),
         }},
     )
     if r.matched_count == 0:
@@ -1211,6 +1235,174 @@ async def admin_users(user=Depends(require_roles("admin"))):
 async def set_profile_photo(payload: PhotoIn, user=Depends(get_current_user)):
     await db.users.update_one({"id": user["id"]}, {"$set": {"avatar": payload.photo_base64}})
     return {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# CMU - Couverture Maladie Universelle (Côte d'Ivoire)
+# ----------------------------------------------------------------------
+class CMUBeneficiaire(BaseModel):
+    nom: str
+    numero_cmu: str
+    relation: str  # enfant / conjoint / autre
+
+
+class CMUIn(BaseModel):
+    numero: str  # 12 chiffres
+    nom_complet: str
+    date_delivrance: Optional[str] = None  # YYYY-MM-DD
+    date_validite: Optional[str] = None
+    photo_recto: Optional[str] = None  # base64
+    photo_verso: Optional[str] = None
+    beneficiaires: List[CMUBeneficiaire] = []
+
+
+def cmu_statut(cmu_doc: Optional[dict]) -> str:
+    if not cmu_doc or not cmu_doc.get("numero"):
+        return "absent"
+    dv = cmu_doc.get("date_validite")
+    if not dv:
+        return "non_verifie"
+    try:
+        d = datetime.fromisoformat(dv).date()
+        today = datetime.now(timezone.utc).date()
+        if d < today:
+            return "expire"
+        return "actif"
+    except Exception:
+        return "non_verifie"
+
+
+@api.get("/cmu/me")
+async def get_my_cmu(user=Depends(get_current_user)):
+    if user.get("role") not in ("maman", "famille"):
+        raise HTTPException(403, "CMU réservé aux mamans et familles")
+    cmu = user.get("cmu") or {}
+    return {"cmu": cmu, "statut": cmu_statut(cmu)}
+
+
+@api.post("/cmu/me")
+async def set_my_cmu(payload: CMUIn, user=Depends(get_current_user)):
+    if user.get("role") not in ("maman", "famille"):
+        raise HTTPException(403, "CMU réservé aux mamans et familles")
+    numero = (payload.numero or "").strip().replace(" ", "")
+    if not numero.isdigit() or len(numero) not in (10, 12):
+        raise HTTPException(400, "Numéro CMU invalide (10 ou 12 chiffres attendus)")
+    doc = {
+        "numero": numero,
+        "nom_complet": payload.nom_complet.strip(),
+        "date_delivrance": payload.date_delivrance,
+        "date_validite": payload.date_validite,
+        "photo_recto": payload.photo_recto,
+        "photo_verso": payload.photo_verso,
+        "beneficiaires": [b.dict() for b in (payload.beneficiaires or [])],
+        "verifie": False,  # pas d'API d'État : non vérifié
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.update_one({"id": user["id"]}, {"$set": {"cmu": doc}})
+    return {"cmu": doc, "statut": cmu_statut(doc)}
+
+
+@api.delete("/cmu/me")
+async def delete_my_cmu(user=Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$unset": {"cmu": ""}})
+    return {"ok": True}
+
+
+class ProCMUIn(BaseModel):
+    accepte_cmu: bool
+
+
+@api.patch("/pro/cmu")
+async def set_pro_cmu(payload: ProCMUIn, user=Depends(require_roles("professionnel"))):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"accepte_cmu": payload.accepte_cmu}})
+    return {"accepte_cmu": payload.accepte_cmu}
+
+
+# Facturation CMU pour pro : liste des consultations CMU payées (reste-à-charge uniquement → solde CMU dû par l'État)
+@api.get("/pro/facturation-cmu")
+async def pro_facturation_cmu(user=Depends(require_roles("professionnel"))):
+    rdvs = await db.rdv.find(
+        {"pro_id": user["id"], "cmu_applique": True},
+        {"_id": 0},
+    ).sort("date", -1).to_list(500)
+    # Résumé
+    total_brut = sum(r.get("tarif_fcfa", 0) for r in rdvs)
+    total_patient = sum(r.get("reste_a_charge_fcfa", 0) for r in rdvs)
+    total_cmu_du = sum(r.get("cmu_montant_fcfa", 0) for r in rdvs)
+    # Enrichir avec nom des patientes
+    maman_ids = list({r["maman_id"] for r in rdvs if r.get("maman_id")})
+    mamans = {}
+    if maman_ids:
+        async for u in db.users.find({"id": {"$in": maman_ids}}, {"_id": 0, "id": 1, "name": 1, "cmu": 1}):
+            mamans[u["id"]] = u
+    for r in rdvs:
+        m = mamans.get(r.get("maman_id"), {})
+        r["maman_nom"] = m.get("name")
+        r["numero_cmu"] = (m.get("cmu") or {}).get("numero")
+    return {
+        "total_rdv": len(rdvs),
+        "total_brut_fcfa": total_brut,
+        "total_reste_a_charge_fcfa": total_patient,
+        "total_cmu_du_fcfa": total_cmu_du,
+        "rdvs": rdvs,
+    }
+
+
+@api.get("/pro/facturation-cmu/csv")
+async def pro_facturation_cmu_csv(user=Depends(require_roles("professionnel"))):
+    from fastapi.responses import PlainTextResponse
+    rdvs = await db.rdv.find(
+        {"pro_id": user["id"], "cmu_applique": True},
+        {"_id": 0},
+    ).sort("date", -1).to_list(500)
+    maman_ids = list({r["maman_id"] for r in rdvs if r.get("maman_id")})
+    mamans = {}
+    if maman_ids:
+        async for u in db.users.find({"id": {"$in": maman_ids}}, {"_id": 0, "id": 1, "name": 1, "cmu": 1}):
+            mamans[u["id"]] = u
+    import io, csv
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["Date", "Patiente", "Numero CMU", "Prestation", "Tarif brut (F)", "Taux CMU", "Montant CMU du (F)", "Reste a charge (F)", "Status"])
+    for r in rdvs:
+        m = mamans.get(r.get("maman_id"), {})
+        w.writerow([
+            (r.get("date") or "")[:10],
+            m.get("name", ""),
+            (m.get("cmu") or {}).get("numero", ""),
+            r.get("prestation_nom") or r.get("motif", ""),
+            r.get("tarif_fcfa", 0),
+            f"{int((r.get('cmu_taux') or 0) * 100)}%",
+            r.get("cmu_montant_fcfa", 0),
+            r.get("reste_a_charge_fcfa", 0),
+            r.get("status", ""),
+        ])
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv; charset=utf-8")
+
+
+@api.get("/admin/cmu/stats")
+async def admin_cmu_stats(user=Depends(require_roles("admin"))):
+    total_mamans = await db.users.count_documents({"role": "maman"})
+    mamans_cmu = await db.users.count_documents({"role": "maman", "cmu.numero": {"$exists": True, "$ne": None}})
+    pros_total = await db.users.count_documents({"role": "professionnel"})
+    pros_cmu = await db.users.count_documents({"role": "professionnel", "accepte_cmu": True})
+    rdv_cmu = await db.rdv.count_documents({"cmu_applique": True})
+    # Somme CMU due
+    cursor = db.rdv.aggregate([
+        {"$match": {"cmu_applique": True}},
+        {"$group": {"_id": None, "due": {"$sum": "$cmu_montant_fcfa"}, "brut": {"$sum": "$tarif_fcfa"}}},
+    ])
+    agg = await cursor.to_list(1)
+    return {
+        "mamans_total": total_mamans,
+        "mamans_avec_cmu": mamans_cmu,
+        "mamans_pct_cmu": round(100 * mamans_cmu / total_mamans, 1) if total_mamans else 0,
+        "pros_total": pros_total,
+        "pros_acceptant_cmu": pros_cmu,
+        "rdv_cmu_total": rdv_cmu,
+        "total_cmu_du_fcfa": (agg[0].get("due", 0) if agg else 0),
+        "total_brut_cmu_fcfa": (agg[0].get("brut", 0) if agg else 0),
+    }
 
 
 # ----------------------------------------------------------------------
@@ -1970,7 +2162,10 @@ async def pay_consultation(payload: ConsultationPayIn, user=Depends(require_role
     rdv = await db.rdv.find_one({"id": payload.rdv_id, "maman_id": user["id"]}, {"_id": 0})
     if not rdv:
         raise HTTPException(404, "RDV introuvable")
-    amount = rdv.get("tarif_fcfa", 10000)
+    # Si CMU appliqué, on paie uniquement le reste-à-charge
+    amount = rdv.get("reste_a_charge_fcfa") if rdv.get("cmu_applique") else rdv.get("tarif_fcfa", 10000)
+    if not amount:
+        amount = rdv.get("tarif_fcfa", 10000)
     # Commission dynamique : 5% si Pro Premium, sinon 10%
     pro = await db.users.find_one({"id": rdv["pro_id"]}, {"_id": 0})
     commission_rate = 0.05 if (pro and is_premium_active(pro)) else 0.10
