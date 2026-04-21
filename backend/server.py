@@ -1694,6 +1694,39 @@ async def startup():
         })
         logger.info(f"Seeded admin {admin_email}")
 
+    # Seed / Upsert SUPER ADMIN (project owner)
+    super_email = os.environ.get("SUPER_ADMIN_EMAIL", "").lower().strip()
+    super_pw = os.environ.get("SUPER_ADMIN_PASSWORD", "")
+    super_name = os.environ.get("SUPER_ADMIN_NAME", "Super Admin")
+    if super_email and super_pw:
+        existing = await db.users.find_one({"email": super_email})
+        if not existing:
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()),
+                "email": super_email,
+                "password_hash": hash_password(super_pw),
+                "name": super_name,
+                "role": "admin",
+                "is_super_admin": True,
+                "avatar": None,
+                "phone": None,
+                "specialite": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            logger.info(f"Seeded super admin {super_email}")
+        else:
+            # Always keep super admin password & role in sync with .env
+            await db.users.update_one(
+                {"email": super_email},
+                {"$set": {
+                    "password_hash": hash_password(super_pw),
+                    "role": "admin",
+                    "is_super_admin": True,
+                    "name": existing.get("name") or super_name,
+                }},
+            )
+            logger.info(f"Updated super admin {super_email}")
+
     # Seed test maman
     if not await db.users.find_one({"email": "maman@test.com"}):
         await db.users.insert_one({
