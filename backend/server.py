@@ -179,6 +179,7 @@ class RdvIn(BaseModel):
     motif: str
     tarif_fcfa: int = 10000
     type_consultation: Optional[str] = None
+    mode: Optional[str] = "presentiel"  # "presentiel" | "teleconsultation"
 
 
 class MessageIn(BaseModel):
@@ -529,6 +530,7 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "motif": payload.motif,
         "tarif_fcfa": payload.tarif_fcfa,
         "type_consultation": payload.type_consultation,
+        "mode": payload.mode or "presentiel",
         "paye": False,
         "status": "en_attente",
         "created_at": datetime.now(timezone.utc).isoformat(),

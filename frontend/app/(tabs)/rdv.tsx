@@ -38,7 +38,7 @@ export default function Rdv() {
   const [cursor, setCursor] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [filterStatut, setFilterStatut] = useState("tous");
-  const [form, setForm] = useState({ pro_id: "", date: "", motif: "", type_consultation: "" });
+  const [form, setForm] = useState({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel" });
 
   const load = async () => {
     try {
@@ -56,7 +56,7 @@ export default function Rdv() {
     if (!form.pro_id || !form.date || !form.motif || !form.type_consultation) return Alert.alert("Champs requis", "Veuillez remplir tous les champs");
     try {
       await api.post("/rdv", form);
-      setForm({ pro_id: "", date: "", motif: "", type_consultation: "" });
+      setForm({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel" });
       setModal(false);
       load();
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
@@ -213,6 +213,26 @@ export default function Rdv() {
                 </TouchableOpacity>
               ))}
 
+              <Text style={styles.label}>Mode de consultation *</Text>
+              <View style={styles.modeRow}>
+                <TouchableOpacity
+                  style={[styles.modeBtn, form.mode === "presentiel" && styles.modeBtnActive]}
+                  onPress={() => setForm({ ...form, mode: "presentiel" })}
+                  testID="mode-presentiel"
+                >
+                  <Ionicons name="location" size={18} color={form.mode === "presentiel" ? "#fff" : COLORS.primary} />
+                  <Text style={[styles.modeText, form.mode === "presentiel" && { color: "#fff" }]}>Présentiel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modeBtn, form.mode === "teleconsultation" && styles.modeBtnActive]}
+                  onPress={() => setForm({ ...form, mode: "teleconsultation" })}
+                  testID="mode-tele"
+                >
+                  <Ionicons name="videocam" size={18} color={form.mode === "teleconsultation" ? "#fff" : COLORS.primary} />
+                  <Text style={[styles.modeText, form.mode === "teleconsultation" && { color: "#fff" }]}>Téléconsultation</Text>
+                </TouchableOpacity>
+              </View>
+
               <Text style={styles.label}>Type de consultation *</Text>
               <View style={styles.input}>
                 <PickerField
@@ -270,6 +290,12 @@ function RdvCard({ r, user, changeStatus, router }: any) {
             <Ionicons name="document-text-outline" size={12} color={COLORS.textSecondary} />
             <Text style={styles.metaText}>{r.motif}</Text>
           </View>
+          <View style={styles.metaRow}>
+            <Ionicons name={r.mode === "teleconsultation" ? "videocam-outline" : "location-outline"} size={12} color={r.mode === "teleconsultation" ? "#0369A1" : COLORS.success} />
+            <Text style={[styles.metaText, { color: r.mode === "teleconsultation" ? "#0369A1" : COLORS.success, fontWeight: "700" }]}>
+              {r.mode === "teleconsultation" ? "Téléconsultation" : "Présentiel"}
+            </Text>
+          </View>
         </View>
         <Text style={[styles.statusBadge, { backgroundColor: c.bg, color: c.fg }]}>
           {r.status === "en_attente" ? "En attente" : r.status === "confirme" ? "Confirmé" : r.status === "annule" ? "Annulé" : "Terminé"}
@@ -296,10 +322,12 @@ function RdvCard({ r, user, changeStatus, router }: any) {
               <Text style={[styles.actionText, { color: COLORS.primary }]}>Marquer terminé</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.actionBtn} onPress={() => router.push(`/video-call/${r.id}`)} testID={`video-${r.id}`}>
-            <Ionicons name="videocam" size={16} color="#0369A1" />
-            <Text style={[styles.actionText, { color: "#0369A1" }]}>Visio</Text>
-          </TouchableOpacity>
+          {r.mode === "teleconsultation" && (
+            <TouchableOpacity style={styles.actionBtn} onPress={() => router.push(`/video-call/${r.id}`)} testID={`video-${r.id}`}>
+              <Ionicons name="videocam" size={16} color="#0369A1" />
+              <Text style={[styles.actionText, { color: "#0369A1" }]}>Rejoindre la visio</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </View>
@@ -365,4 +393,8 @@ const styles = StyleSheet.create({
   proSpec: { color: COLORS.textSecondary, fontSize: 12 },
   btnPrimary: { backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: RADIUS.pill, alignItems: "center", marginTop: 20 },
   btnPrimaryText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  modeRow: { flexDirection: "row", gap: 10 },
+  modeBtn: { flex: 1, flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center", paddingVertical: 14, borderRadius: RADIUS.md, backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border },
+  modeBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  modeText: { fontWeight: "700", fontSize: 13, color: COLORS.textPrimary },
 });

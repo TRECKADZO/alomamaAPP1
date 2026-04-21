@@ -144,6 +144,18 @@ backend:
         agent: "testing"
         comment: "8/8 PASS on https://maman-rdv-booking.preview.emergentagent.com/api (script /app/backend_test_rdv_type.py). (1) Login maman@test.com/Maman123! → token OK. (2) GET /professionnels returns 5 pros; used Dr. Fatou Diallo. (3) POST /rdv with pro_id, date='2026-05-15T10:30', motif='test consultation', type_consultation='prenatale' → 200; returned doc includes type_consultation='prenatale'. (4) POST /rdv WITHOUT type_consultation (only pro_id+date+motif) → 200, doc.type_consultation is null (backward compat OK since field is Optional[str]=None on RdvIn L176-181 and persisted as payload.type_consultation on L531). (5) GET /rdv listing contains the created RDV with key 'type_consultation' set to 'prenatale'. Regression: GET /grossesse, GET /enfants, GET /reminders all return 200 for logged-in maman. No issues."
 
+  - task: "RDV: champ optionnel mode (presentiel | teleconsultation)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "16/16 PASS on https://maman-rdv-booking.preview.emergentagent.com/api (script /app/backend_test_rdv_mode.py). (1) Login maman@test.com/Maman123! OK. (2) POST /rdv with mode='teleconsultation' + type_consultation='prenatale' → 200; response body contains mode='teleconsultation'. (3) POST /rdv with mode='presentiel' → 200; body contains mode='presentiel'. (4) POST /rdv WITHOUT the mode field → 200; body contains mode='presentiel' (default applied via RdvIn.mode: Optional[str]='presentiel' on L182 AND persisted as `payload.mode or 'presentiel'` on L533). (5) GET /rdv returns all three newly created RDVs, each with a 'mode' key whose value matches what was sent (or defaulted). No regressions."
+
   - task: "Endpoints Pro: patients enrichis, dossier, notes, disponibilités, rappels, téléconsultation"
     implemented: true
     working: true
