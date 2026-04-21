@@ -219,6 +219,7 @@ class RdvIn(BaseModel):
     tarif_fcfa: int = 10000
     type_consultation: Optional[str] = None
     mode: Optional[str] = "presentiel"  # "presentiel" | "teleconsultation"
+    prestation_id: Optional[str] = None
 
 
 class MessageIn(BaseModel):
@@ -574,6 +575,18 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
     pro = await db.users.find_one({"id": payload.pro_id, "role": "professionnel"})
     if not pro:
         raise HTTPException(404, "Professionnel introuvable")
+    # Si une prestation est sélectionnée, on prend son tarif et nom
+    prestation = None
+    tarif_fcfa = payload.tarif_fcfa
+    motif = payload.motif
+    if payload.prestation_id:
+        prestation = await db.prestations.find_one(
+            {"id": payload.prestation_id, "pro_id": payload.pro_id, "active": True}, {"_id": 0}
+        )
+        if prestation:
+            tarif_fcfa = prestation["prix_fcfa"]
+            if not motif:
+                motif = prestation["nom"]
     # Quota freemium — max 10 RDV par mois pour une maman gratuite
     if not is_premium_active(user):
         now = datetime.now(timezone.utc)
@@ -588,10 +601,12 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "maman_id": user["id"],
         "pro_id": payload.pro_id,
         "date": payload.date,
-        "motif": payload.motif,
-        "tarif_fcfa": payload.tarif_fcfa,
+        "motif": motif,
+        "tarif_fcfa": tarif_fcfa,
         "type_consultation": payload.type_consultation,
         "mode": payload.mode or "presentiel",
+        "prestation_id": payload.prestation_id,
+        "prestation_nom": prestation.get("nom") if prestation else None,
         "paye": False,
         "status": "en_attente",
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -867,9 +882,126 @@ async def ai_history(session_id: str, user=Depends(get_current_user)):
 # ----------------------------------------------------------------------
 # Pro-specific
 # ----------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Prestations Pro + Commission sur RDV
+# ------------------------------------------------------------------
+
+class PrestationIn(BaseModel):
+    nom: str
+    prix_fcfa: int
+    duree_min: int = 30
+    description: Optional[str] = None
+    active: bool = True
+
+
+@api.get("/pro/prestations")
+async def list_my_prestations(user=Depends(require_roles("professionnel"))):
+    items = await db.prestations.find({"pro_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return items
+
+
+@api.post("/pro/prestations")
+async def create_prestation(payload: PrestationIn, user=Depends(require_roles("professionnel"))):
+    if payload.prix_fcfa < 0:
+        raise HTTPException(400, "Le prix doit être positif")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "pro_id": user["id"],
+        "nom": payload.nom.strip(),
+        "prix_fcfa": payload.prix_fcfa,
+        "duree_min": payload.duree_min,
+        "description": payload.description,
+        "active": payload.active,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.prestations.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/pro/prestations/{pid}")
+async def update_prestation(pid: str, payload: PrestationIn, user=Depends(require_roles("professionnel"))):
+    r = await db.prestations.update_one(
+        {"id": pid, "pro_id": user["id"]},
+        {"$set": {
+            "nom": payload.nom.strip(),
+            "prix_fcfa": payload.prix_fcfa,
+            "duree_min": payload.duree_min,
+            "description": payload.description,
+            "active": payload.active,
+        }},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Prestation introuvable")
+    doc = await db.prestations.find_one({"id": pid}, {"_id": 0})
+    return doc
+
+
+@api.delete("/pro/prestations/{pid}")
+async def delete_prestation(pid: str, user=Depends(require_roles("professionnel"))):
+    r = await db.prestations.delete_one({"id": pid, "pro_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Prestation introuvable")
+    return {"ok": True}
+
+
+@api.get("/pros/{pro_id}/prestations")
+async def list_pro_prestations_public(pro_id: str, user=Depends(get_current_user)):
+    """Lister les prestations actives d'un pro (visible pour toute maman connectée)."""
+    items = await db.prestations.find({"pro_id": pro_id, "active": True}, {"_id": 0}).sort("prix_fcfa", 1).to_list(100)
+    return items
+
+
+# ------------------------------------------------------------------
+# Revenus & commissions du pro
+# ------------------------------------------------------------------
+
+@api.get("/pro/revenus")
+async def pro_revenus(user=Depends(require_roles("professionnel"))):
+    """Synthèse des revenus du pro (consultations payées via la plateforme)."""
+    payments = await db.payments.find({
+        "pro_id": user["id"],
+        "kind": "consultation",
+        "status": "completed",
+    }, {"_id": 0}).sort("created_at", -1).to_list(500)
+    pending = await db.payments.find({
+        "pro_id": user["id"],
+        "kind": "consultation",
+        "status": "pending",
+    }, {"_id": 0}).to_list(200)
+    total_brut = sum(p.get("amount", 0) for p in payments)
+    total_commission = sum(p.get("commission", 0) for p in payments)
+    total_net = sum(p.get("pro_amount", 0) for p in payments)
+    # Par mois
+    from collections import defaultdict
+    monthly: dict = defaultdict(lambda: {"brut": 0, "commission": 0, "net": 0, "count": 0})
+    for p in payments:
+        ym = (p.get("paid_at") or p.get("created_at", ""))[:7]
+        monthly[ym]["brut"] += p.get("amount", 0)
+        monthly[ym]["commission"] += p.get("commission", 0)
+        monthly[ym]["net"] += p.get("pro_amount", 0)
+        monthly[ym]["count"] += 1
+    is_prem = is_premium_active(user)
+    current_rate = 0.05 if is_prem else 0.10
+    return {
+        "total_brut_fcfa": total_brut,
+        "total_commission_fcfa": total_commission,
+        "total_net_fcfa": total_net,
+        "pending_count": len(pending),
+        "pending_fcfa": sum(p.get("amount", 0) for p in pending),
+        "monthly": [
+            {"month": k, **v} for k, v in sorted(monthly.items(), reverse=True)
+        ],
+        "recent": payments[:20],
+        "is_premium": is_prem,
+        "current_commission_rate": current_rate,
+        "premium_rate": 0.05,
+        "standard_rate": 0.10,
+    }
+
+
 @api.get("/pro/patients")
 async def pro_patients(user=Depends(require_roles("professionnel"))):
-    rdvs = await db.rdv.find({"pro_id": user["id"]}, {"_id": 0}).to_list(1000)
     patient_ids = list({r["maman_id"] for r in rdvs})
     users = await db.users.find(
         {"id": {"$in": patient_ids}}, {"_id": 0, "password_hash": 0}
@@ -1690,8 +1822,9 @@ PREMIUM_PLANS = {
             "Statistiques & revenus",
             "Badge « Pro Certifié » visible dans l'annuaire",
             "Export comptabilité mensuelle",
+            "Commission réduite : 5% au lieu de 10%",
         ],
-        "free_limits": "Gratuit : 10 patientes · pas d'IA Pro",
+        "free_limits": "Gratuit : 10 patientes max · commission 10% sur chaque consultation payée",
     },
     "centre_sante": {
         "code": "centre",
@@ -1837,13 +1970,16 @@ async def pay_consultation(payload: ConsultationPayIn, user=Depends(require_role
     if not rdv:
         raise HTTPException(404, "RDV introuvable")
     amount = rdv.get("tarif_fcfa", 10000)
-    commission = amount // 10  # 10%
+    # Commission dynamique : 5% si Pro Premium, sinon 10%
+    pro = await db.users.find_one({"id": rdv["pro_id"]}, {"_id": 0})
+    commission_rate = 0.05 if (pro and is_premium_active(pro)) else 0.10
+    commission = int(round(amount * commission_rate))
     pro_amount = amount - commission
     desc = f"Consultation À lo Maman · RDV {rdv['date'][:10]}"
     return_url = f"{os.environ.get('APP_URL', '')}/api/pay/return"
     inv = await paydunya_create_invoice(
         amount, desc, user,
-        {"kind": "consultation", "rdv_id": payload.rdv_id, "maman_id": user["id"], "pro_id": rdv["pro_id"], "commission": commission, "pro_amount": pro_amount},
+        {"kind": "consultation", "rdv_id": payload.rdv_id, "maman_id": user["id"], "pro_id": rdv["pro_id"], "commission": commission, "commission_rate": commission_rate, "pro_amount": pro_amount},
         return_url,
     )
     doc = {
@@ -1854,6 +1990,7 @@ async def pay_consultation(payload: ConsultationPayIn, user=Depends(require_role
         "pro_id": rdv["pro_id"],
         "amount": amount,
         "commission": commission,
+        "commission_rate": commission_rate,
         "pro_amount": pro_amount,
         "token": inv.get("token"),
         "status": "pending" if inv.get("success") else "error",

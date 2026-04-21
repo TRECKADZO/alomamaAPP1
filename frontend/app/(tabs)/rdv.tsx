@@ -39,7 +39,8 @@ export default function Rdv() {
   const [cursor, setCursor] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [filterStatut, setFilterStatut] = useState("tous");
-  const [form, setForm] = useState({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel" });
+  const [form, setForm] = useState({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel", prestation_id: "", tarif_fcfa: 10000 });
+  const [prestations, setPrestations] = useState<any[]>([]);
 
   const load = async () => {
     try {
@@ -57,7 +58,7 @@ export default function Rdv() {
     if (!form.pro_id || !form.date || !form.motif || !form.type_consultation) return Alert.alert("Champs requis", "Veuillez remplir tous les champs");
     try {
       const r = await smartPost("/rdv", form);
-      setForm({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel" });
+      setForm({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel", prestation_id: "", tarif_fcfa: 10000 });
       setModal(false);
       if (r.queued) Alert.alert("Enregistré hors ligne", "Le rendez-vous sera envoyé dès la reconnexion.");
       load();
@@ -214,7 +215,13 @@ export default function Rdv() {
               </View>
               <Text style={styles.label}>Professionnel</Text>
               {pros.map((p) => (
-                <TouchableOpacity key={p.id} style={[styles.proCard, form.pro_id === p.id && styles.proCardActive]} onPress={() => setForm({ ...form, pro_id: p.id })} testID={`pro-${p.id}`}>
+                <TouchableOpacity key={p.id} style={[styles.proCard, form.pro_id === p.id && styles.proCardActive]} onPress={async () => {
+                  setForm({ ...form, pro_id: p.id, prestation_id: "", tarif_fcfa: 10000 });
+                  try {
+                    const r = await api.get(`/pros/${p.id}/prestations`);
+                    setPrestations(r.data || []);
+                  } catch { setPrestations([]); }
+                }} testID={`pro-${p.id}`}>
                   <View style={styles.proAvatar}><Text style={styles.proAvatarText}>{p.name.charAt(0)}</Text></View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.proName}>{p.name}</Text>
@@ -223,6 +230,39 @@ export default function Rdv() {
                   {form.pro_id === p.id && <Ionicons name="checkmark-circle" size={22} color={COLORS.primary} />}
                 </TouchableOpacity>
               ))}
+
+              {form.pro_id && prestations.length > 0 && (
+                <>
+                  <Text style={styles.label}>Prestation & tarif *</Text>
+                  {prestations.map((pr) => {
+                    const selected = form.prestation_id === pr.id;
+                    return (
+                      <TouchableOpacity
+                        key={pr.id}
+                        style={[styles.prestationCard, selected && styles.prestationCardActive]}
+                        onPress={() => setForm({ ...form, prestation_id: pr.id, tarif_fcfa: pr.prix_fcfa, motif: form.motif || pr.nom })}
+                        testID={`prestation-${pr.id}`}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.prestationName}>{pr.nom}</Text>
+                          {pr.description ? <Text style={styles.prestationDesc} numberOfLines={1}>{pr.description}</Text> : null}
+                          <Text style={styles.prestationMeta}>⏱ {pr.duree_min} min</Text>
+                        </View>
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={styles.prestationPrice}>{pr.prix_fcfa.toLocaleString()} F</Text>
+                          {selected && <Ionicons name="checkmark-circle" size={18} color={COLORS.primary} />}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </>
+              )}
+              {form.pro_id && prestations.length === 0 && (
+                <View style={styles.noPrest}>
+                  <Ionicons name="information-circle-outline" size={14} color={COLORS.textSecondary} />
+                  <Text style={styles.noPrestText}>Ce pro n'a pas encore publié ses prestations. Le tarif sera négocié au cabinet.</Text>
+                </View>
+              )}
 
               <Text style={styles.label}>Mode de consultation *</Text>
               <View style={styles.modeRow}>
@@ -408,4 +448,12 @@ const styles = StyleSheet.create({
   modeBtn: { flex: 1, flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center", paddingVertical: 14, borderRadius: RADIUS.md, backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border },
   modeBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   modeText: { fontWeight: "700", fontSize: 13, color: COLORS.textPrimary },
+  prestationCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.surface, marginBottom: 6 },
+  prestationCardActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryLight },
+  prestationName: { fontSize: 14, fontWeight: "800", color: COLORS.textPrimary },
+  prestationDesc: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
+  prestationMeta: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
+  prestationPrice: { fontSize: 15, fontWeight: "800", color: COLORS.primary },
+  noPrest: { flexDirection: "row", gap: 6, alignItems: "center", padding: 10, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
+  noPrestText: { flex: 1, fontSize: 11, color: COLORS.textSecondary, lineHeight: 15 },
 });
