@@ -251,8 +251,29 @@ backend:
     file: "/app/backend/server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Phase 2 full backend retest — 37/37 PASS on https://health-prestation.preview.emergentagent.com/api
+          (script: /app/backend_test_phase2.py).
+
+          🅱️ AUTO-REMINDERS CYCLE (6/6): (1a) POST /cycle {date_debut=2026-07-01, duree=28} → 200. (1b) 3 auto_cycle reminders with kinds {cycle_fertile, cycle_ovulation, cycle_regles_pre}. (1c) due_at exact: fertile 2026-07-11 (J10), ovulation 2026-07-15 (J14), regles_pre 2026-07-28 (J27). (1d) duree_cycle=21 future date → 3 reminders. (1e) 21-day cycle J3/J7/J20 exact: 2026-08-04, 2026-08-08, 2026-08-21. (1f) POST /cycle past date 2020-01-01 → 200 with 0 reminders (correctly filtered by `due > now`).
+
+          🅱️ AUTO-REMINDERS CONTRACEPTION (5/5): (2a) pilule → exactly 30 contra_pilule daily reminders. (2b) injection → 1 contra_injection at 2026-09-27 (J88). (2c) implant → 1 contra_implant at 2029-05-31 (3y-30d). (2d) sterilet → 1 contra_sterilet at 2031-05-31 (5y-30d). (2e) naturel (unknown methode) → 200 + 0 reminders (graceful no-op).
+
+          🅲 CROISSANCE-OMS (11/11): (3a) POST /enfants with numero_cmu="0102030406" → 200. (3b) 3 mesures added. (3c) GET /enfants/{id}/croissance-oms → 200. (3d) response.enfant has {id, nom, sexe, date_naissance, numero_cmu='0102030406'}. (3e) points[] each contain valid age_mois (float), oms_poids_ref with {p3,p15,p50,p85,p97}, classification_poids in allowed set. (3f) reference_poids_age len=13. (3g) reference_taille_age len=13. (3h) source='OMS Child Growth Standards 2006 (simplifie)' — contains 'OMS'. (3i) Pro→403 (role guard `require_roles("maman")`). (3j) invalid id → 404. (3k) Enfant without mesures → points=[], ref tables still len=13.
+
+          🅳 NAISSANCE AUTO-CREATE (5/5): (4a) POST /naissance without enfant_id but with enfant_nom/sexe/date → 200 w/ enfant_cree_auto=true. (4b) GET /enfants N+1; new enfant has nom='Bébé Auto …', poids_kg=3.1 (3100g/1000), taille_cm=49, mesures[] length 1, created_from_naissance=True. (4c) POST without enfant_id AND without enfant_nom → 400 ('Pour créer un enfant à la volée, fournissez enfant_nom, enfant_sexe et enfant_date_naissance'). (4d) Legacy flow with existing enfant_id → 200. (4e) Duplicate POST for same enfant_id → 400 ('Déclaration déjà enregistrée pour cet enfant').
+
+          🅴 TELE-ECHO STRUCTURED (4/4): (5a) POST /tele-echo with full structured report {bpd_mm=55.2, fl_mm=42.1, cc_mm=200, ca_mm=180, poids_estime_g=1850, liquide_amniotique='normal', placenta_position='anterieur', sexe_foetal='F', battements_cardiaques_bpm=145, conclusion, semaine_grossesse=22, description} → 200 with ALL 12 fields persisted verbatim. (5b) POST with only image_base64 → 200. (5c) POST with rdv_id but no image/description/structured fields → 400 ('Fournissez au moins une image, un rapport structuré ou une description'). (5d) POST /tele-echo with rdv_id belonging to another pro → 404 ('RDV introuvable ou non autorisé').
+
+          🅰️ RESOURCES SMOKE (4/4): (6a) GET /resources returns 8 seeded. (6b) ?type=quiz → exactly 2. (6c) ?category=nutrition → 1 (≥1). (6d) POST /resources/{quiz_id}/quiz-submit with answers → 200 with score_pct (int) + results[] array of length equal to question count.
+
+          REGRESSION CONSENT (2/2): (7a) Register without accepte_cgu → 400 ('Vous devez accepter les Conditions Générales d'Utilisation'). (7b) Register with cgu+politique+donnees_sante → 200.
+
+          Cleanup OK: auto reminders deleted, test enfants deleted. No critical or minor bugs found in /app/backend/server.py. All endpoints behave per spec.
       - working: true
         agent: "main"
         comment: |
@@ -381,13 +402,25 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "CMU (Couverture Maladie Universelle) — profils maman, accept pro, tarification RDV"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+  - agent: "testing"
+    message: |
+      Phase 2 backend exhaustively tested — 37/37 PASS on https://health-prestation.preview.emergentagent.com/api (script /app/backend_test_phase2.py).
+
+      ✅ CASE 1 Auto-reminders POST /cycle (6/6): exactly 3 auto_cycle reminders created with kinds {cycle_fertile, cycle_ovulation, cycle_regles_pre}; due_at dates match for both 28-day (J10/J14/J27) and 21-day (J3/J7/J20) cycles; past date_debut correctly yields 0 reminders (filtered by `due > now`).
+      ✅ CASE 2 Auto-reminders POST /contraception (5/5): pilule→30 daily, injection→1 @ J88 (2026-09-27), implant→1 @ 3y-30d (2029-05-31), sterilet→1 @ 5y-30d (2031-05-31), unknown methode 'naturel'→0 reminders gracefully.
+      ✅ CASE 3 GET /enfants/{id}/croissance-oms (11/11): full response shape verified (enfant.numero_cmu='0102030406', points[] with age_mois/oms_poids_ref keys/valid classification, reference_poids_age and reference_taille_age both len=13, source contains 'OMS'); role guard → pro 403, invalid id → 404, enfant without mesures returns empty points + full refs.
+      ✅ CASE 4 POST /naissance auto-create (5/5): auto-creation flag enfant_cree_auto=true, enfant created with poids_kg=3.1 (3100g/1000), 1 mesure entry, created_from_naissance=True; 400 when neither enfant_id nor enfant_nom provided; legacy flow OK; duplicate → 400 'Déclaration déjà enregistrée'.
+      ✅ CASE 5 POST /tele-echo structured (4/4): all 12 structured fields persisted (bpd_mm/fl_mm/cc_mm/ca_mm/poids_estime_g/liquide_amniotique/placenta_position/sexe_foetal/battements_cardiaques_bpm/conclusion/semaine_grossesse/description); image-only OK; empty body → 400; foreign-pro rdv → 404.
+      ✅ CASE 6 Resources smoke (4/4): 8 seeded resources; 2 quizzes; ≥1 nutrition; quiz-submit returns score_pct + results[] matching question count.
+      ✅ CASE 7 Regression consent (2/2): register without accepte_cgu → 400, with full consent → 200.
+
+      Cleanup OK. No critical or minor bugs found in /app/backend/server.py. All Phase 2 endpoints behave per spec.
   - agent: "testing"
     message: |
       CMU feature validated — 74/77 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_cmu.py). Core CMU tarification logic is FULLY FUNCTIONAL: RDV with CMU prestation + maman CMU actif + pro accepte_cmu=true → tarif_fcfa=10000 (prestation price wins over bogus payload), cmu_applique=true, cmu_taux=0.70, cmu_montant_fcfa=7000, reste_a_charge_fcfa=3000, cmu_numero='0102030405'. /pay/consultation on that rdv → payment.amount=3000 ✓. All 4 negative cases (non-CMU prestation, pro refuse, maman absent, maman expire) correctly set cmu_applique=false. /pro/facturation-cmu returns enriched rdvs (maman_nom + numero_cmu), /pro/facturation-cmu/csv returns text/csv with proper header. /admin/cmu/stats works for admin, 403 for maman. Regression (login, /professionnels, /pro/revenus, RDV without prestation_id) all OK — `prestation.get('nom') if prestation else None` does not crash.
