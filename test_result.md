@@ -306,7 +306,22 @@ backend:
 
           Tests manuels : tous les endpoints retournent 200 avec les bonnes données. Pas de régression sur l'existant.
 
+      - working: true
+        agent: "main"
+        comment: |
           Dépendance ajoutée : `react-native-svg@15.15.4` pour le rendu des courbes.
+      - working: true
+        agent: "testing"
+        comment: |
+          VALIDATION COMPLÈTE : 37/37 PASS sur /app/backend_test_phase2.py. Aucun bug détecté.
+          • Cas 1 cycle auto-rappels (6/6) : 3 rappels exacts pour cycle 28j (J10/J14/J27) et 21j (J3/J7/J20) ; dates passées → 0 rappel (filtre due>now OK).
+          • Cas 2 contraception auto-rappels (5/5) : pilule=30 quotidiens, injection=1@J88, implant=1@3ans-30j, sterilet=1@5ans-30j, "naturel"=0 (gracieux).
+          • Cas 3 courbes OMS (11/11) : shape complète, role guards OK (pro→403), invalid id→404, enfant sans mesures → points=[] + refs len=13.
+          • Cas 4 naissance auto-enfant (5/5) : enfant_cree_auto=true, mesures persisted, flag created_from_naissance=True ; validation champs et duplicate OK.
+          • Cas 5 tele-echo structuré (4/4) : 12 champs médicaux persistés, validation multi-input OK, role guard OK.
+          • Cas 6 resources (4/4) : 8 seeded, filtres OK, quiz-submit scoring OK.
+          • Cas 7 régression consent (2/2) : blocage sans CGU, acceptation complète OK.
+          Cleanup effectué (rappels auto + enfants test supprimés).
     implemented: true
     working: true
     file: "/app/backend/server.py"
