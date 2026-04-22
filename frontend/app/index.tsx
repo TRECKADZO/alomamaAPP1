@@ -34,13 +34,16 @@ export default function Landing() {
   return (
     <View style={styles.container} testID="landing-screen">
       <ScrollView
+        style={styles.scrollView}
         contentContainerStyle={[
           styles.scroll,
           // respecter la barre de nav Android et le home indicator iOS
           { paddingBottom: Math.max(24, insets.bottom + 16) },
         ]}
-        showsVerticalScrollIndicator={false}
-        bounces={false}
+        showsVerticalScrollIndicator={Platform.OS !== "web"}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+        overScrollMode="auto"
       >
         <View style={[styles.heroWrap, { height: heroH }]}>
           <Image source={{ uri: IMAGES.heroMaman }} style={styles.hero} resizeMode="cover" />
@@ -110,6 +113,7 @@ function Feature({ icon, text }: { icon: any; text: string }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bgPrimary },
   loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.bgPrimary },
+  scrollView: { flex: 1 },
   scroll: { flexGrow: 1 },
   heroWrap: { width: "100%", position: "relative", overflow: "hidden" },
   hero: { width: "100%", height: "100%" },
