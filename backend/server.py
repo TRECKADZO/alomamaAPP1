@@ -212,6 +212,9 @@ class EnfantIn(BaseModel):
     poids_kg: Optional[float] = None
     taille_cm: Optional[float] = None
     notes: Optional[str] = None
+    numero_cmu: Optional[str] = None  # N° CMU de l'enfant (bénéficiaire)
+    groupe_sanguin: Optional[str] = None
+    allergies: Optional[List[str]] = None
 
 
 class VaccinIn(BaseModel):
@@ -307,7 +310,12 @@ class PhotoIn(BaseModel):
 
 
 class NaissanceIn(BaseModel):
-    enfant_id: str
+    enfant_id: Optional[str] = None  # si absent → crée l'enfant à la volée
+    # Champs pour création inline du carnet enfant
+    enfant_nom: Optional[str] = None
+    enfant_sexe: Optional[Literal["F", "M"]] = None
+    enfant_date_naissance: Optional[str] = None  # ISO
+    # Déclaration naissance
     lieu_naissance: str
     heure_naissance: str  # HH:MM
     poids_naissance_g: int
@@ -322,9 +330,21 @@ class NaissanceIn(BaseModel):
 
 class TeleEchoIn(BaseModel):
     rdv_id: str
-    image_base64: str
+    image_base64: Optional[str] = None
     description: Optional[str] = None
     semaine_grossesse: Optional[int] = None
+    # Rapport structuré (optionnel)
+    bpd_mm: Optional[float] = None  # Diamètre bipariétal (mm)
+    fl_mm: Optional[float] = None  # Longueur fémorale (mm)
+    cc_mm: Optional[float] = None  # Circonférence crânienne (mm)
+    ca_mm: Optional[float] = None  # Circonférence abdominale (mm)
+    poids_estime_g: Optional[int] = None
+    liquide_amniotique: Optional[str] = None  # normal | oligoamnios | hydramnios
+    placenta_position: Optional[str] = None  # anterieur | posterieur | fundique | prævia
+    sexe_foetal: Optional[Literal["F", "M", "indetermine"]] = None
+    battements_cardiaques_bpm: Optional[int] = None
+    commentaires_medicaux: Optional[str] = None
+    conclusion: Optional[str] = None
 
 
 # ----------------------------------------------------------------------
@@ -565,6 +585,120 @@ async def add_vaccin(eid: str, payload: VaccinIn, user=Depends(require_roles("ma
         {"id": eid, "user_id": user["id"]}, {"$push": {"vaccins": vaccin}}
     )
     return await db.enfants.find_one({"id": eid}, {"_id": 0})
+
+
+# ----------------------------------------------------------------------
+# Courbes de croissance OMS (Tables simplifiées Weight-for-Age & Height-for-Age 0-60 mois)
+# Source : OMS Child Growth Standards 2006 — valeurs P3/P15/P50/P85/P97
+# ----------------------------------------------------------------------
+WHO_PA = {
+    "M": [
+        (0, 2.5, 2.9, 3.3, 3.9, 4.4), (1, 3.4, 3.9, 4.5, 5.1, 5.8), (2, 4.4, 4.9, 5.6, 6.3, 7.1),
+        (3, 5.1, 5.7, 6.4, 7.2, 8.0), (4, 5.6, 6.2, 7.0, 7.8, 8.7), (6, 6.4, 7.1, 7.9, 8.9, 9.8),
+        (9, 7.1, 7.8, 8.9, 9.9, 10.9), (12, 7.7, 8.4, 9.6, 10.8, 11.8), (18, 8.8, 9.6, 10.9, 12.2, 13.5),
+        (24, 9.7, 10.5, 12.2, 13.6, 15.1), (36, 11.3, 12.2, 14.3, 16.1, 17.8), (48, 12.7, 13.7, 16.3, 18.6, 20.9),
+        (60, 14.1, 15.3, 18.3, 21.1, 24.2),
+    ],
+    "F": [
+        (0, 2.4, 2.8, 3.2, 3.7, 4.2), (1, 3.2, 3.6, 4.2, 4.8, 5.5), (2, 3.9, 4.5, 5.1, 5.8, 6.6),
+        (3, 4.5, 5.1, 5.8, 6.6, 7.5), (4, 5.0, 5.6, 6.4, 7.3, 8.2), (6, 5.7, 6.5, 7.3, 8.3, 9.3),
+        (9, 6.4, 7.3, 8.2, 9.3, 10.5), (12, 7.0, 7.9, 8.9, 10.2, 11.5), (18, 8.1, 9.1, 10.2, 11.6, 13.2),
+        (24, 9.0, 10.2, 11.5, 13.0, 14.8), (36, 10.8, 12.0, 13.9, 15.8, 18.1), (48, 12.3, 13.7, 16.1, 18.5, 21.5),
+        (60, 13.7, 15.2, 18.2, 21.2, 24.9),
+    ],
+}
+WHO_TA = {
+    "M": [
+        (0, 46.1, 47.9, 49.9, 52.0, 53.7), (1, 50.8, 52.5, 54.7, 56.9, 58.6),
+        (2, 54.4, 56.2, 58.4, 60.6, 62.4), (3, 57.3, 59.1, 61.4, 63.7, 65.5),
+        (4, 59.7, 61.5, 63.9, 66.2, 68.0), (6, 63.3, 65.1, 67.6, 70.1, 71.9),
+        (9, 67.5, 69.4, 72.0, 74.5, 76.5), (12, 71.0, 73.0, 75.7, 78.4, 80.5),
+        (18, 76.9, 79.0, 82.3, 85.3, 87.7), (24, 81.0, 83.3, 87.1, 90.5, 93.2),
+        (36, 88.7, 91.3, 96.1, 100.0, 103.1), (48, 94.9, 97.7, 103.3, 107.7, 111.3),
+        (60, 100.7, 103.8, 110.0, 114.8, 118.8),
+    ],
+    "F": [
+        (0, 45.4, 47.1, 49.1, 51.1, 52.7), (1, 49.8, 51.5, 53.7, 55.8, 57.5),
+        (2, 53.0, 54.8, 57.1, 59.3, 61.1), (3, 55.6, 57.4, 59.8, 62.1, 63.9),
+        (4, 57.8, 59.7, 62.1, 64.5, 66.4), (6, 61.2, 63.1, 65.7, 68.2, 70.2),
+        (9, 65.3, 67.3, 70.1, 72.8, 74.8), (12, 68.9, 71.0, 74.0, 76.9, 79.2),
+        (18, 74.9, 77.1, 80.7, 84.0, 86.7), (24, 79.3, 81.7, 85.7, 89.3, 92.2),
+        (36, 87.4, 90.2, 95.1, 99.2, 102.7), (48, 94.1, 97.1, 102.7, 107.4, 111.3),
+        (60, 99.9, 103.2, 109.4, 114.6, 118.9),
+    ],
+}
+
+
+def _month_diff(born_iso: str, measured_iso: str) -> float:
+    try:
+        born = datetime.fromisoformat(born_iso.replace("Z", "+00:00"))
+        m = datetime.fromisoformat(measured_iso.replace("Z", "+00:00"))
+        days = (m - born).total_seconds() / 86400
+        return round(days / 30.4375, 2)
+    except Exception:
+        return 0.0
+
+
+def _interp_oms(table, months: float):
+    if months <= table[0][0]:
+        return table[0]
+    if months >= table[-1][0]:
+        return table[-1]
+    for i in range(len(table) - 1):
+        a = table[i]
+        b = table[i + 1]
+        if a[0] <= months <= b[0]:
+            ratio = (months - a[0]) / (b[0] - a[0]) if (b[0] - a[0]) else 0
+            return (months,) + tuple(round(a[j] + (b[j] - a[j]) * ratio, 2) for j in range(1, 6))
+    return table[-1]
+
+
+def _classify(value: float, p3, p15, p50, p85, p97) -> str:
+    if value < p3: return "tres_bas"
+    if value < p15: return "bas"
+    if value <= p85: return "normal"
+    if value <= p97: return "eleve"
+    return "tres_eleve"
+
+
+@api.get("/enfants/{eid}/croissance-oms")
+async def croissance_oms(eid: str, user=Depends(require_roles("maman"))):
+    enfant = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    if not enfant:
+        raise HTTPException(404, "Enfant introuvable")
+    sexe = enfant.get("sexe", "M")
+    born = enfant.get("date_naissance")
+    mesures = enfant.get("mesures") or []
+    points = []
+    for m in mesures:
+        age_mois = _month_diff(born, m.get("date") or born)
+        pa = _interp_oms(WHO_PA[sexe], age_mois)
+        ta = _interp_oms(WHO_TA[sexe], age_mois)
+        p_poids = _classify(m.get("poids_kg") or 0, *pa[1:]) if m.get("poids_kg") else None
+        p_taille = _classify(m.get("taille_cm") or 0, *ta[1:]) if m.get("taille_cm") else None
+        points.append({
+            "date": m.get("date"),
+            "age_mois": age_mois,
+            "poids_kg": m.get("poids_kg"),
+            "taille_cm": m.get("taille_cm"),
+            "oms_poids_ref": {"p3": pa[1], "p15": pa[2], "p50": pa[3], "p85": pa[4], "p97": pa[5]},
+            "oms_taille_ref": {"p3": ta[1], "p15": ta[2], "p50": ta[3], "p85": ta[4], "p97": ta[5]},
+            "classification_poids": p_poids,
+            "classification_taille": p_taille,
+        })
+    ref_pa = [{"mois": r[0], "p3": r[1], "p15": r[2], "p50": r[3], "p85": r[4], "p97": r[5]} for r in WHO_PA[sexe]]
+    ref_ta = [{"mois": r[0], "p3": r[1], "p15": r[2], "p50": r[3], "p85": r[4], "p97": r[5]} for r in WHO_TA[sexe]]
+    return {
+        "enfant": {
+            "id": enfant["id"], "nom": enfant["nom"], "sexe": sexe,
+            "date_naissance": born, "numero_cmu": enfant.get("numero_cmu"),
+        },
+        "points": sorted(points, key=lambda p: p["age_mois"]),
+        "reference_poids_age": ref_pa,
+        "reference_taille_age": ref_ta,
+        "source": "OMS Child Growth Standards 2006 (simplifie)",
+    }
+
 
 
 # ----------------------------------------------------------------------
@@ -1671,6 +1805,44 @@ async def create_cycle(payload: CycleIn, user=Depends(require_roles("maman"))):
     }
     await db.cycles.insert_one(doc)
     doc.pop("_id", None)
+    # 🔔 Auto-rappels intelligents : ovulation (J14) + fenêtre fertile (J10) + prochaines règles (J cycle)
+    try:
+        s = payload.date_debut_regles
+        # Si pas de tz, l'assumer UTC
+        start_dt = datetime.fromisoformat(s.replace("Z", "+00:00")) if "T" in s else datetime.fromisoformat(s + "T00:00:00+00:00")
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
+        cycle_len = int(payload.duree_cycle or 28)
+        ovu_day = cycle_len - 14
+        fenetre_start = max(1, ovu_day - 4)
+        next_regles = cycle_len
+        now = datetime.now(timezone.utc)
+
+        def _due(offset_days: int):
+            d = start_dt + timedelta(days=offset_days)
+            return d.replace(hour=9, minute=0, second=0, microsecond=0)
+
+        rappels = [
+            ("Fenêtre fertile 🌸", "Votre fenêtre de fertilité commence aujourd'hui.", _due(fenetre_start), "cycle_fertile"),
+            ("Ovulation estimée 🌱", f"Jour d'ovulation probable (J{ovu_day} du cycle).", _due(ovu_day), "cycle_ovulation"),
+            ("Prochaines règles ⏰", "Vos prochaines règles sont attendues demain.", _due(next_regles - 1), "cycle_regles_pre"),
+        ]
+        for title, body, due, kind in rappels:
+            if due > now:
+                await db.reminders.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": user["id"],
+                    "title": title,
+                    "description": body,
+                    "due_at": due.isoformat(),
+                    "kind": kind,
+                    "source": "auto_cycle",
+                    "cycle_id": doc["id"],
+                    "done": False,
+                    "created_at": now.isoformat(),
+                })
+    except Exception as e:
+        logger.warning(f"Auto-reminders cycle failed: {e}")
     return doc
 
 
@@ -1704,6 +1876,50 @@ async def create_contraception(payload: ContraceptionIn, user=Depends(require_ro
     }
     await db.contraception.insert_one(doc)
     doc.pop("_id", None)
+    # 🔔 Auto-rappels selon méthode
+    try:
+        now = datetime.now(timezone.utc)
+        s = payload.date_debut
+        if s:
+            start = datetime.fromisoformat(s.replace("Z", "+00:00")) if "T" in s else datetime.fromisoformat(s + "T00:00:00+00:00")
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+        else:
+            start = now
+        methode = (payload.methode or "").lower()
+        rappels = []
+        if methode == "pilule":
+            # Rappel quotidien pour 30 jours à l'heure de début (par défaut 8h)
+            for i in range(30):
+                due = (start + timedelta(days=i)).replace(hour=8, minute=0, second=0, microsecond=0)
+                if due > now:
+                    rappels.append((f"💊 Prise pilule (J{i+1})", "C'est l'heure de votre pilule contraceptive.", due, "contra_pilule"))
+        elif methode == "injection":
+            # Rappel injection à 3 mois (-2j) + renouvellement
+            due = (start + timedelta(days=88)).replace(hour=9, minute=0)
+            rappels.append(("💉 Injection contraceptive à renouveler", "Votre injection arrive à échéance dans 2 jours.", due, "contra_injection"))
+        elif methode == "implant":
+            due = (start + timedelta(days=3 * 365 - 30)).replace(hour=9, minute=0)
+            rappels.append(("🔬 Implant à remplacer bientôt", "Votre implant arrive en fin de vie dans 1 mois (3 ans).", due, "contra_implant"))
+        elif methode == "sterilet":
+            due = (start + timedelta(days=5 * 365 - 30)).replace(hour=9, minute=0)
+            rappels.append(("🛡️ DIU/Stérilet à vérifier", "Contrôle médical recommandé avant fin de validité.", due, "contra_sterilet"))
+        for title, body, due, kind in rappels:
+            if due > now:
+                await db.reminders.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": user["id"],
+                    "title": title,
+                    "description": body,
+                    "due_at": due.isoformat(),
+                    "kind": kind,
+                    "source": "auto_contraception",
+                    "contraception_id": doc["id"],
+                    "done": False,
+                    "created_at": now.isoformat(),
+                })
+    except Exception as e:
+        logger.warning(f"Auto-reminders contraception failed: {e}")
     return doc
 
 
@@ -1877,6 +2093,15 @@ async def upload_echo(payload: TeleEchoIn, user=Depends(require_roles("professio
     rdv = await db.rdv.find_one({"id": payload.rdv_id}, {"_id": 0})
     if not rdv or rdv["pro_id"] != user["id"]:
         raise HTTPException(404, "RDV introuvable ou non autorisé")
+    # Sécurité : au moins une image OU un rapport structuré
+    has_image = bool(payload.image_base64)
+    has_report = any([
+        payload.bpd_mm, payload.fl_mm, payload.cc_mm, payload.ca_mm,
+        payload.poids_estime_g, payload.liquide_amniotique, payload.placenta_position,
+        payload.sexe_foetal, payload.battements_cardiaques_bpm, payload.conclusion,
+    ])
+    if not has_image and not has_report and not payload.description:
+        raise HTTPException(400, "Fournissez au moins une image, un rapport structuré ou une description")
     doc = {
         "id": str(uuid.uuid4()),
         "rdv_id": payload.rdv_id,
@@ -1886,14 +2111,26 @@ async def upload_echo(payload: TeleEchoIn, user=Depends(require_roles("professio
         "image_base64": payload.image_base64,
         "description": payload.description,
         "semaine_grossesse": payload.semaine_grossesse,
+        # Rapport structuré
+        "bpd_mm": payload.bpd_mm,
+        "fl_mm": payload.fl_mm,
+        "cc_mm": payload.cc_mm,
+        "ca_mm": payload.ca_mm,
+        "poids_estime_g": payload.poids_estime_g,
+        "liquide_amniotique": payload.liquide_amniotique,
+        "placenta_position": payload.placenta_position,
+        "sexe_foetal": payload.sexe_foetal,
+        "battements_cardiaques_bpm": payload.battements_cardiaques_bpm,
+        "commentaires_medicaux": payload.commentaires_medicaux,
+        "conclusion": payload.conclusion,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.tele_echo.insert_one(doc)
     doc.pop("_id", None)
     await push_notif(
         rdv["maman_id"],
-        "Nouvelle image d'échographie 🩺",
-        f"Dr. {user['name']} a partagé une image (semaine {payload.semaine_grossesse or '?'})",
+        "Nouveau rapport d'échographie 🩺",
+        f"Dr. {user['name']} a partagé un rapport (semaine {payload.semaine_grossesse or '?'})",
         "info",
     )
     return doc
@@ -1921,24 +2158,59 @@ async def echos_for_rdv(rdv_id: str, user=Depends(get_current_user)):
 # ----------------------------------------------------------------------
 @api.post("/naissance")
 async def create_naissance(payload: NaissanceIn, user=Depends(require_roles("maman"))):
-    enfant = await db.enfants.find_one({"id": payload.enfant_id, "user_id": user["id"]})
-    if not enfant:
-        raise HTTPException(404, "Enfant introuvable")
-    existing = await db.naissances.find_one({"enfant_id": payload.enfant_id})
+    enfant_id = payload.enfant_id
+    enfant = None
+    # 🆕 Création auto du carnet enfant si pas d'enfant_id fourni
+    if not enfant_id:
+        if not payload.enfant_nom or not payload.enfant_sexe or not payload.enfant_date_naissance:
+            raise HTTPException(400, "Pour créer un enfant à la volée, fournissez enfant_nom, enfant_sexe et enfant_date_naissance")
+        # Respecter le quota
+        current = await db.enfants.count_documents({"user_id": user["id"]})
+        await check_quota(user, "enfants_max", current)
+        enfant_id = str(uuid.uuid4())
+        enfant = {
+            "id": enfant_id,
+            "user_id": user["id"],
+            "nom": payload.enfant_nom,
+            "sexe": payload.enfant_sexe,
+            "date_naissance": payload.enfant_date_naissance,
+            "poids_kg": round(payload.poids_naissance_g / 1000, 3) if payload.poids_naissance_g else None,
+            "taille_cm": payload.taille_naissance_cm,
+            "vaccins": [],
+            "mesures": [{
+                "id": str(uuid.uuid4()),
+                "date": payload.enfant_date_naissance,
+                "poids_kg": round(payload.poids_naissance_g / 1000, 3) if payload.poids_naissance_g else None,
+                "taille_cm": payload.taille_naissance_cm,
+                "notes": f"Mesures de naissance ({payload.lieu_naissance})",
+            }],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_from_naissance": True,
+        }
+        await db.enfants.insert_one(enfant)
+    else:
+        enfant = await db.enfants.find_one({"id": enfant_id, "user_id": user["id"]})
+        if not enfant:
+            raise HTTPException(404, "Enfant introuvable")
+    existing = await db.naissances.find_one({"enfant_id": enfant_id})
     if existing:
         raise HTTPException(400, "Déclaration déjà enregistrée pour cet enfant")
+    data = payload.dict()
+    # Ne stocker les champs enfant_* que si on les a reçus
+    data["enfant_id"] = enfant_id
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "enfant_nom": enfant["nom"],
         "enfant_sexe": enfant["sexe"],
         "enfant_date_naissance": enfant["date_naissance"],
-        **payload.dict(),
+        **data,
         "status": "en_attente",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.naissances.insert_one(doc)
     doc.pop("_id", None)
+    doc["enfant_cree_auto"] = not payload.enfant_id  # info utile pour le front
     return doc
 
 

@@ -56,7 +56,7 @@ export default function Enfants() {
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [vaccinModal, setVaccinModal] = useState<string | null>(null);
-  const [form, setForm] = useState({ nom: "", date_naissance: "", sexe: "F", poids_kg: "", taille_cm: "", groupe_sanguin: "", allergies: "" });
+  const [form, setForm] = useState({ nom: "", date_naissance: "", sexe: "F", poids_kg: "", taille_cm: "", groupe_sanguin: "", allergies: "", numero_cmu: "" });
   const [vaccin, setVaccin] = useState({ nom: "", date: "", prochain_rappel: "" });
 
   const load = async () => {
@@ -80,8 +80,9 @@ export default function Enfants() {
         taille_cm: form.taille_cm ? parseFloat(form.taille_cm) : undefined,
         groupe_sanguin: form.groupe_sanguin || undefined,
         allergies: form.allergies ? form.allergies.split(",").map((a) => a.trim()).filter(Boolean) : undefined,
+        numero_cmu: form.numero_cmu || undefined,
       });
-      setForm({ nom: "", date_naissance: "", sexe: "F", poids_kg: "", taille_cm: "", groupe_sanguin: "", allergies: "" });
+      setForm({ nom: "", date_naissance: "", sexe: "F", poids_kg: "", taille_cm: "", groupe_sanguin: "", allergies: "", numero_cmu: "" });
       setModal(false);
       if (r.queued) Alert.alert("Enregistré hors ligne", "L'enfant sera ajouté dès la reconnexion.");
       load();
@@ -264,6 +265,16 @@ export default function Enfants() {
                       </View>
                     </View>
                   ) : null}
+                  {/* N° CMU enfant */}
+                  {e.numero_cmu ? (
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>N° CMU</Text>
+                      <View style={[styles.badgeFilled, { backgroundColor: "#DCFCE7" }]}>
+                        <Ionicons name="shield-checkmark" size={12} color="#16A34A" />
+                        <Text style={[styles.badgeFilledText, { color: "#166534", marginLeft: 4 }]}>{e.numero_cmu}</Text>
+                      </View>
+                    </View>
+                  ) : null}
                   {/* Poids/Taille */}
                   {(e.poids_kg || e.taille_cm) && (
                     <View style={styles.metricsRow}>
@@ -334,6 +345,14 @@ export default function Enfants() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.actionBtn}
+                      onPress={() => router.push(`/croissance/${e.id}`)}
+                      testID={`view-oms-${e.id}`}
+                    >
+                      <Ionicons name="trending-up" size={16} color={COLORS.primary} />
+                      <Text style={styles.actionBtnText}>Courbes OMS</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.actionBtn}
                       onPress={() => Alert.alert("Carnet", "Vue complète du carnet bientôt disponible")}
                     >
                       <Ionicons name="book-outline" size={16} color={COLORS.primary} />
@@ -392,6 +411,8 @@ export default function Enfants() {
               </View>
               <Label text="Allergies (séparées par des virgules)" />
               <TextInput style={styles.input} value={form.allergies} onChangeText={(v) => setForm({ ...form, allergies: v })} placeholder="arachides, lait..." placeholderTextColor={COLORS.textMuted} />
+              <Label text="N° CMU de l'enfant (optionnel)" />
+              <TextInput style={styles.input} value={form.numero_cmu} onChangeText={(v) => setForm({ ...form, numero_cmu: v.replace(/[^0-9]/g, "") })} placeholder="10 ou 12 chiffres" placeholderTextColor={COLORS.textMuted} keyboardType="number-pad" maxLength={12} testID="enfant-cmu-input" />
               <TouchableOpacity style={styles.btnPrimary} onPress={create} testID="save-enfant-btn">
                 <Text style={styles.btnPrimaryText}>Enregistrer</Text>
               </TouchableOpacity>

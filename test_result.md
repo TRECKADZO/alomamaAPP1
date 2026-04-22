@@ -245,7 +245,47 @@ frontend:
         comment: "Nouvelle route /famille. Création groupe avec code partage 6 chars, partage natif via Share API, rejoindre avec code+relation, gestion des membres (accepter/refuser/supprimer), permissions granulaires (7 catégories) via toggles."
 
 backend:
-  - task: "Module Ressources éducatives (vidéos, fiches, quiz) + Consentement RGPD"
+  - task: "Phase 2 — Rappels intelligents + Courbes OMS + N° CMU enfant + Flow naissance auto + Rapport écho structuré"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          🅱️ AUTO-REMINDERS (cycle + contraception)
+          - POST /cycle crée automatiquement 3 rappels (fenêtre fertile J10, ovulation J14, prochaines règles J-1) avec `source: "auto_cycle"`.
+          - POST /contraception crée des rappels selon méthode : pilule → 30 rappels quotidiens, injection → renouvellement à 88j, implant → remplacement à 3 ans moins 1 mois, stérilet → contrôle à 5 ans moins 1 mois. Avec `source: "auto_contraception"`.
+          - Correction datetime tz : handling ISO dates avec ou sans tzinfo → tous les rappels se créent correctement.
+          - Tests manuels : cycle 2026-06-01 → 3 rappels générés aux bons jours. Pilule 2026-06-01 → 30 rappels quotidiens générés.
+
+          🅲 COURBES OMS + N° CMU ENFANT
+          - `EnfantIn` étendu avec `numero_cmu`, `groupe_sanguin`, `allergies`.
+          - Nouveau endpoint `GET /enfants/{id}/croissance-oms` qui retourne :
+            * `enfant` (id, nom, sexe, date_naissance, numero_cmu)
+            * `points` (mesures enrichies avec âge en mois, percentiles de référence OMS interpolés, classification auto : tres_bas/bas/normal/eleve/tres_eleve)
+            * `reference_poids_age` et `reference_taille_age` : 13 points (0-60 mois) avec P3/P15/P50/P85/P97
+          - Tables simplifiées OMS Child Growth Standards 2006 embarquées : 2 tables × 2 sexes × 13 âges × 5 percentiles.
+          - Interpolation linéaire entre les entrées fixées.
+          - Frontend `/croissance/[id]` : graphique SVG interactif avec 5 courbes OMS + point bleu de l'enfant + classification colorée + onglets Poids/Taille. **Screenshot validé : graphique rendu correctement avec point bleu de Kofi Test (8.2kg @ 10 mois → Normal).**
+
+          🅳 FLOW NAISSANCE → CARNET AUTO
+          - `NaissanceIn.enfant_id` désormais optionnel + nouveaux champs `enfant_nom`, `enfant_sexe`, `enfant_date_naissance`.
+          - POST /naissance : si `enfant_id` absent, crée l'enfant à la volée AVEC les mesures de naissance en première mesure (poids + taille) + flag `created_from_naissance: True`. Respecte le quota `enfants_max`. Retourne `enfant_cree_auto: true`.
+          - Frontend `/naissance` : bouton "Créer le carnet lors de la déclaration" qui bascule sur un formulaire inline (prénom, sexe, date naissance).
+          - Test manuel : POST /naissance avec enfant_nom + sexe + date → 200 avec enfant_cree_auto=true.
+
+          🅴 RAPPORT ÉCHO STRUCTURÉ
+          - `TeleEchoIn.image_base64` optionnel + 10 nouveaux champs structurés : `bpd_mm`, `fl_mm`, `cc_mm`, `ca_mm`, `poids_estime_g`, `liquide_amniotique` (normal/oligoamnios/hydramnios), `placenta_position` (anterieur/posterieur/fundique/praevia), `sexe_foetal` (F/M/indetermine), `battements_cardiaques_bpm`, `commentaires_medicaux`, `conclusion`.
+          - POST /tele-echo : validation qu'au moins une image, un rapport structuré ou une description est fourni.
+          - Frontend `/tele-echo` : section pliable "Rapport structuré" avec biométrie fœtale (BPD/FL/CC/CA), poids estimé, BCF, chips pour liquide/placenta/sexe, et conclusion. Rendu lecture : grille compacte + conclusion encadrée jaune.
+
+          Tests manuels : tous les endpoints retournent 200 avec les bonnes données. Pas de régression sur l'existant.
+
+          Dépendance ajoutée : `react-native-svg@15.15.4` pour le rendu des courbes.
     implemented: true
     working: true
     file: "/app/backend/server.py"

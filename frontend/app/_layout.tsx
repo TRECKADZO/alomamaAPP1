@@ -39,6 +39,7 @@ export default function RootLayout() {
                 <Stack.Screen name="cgu" options={{ title: "CGU - À lo Maman" }} />
                 <Stack.Screen name="privacy" options={{ title: "Politique de Confidentialité" }} />
                 <Stack.Screen name="ressources" options={{ title: "Ressources éducatives" }} />
+                <Stack.Screen name="croissance" options={{ title: "Courbes OMS" }} />
               </Stack>
             </View>
           </View>

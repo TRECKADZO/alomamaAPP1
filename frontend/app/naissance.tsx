@@ -22,6 +22,9 @@ export default function Naissance() {
     enfant_id: "", lieu_naissance: "", heure_naissance: "", poids_naissance_g: "",
     taille_naissance_cm: "", nom_pere: "", nom_mere: user?.name || "", profession_pere: "",
     profession_mere: "", medecin_accoucheur: "",
+    // Champs pour création inline du carnet si pas d'enfant existant
+    enfant_nom: "", enfant_sexe: "F", enfant_date_naissance: "",
+    create_enfant: false,
   });
 
   const load = async () => {
@@ -36,15 +39,39 @@ export default function Naissance() {
   useFocusEffect(useCallback(() => { load(); }, [user]));
 
   const create = async () => {
-    if (!form.enfant_id || !form.lieu_naissance || !form.heure_naissance || !form.nom_mere) {
-      return Alert.alert("Champs requis", "Enfant, lieu, heure et nom de la mère sont obligatoires");
+    const useInline = form.create_enfant || enfants.length === 0;
+    if (!useInline && !form.enfant_id) {
+      return Alert.alert("Champs requis", "Sélectionnez un enfant ou créez le carnet");
+    }
+    if (useInline && (!form.enfant_nom || !form.enfant_date_naissance)) {
+      return Alert.alert("Champs requis", "Nom et date de naissance de l'enfant");
+    }
+    if (!form.lieu_naissance || !form.heure_naissance || !form.nom_mere) {
+      return Alert.alert("Champs requis", "Lieu, heure et nom de la mère sont obligatoires");
     }
     try {
-      await api.post("/naissance", {
-        ...form,
+      const payload: any = {
+        lieu_naissance: form.lieu_naissance,
+        heure_naissance: form.heure_naissance,
         poids_naissance_g: parseInt(form.poids_naissance_g) || 0,
         taille_naissance_cm: parseFloat(form.taille_naissance_cm) || 0,
-      });
+        nom_pere: form.nom_pere || undefined,
+        nom_mere: form.nom_mere,
+        profession_pere: form.profession_pere || undefined,
+        profession_mere: form.profession_mere || undefined,
+        medecin_accoucheur: form.medecin_accoucheur || undefined,
+      };
+      if (useInline) {
+        payload.enfant_nom = form.enfant_nom;
+        payload.enfant_sexe = form.enfant_sexe;
+        payload.enfant_date_naissance = form.enfant_date_naissance;
+      } else {
+        payload.enfant_id = form.enfant_id;
+      }
+      const r = await api.post("/naissance", payload);
+      if (r.data?.enfant_cree_auto) {
+        Alert.alert("✅ Carnet enfant créé", `Le carnet de ${form.enfant_nom} a été automatiquement créé avec les mesures de naissance.`);
+      }
       setModal(false);
       load();
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
@@ -116,11 +143,42 @@ export default function Naissance() {
               </View>
 
               <Text style={styles.label}>Enfant *</Text>
-              {enfants.map((e) => (
-                <TouchableOpacity key={e.id} style={[styles.enfRow, form.enfant_id === e.id && styles.enfRowActive]} onPress={() => setForm({ ...form, enfant_id: e.id })}>
-                  <Text>{e.sexe === "F" ? "👧" : "👦"} {e.nom}</Text>
-                </TouchableOpacity>
-              ))}
+              {enfants.length > 0 && !form.create_enfant ? (
+                <>
+                  {enfants.map((e) => (
+                    <TouchableOpacity key={e.id} style={[styles.enfRow, form.enfant_id === e.id && styles.enfRowActive]} onPress={() => setForm({ ...form, enfant_id: e.id })}>
+                      <Text>{e.sexe === "F" ? "👧" : "👦"} {e.nom}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity style={styles.inlineCreate} onPress={() => setForm({ ...form, create_enfant: true, enfant_id: "" })}>
+                    <Ionicons name="add-circle-outline" size={16} color={COLORS.primary} />
+                    <Text style={styles.inlineCreateText}>Créer le carnet lors de la déclaration</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <View style={styles.inlineBox}>
+                  <View style={styles.inlineHead}>
+                    <Ionicons name="sparkles" size={16} color={COLORS.primary} />
+                    <Text style={styles.inlineTitle}>Création automatique du carnet enfant</Text>
+                    {enfants.length > 0 && (
+                      <TouchableOpacity onPress={() => setForm({ ...form, create_enfant: false })}>
+                        <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <Field label="Prénom de l'enfant *" value={form.enfant_nom} onChange={(v) => setForm({ ...form, enfant_nom: v })} placeholder="Kouamé" />
+                  <Text style={styles.label}>Sexe *</Text>
+                  <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+                    {(["F", "M"] as const).map((s) => (
+                      <TouchableOpacity key={s} style={[styles.sexChip, form.enfant_sexe === s && styles.sexChipActive]} onPress={() => setForm({ ...form, enfant_sexe: s })}>
+                        <Text style={[styles.sexChipText, form.enfant_sexe === s && { color: "#fff" }]}>{s === "F" ? "👧 Fille" : "👦 Garçon"}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={styles.label}>Date de naissance *</Text>
+                  <DateField value={form.enfant_date_naissance} onChange={(v) => setForm({ ...form, enfant_date_naissance: v })} maximumDate={new Date()} placeholder="Choisir la date" />
+                </View>
+              )}
 
               <Field label="Lieu de naissance *" value={form.lieu_naissance} onChange={(v) => setForm({ ...form, lieu_naissance: v })} placeholder="Hôpital / Maternité / Ville" />
               <Field label="Heure de naissance *" value={form.heure_naissance} onChange={(v) => setForm({ ...form, heure_naissance: v })} placeholder="14:30" time />
@@ -200,6 +258,14 @@ const styles = StyleSheet.create({
   detailValue: { color: COLORS.textPrimary, fontWeight: "600", flex: 1, fontSize: 13 },
   validateBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: COLORS.success, paddingVertical: 12, borderRadius: RADIUS.pill, marginTop: 12 },
   validateText: { color: "#fff", fontWeight: "700" },
+  inlineCreate: { flexDirection: "row", alignItems: "center", gap: 6, padding: 10, marginTop: 6, backgroundColor: "#EFF6FF", borderRadius: 8, borderWidth: 1, borderColor: "#BFDBFE", borderStyle: "dashed" },
+  inlineCreateText: { fontSize: 12, fontWeight: "700", color: COLORS.primary },
+  inlineBox: { padding: 12, backgroundColor: "#F0F9FF", borderRadius: 10, borderWidth: 1, borderColor: "#BAE6FD", marginBottom: 8 },
+  inlineHead: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10 },
+  inlineTitle: { flex: 1, fontSize: 13, fontWeight: "800", color: COLORS.primary },
+  sexChip: { flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: COLORS.border, alignItems: "center", backgroundColor: COLORS.surface },
+  sexChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  sexChipText: { fontSize: 13, fontWeight: "700", color: COLORS.textPrimary },
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
   modalCard: { backgroundColor: COLORS.bgPrimary, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: SPACING.xl, maxHeight: "95%" },
   modalHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
