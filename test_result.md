@@ -245,7 +245,63 @@ frontend:
         comment: "Nouvelle route /famille. Création groupe avec code partage 6 chars, partage natif via Share API, rejoindre avec code+relation, gestion des membres (accepter/refuser/supprimer), permissions granulaires (7 catégories) via toggles."
 
 backend:
-  - task: "Phase 2 — Rappels intelligents + Courbes OMS + N° CMU enfant + Flow naissance auto + Rapport écho structuré"
+  - task: "Phase 3 — Chiffrement AES-256-GCM au repos (CMU, enfant, tele-echo, consultation_notes)"
+    implemented: true
+    working: false
+    file: "/app/backend/encryption.py, /app/backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Module `/app/backend/encryption.py` implémente AES-256-GCM via `cryptography.hazmat.primitives.ciphers.aead.AESGCM`.
+          - Clé 256 bits auto-générée au 1er démarrage et persistée dans `/app/backend/.env` sous `ENCRYPTION_KEY`.
+          - Format ciphertext : `enc_v1:` + base64(nonce[12] + ct + tag[16]). Le préfixe permet de distinguer données chiffrées vs legacy plaintext (migration in-place graduelle).
+          - Helpers : `encrypt_str`, `decrypt_str`, `encrypt_list`, `decrypt_list`, `encrypt_cmu_dict`, `decrypt_cmu_dict`, `decrypt_enfant`, `decrypt_tele_echo`, `decrypt_consultation_note`.
+
+          Champs chiffrés au repos :
+          1. **users.cmu.numero** + **users.cmu.nom_complet** + **users.cmu.beneficiaires[].numero_cmu** + **users.cmu.beneficiaires[].nom** — POST /cmu/me chiffre, GET /cmu/me déchiffre transparent. Ajout de `numero_hash` (SHA-256[16]) pour permettre les recherches sans décrypter. RDV creation lit et déchiffre pour appliquer la tarification CMU.
+          2. **enfants.numero_cmu** + **enfants.allergies[]** — POST/PATCH /enfants chiffrent, GET /enfants, GET /enfants/{id}/croissance-oms, POST /enfants/{id}/mesures et /photo retournent des données déchiffrées.
+          3. **tele_echo.image_base64** + **tele_echo.commentaires_medicaux** + **tele_echo.conclusion** — POST /tele-echo chiffre, GET /tele-echo et /tele-echo/rdv/{id} déchiffrent. Les biométries numériques (BPD, FL, etc.) restent en clair car non identifiantes.
+          4. **consultation_notes.diagnostic** + **consultation_notes.traitement** + **consultation_notes.notes** — POST /consultation-notes chiffre, GET /pro/patients/{id}/dossier déchiffre.
+
+          Résultats des tests manuels :
+          • Clé ENCRYPTION_KEY correctement persistée dans .env (1 seule entrée).
+          • Round-trip CMU : POST puis GET retournent les valeurs en clair (numero, nom, bénéficiaires).
+          • Round-trip enfant : numero_cmu et allergies[] correctement chiffrés/déchiffrés.
+          • Vérification DB brute : les champs cmu.numero, cmu.nom_complet, beneficiaires[].numero_cmu sont bien stockés sous forme `enc_v1:...` (base64 illisible), pas en clair.
+          • Restart backend : les données pré-existantes restent lisibles (la clé .env survit).
+          • RDV creation : le taux CMU et le cmu_numero sur le rdv utilisent toujours les valeurs déchiffrées.
+
+          Non-régression validée :
+          • Données legacy non-chiffrées (mamans existantes, seeds) restent lisibles (le decrypt retourne tel quel si pas de préfixe `enc_v1:`).
+          • Admin stats, RDV listings, login, tous endpoints non-sensibles inchangés.
+
+          À tester par deep_testing_backend_v2 : régression complète + round-trip chiffrement sur tous les endpoints impactés.
+      - working: false
+        agent: "testing"
+        comment: |
+          Phase 3 AES-256-GCM backend tests — 96/97 PASS on https://health-prestation.preview.emergentagent.com/api
+          (script: /app/backend_test_phase3_encryption.py). 1 CRITICAL BUG found.
+
+          ✅ CASE 1 CMU round-trip (20/20): POST /cmu/me returns clear numero/nom_complet/beneficiaires; GET /cmu/me returns clear values + statut='actif'; DB direct check confirms users.cmu.numero starts with 'enc_v1:' (encrypted ciphertext different from plaintext), cmu.nom_complet encrypted, beneficiaires[0].numero_cmu + nom encrypted, numero_hash present (16 hex chars), date_validite stored clear '2099-01-15'.
+          ✅ CASE 2 Enfant round-trip (13/13): POST /enfants returns clear numero_cmu, allergies, groupe_sanguin; GET /enfants returns clear values; GET /enfants/{id}/croissance-oms returns clear enfant.numero_cmu; PATCH returns clear updated value; DB has numero_cmu='enc_v1:...' (encrypted, not plaintext), allergies[0]='enc_v1:...', groupe_sanguin='A+' clear (non-sensitive).
+          ✅ CASE 3 Tele-echo round-trip (18/18): POST /tele-echo returns clear image_base64, conclusion, commentaires_medicaux, bpd_mm=55.2; GET /tele-echo (both pro+maman) and GET /tele-echo/rdv/{id} all return clear values; DB has image_base64/conclusion/commentaires_medicaux all 'enc_v1:...' encrypted, bpd_mm=55.2 clear numeric, rdv_id clear.
+          ✅ CASE 4 Consultation notes (12/12): POST /pro/consultation-notes returns clear diagnostic/traitement/notes; GET /pro/dossier/{patient_id} returns clear notes; DB has diagnostic/traitement/notes all 'enc_v1:...' encrypted.
+          ✅ CASE 5 RDV CMU pricing (7/8): PATCH /pro/cmu accepte_cmu=true OK; POST /pro/prestations (cmu_prise_en_charge=true, taux=0.70) OK; POST /rdv → cmu_applique=true, cmu_taux=0.70, cmu_montant_fcfa=7000, reste_a_charge_fcfa=3000, cmu_numero='0102030405' (correctly decrypted from maman's encrypted cmu for rdv creation).
+          ✅ CASE 6 Legacy plaintext fallback (4/4): Inserted legacy enfant with plaintext numero_cmu='LEGACY123' + allergies=['legacy_plaintext']; GET /enfants returns values as-is (no enc_v1: prefix → decrypt_str passes through).
+          ✅ CASE 7 Encryption key persistence (3/3): .env has exactly 1 ENCRYPTION_KEY entry; value is valid urlsafe-base64; decodes to exactly 32 bytes (AES-256).
+          ✅ CASE 8 Regression (14/14): All 4 roles login + /auth/me OK; /resources, /professionnels, /rdv, /enfants/{id}/croissance-oms all 200; /admin/cmu/stats returns total_mamans=8, mamans_avec_cmu=1 (the $exists: true query still counts correctly post-encryption), total_pros=5, pros_acceptant_cmu=1, plus rdv_cmu_total, total_cmu_du_fcfa, total_brut_cmu_fcfa.
+
+          ❌ CRITICAL BUG — /pro/facturation-cmu returns ENCRYPTED numero_cmu instead of clear value.
+          Endpoint /pro/facturation-cmu (server.py L1515-1541) enriches each rdv with `numero_cmu` by reading `users.cmu.numero` directly from the users collection (L1529, L1534). Since Phase 3 encrypts users.cmu.numero at rest, the response now returns `rdvs[].numero_cmu = 'enc_v1:G8+6IfjFm8Qi…'` (ciphertext) instead of '0102030405'. Same bug affects /pro/facturation-cmu/csv (L1565) — the CSV "Numero CMU" column now contains ciphertext, which breaks facturation à la CNAM (real-world blocker).
+          FIX OPTIONS (main agent): (a) PREFERRED — read from `rdv.cmu_numero` (already stored CLEAR on each rdv doc on L813 of server.py) instead of rejoining users.cmu.numero. Replace L1534 `r["numero_cmu"] = (m.get("cmu") or {}).get("numero")` with `r["numero_cmu"] = r.get("cmu_numero")` (and remove the users JOIN for that field); same fix for CSV L1565. (b) Alternative — call `decrypt_cmu_dict(m.get("cmu"))` before reading numero. (a) is cleaner since rdv.cmu_numero is the single source of truth for billing.
+
+          SIDE NOTE (not a regression, pre-existing): PATCH /enfants/{id} (server.py L584) uses EnfantIn as the body model, which has required fields (nom, date_naissance, sexe). A partial PATCH with only {numero_cmu} is rejected with 422. Not related to encryption but worth noting for UI patch flows — consider introducing an EnfantPatchIn with all-optional fields.
+
+          Cleanup OK (test enfants, tele-echo, notes, prestations, rdv, maman CMU, pro accepte_cmu reset). Script idempotent.
     implemented: true
     working: true
     file: "/app/backend/server.py"
@@ -469,3 +525,24 @@ agent_communication:
     message: "Prestations Pro + Commission dynamique — 37/37 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_prestations.py). (1) Prestations CRUD: POST /api/pro/prestations {nom:'Consultation prénatale', prix:15000, duree:45} → 200 with id; GET /api/pro/prestations includes it; PATCH updates prix_fcfa 15000→20000 + nom change persisted; DELETE returns {ok:true} and GET no longer contains the id. (2) Public prestations: created 2 active (Consultation prénatale 15000, Échographie 25000) + 1 inactive (5000). GET /api/pros/{pro_id}/prestations as maman → 200 with exactly 2 items sorted ASC by prix_fcfa ([15000, 25000]); inactive correctly excluded. (3) RDV with prestation_id: POST /api/rdv {pro_id, date:'2026-05-20T10:00', prestation_id, tarif_fcfa:99999 (wrong)} → 200; response.tarif_fcfa=15000 (prestation price wins), prestation_id persisted, prestation_nom='Consultation prénatale'. (4) Commission dynamique: admin PATCH /admin/users/{pro_id} {premium:false} then POST /pay/consultation on RDV tarif=10000 → payment.commission=1000, commission_rate=0.10, pro_amount=9000 ✓. Admin PATCH {premium:true, premium_until=+30d} → /auth/me confirms premium=True, then new /pay/consultation on RDV tarif=10000 → commission=500, commission_rate=0.05, pro_amount=9500 ✓. (5) GET /api/pro/revenus → 200 with ALL required fields {total_brut_fcfa, total_commission_fcfa, total_net_fcfa, pending_count, pending_fcfa, monthly:[], recent:[], is_premium:true, current_commission_rate:0.05, premium_rate:0.05, standard_rate:0.10}; all numeric fields are non-null ints/floats; monthly+recent are arrays. (6) GET /api/plans (public) → plans.professionnel.features contains 'Commission réduite : 5% au lieu de 10%' exactly; plans.professionnel.free_limits = 'Gratuit : 10 patientes max · commission 10% sur chaque consultation payée' (mentions both commission 10% and consultations payées). Test data cleaned up (prestations deleted, pro premium reset to false). No regressions. NOTE: spotted a pre-existing bug unrelated to this review — GET /api/pro/patients (server.py L1003-L1022) references `rdvs` variable that is never defined in the function body (was likely dropped during a refactor), but this endpoint was not part of the current review scope and no quota/commission test exercises it."
   - agent: "testing"
     message: "Famille Premium plan + Freemium quotas — 32/32 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_famille_quotas.py). (1) GET /api/plans (public, no auth) → 200 now returns 4 role-plans {maman, professionnel, centre_sante, famille}. plans.famille = {code:'famille', label:'Famille Premium', base_price_fcfa:1500, icon:'people-circle'} ✓. (2) Login papa1@test.com/Papa123! (note: review spec says papa@test.com, but the seeded account is papa1@test.com per /app/memory/test_credentials.md — login OK with role=famille). GET /api/plans/me → plan.code='famille', quotes[m=1].amount=1500. POST /api/pay/subscribe {months:1} as famille → payment.amount=1500, payment.plan='famille', payment.role='famille'. (3) Enfants quota: seeded maman@test.com is currently premium=true, so a fresh non-premium maman was registered (test.quota.<uuid>@test.com). Cleared pre-existing enfants, POST 2 enfants returned 200, 3rd POST /api/enfants → 402 with detail = {error:'quota_exceeded', message:'Quota gratuit atteint : enfants (2 max). Passez Premium pour continuer.', quota:'enfants_max', limit:2, upgrade_url:'/premium'} — matches the required consistent error format exactly. (4) RDV quota logic: created a fresh non-premium maman, 2 POST /rdv under the 10-per-month limit returned 200 each (quota logic path exercised server.py L578-585; full limit not hit per instructions). (5) Regression: admin klenakan.eric@gmail.com → GET /api/plans/me 200 with plan=null and quotes=[]; maman /pay/subscribe m=1 → amount=2000, pro → amount=10000, centre → amount=25000, all successful. No issues found."
+  - agent: "testing"
+    message: |
+      Phase 3 AES-256-GCM at-rest encryption — 96/97 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_phase3_encryption.py).
+
+      ✅ CASE 1 CMU round-trip (20/20): API returns clear numero/nom_complet/beneficiaires; DB stores all as 'enc_v1:…' ciphertext (different from plaintext); numero_hash present (16 hex chars); date_validite stored clear.
+      ✅ CASE 2 Enfant (13/13): numero_cmu + allergies encrypted in DB, groupe_sanguin clear; POST/GET/PATCH/croissance-oms all return clear values.
+      ✅ CASE 3 Tele-echo (18/18): image_base64 + conclusion + commentaires_medicaux encrypted in DB; bpd_mm numeric clear; rdv_id clear; maman + pro GET both return clear values.
+      ✅ CASE 4 Consultation notes (12/12): diagnostic + traitement + notes encrypted in DB; GET /pro/dossier/{id} returns clear.
+      ✅ CASE 5 RDV CMU pricing (7/8): rdv.cmu_applique=true, rdv.cmu_numero='0102030405' (correctly decrypted from maman's encrypted cmu during rdv creation). One sub-assertion FAILED — see bug below.
+      ✅ CASE 6 Legacy plaintext fallback (4/4): inserted legacy enfant with plain numero_cmu='LEGACY123' + allergies=['legacy_plaintext'] → GET /enfants returns as-is (decrypt passes through when no 'enc_v1:' prefix).
+      ✅ CASE 7 ENCRYPTION_KEY persistence (3/3): exactly 1 entry in /app/backend/.env, valid urlsafe base64, decodes to 32 bytes.
+      ✅ CASE 8 Regression (14/14): 4 roles login+me 200; /resources, /professionnels, /rdv, /enfants/{id}/croissance-oms 200; /admin/cmu/stats returns total_mamans, mamans_avec_cmu=1 (the $exists:true query still counts correctly), total_pros, pros_acceptant_cmu.
+
+      ❌ CRITICAL BUG — /pro/facturation-cmu leaks ciphertext instead of clear CMU number.
+      Endpoint /pro/facturation-cmu (server.py L1515-1541) and /pro/facturation-cmu/csv (L1544-1573) enrich each rdv by reading `users.cmu.numero` directly from the users collection (L1529 + L1534 + L1565). Since Phase 3 encrypts users.cmu.numero at rest, the response now returns `rdvs[].numero_cmu = 'enc_v1:G8+6IfjFm8Qi…'` (raw ciphertext) instead of '0102030405', and the CSV "Numero CMU" column contains the same ciphertext. This BLOCKS CNAM facturation for pros.
+      FIX (recommended): replace L1534 `r["numero_cmu"] = (m.get("cmu") or {}).get("numero")` with `r["numero_cmu"] = r.get("cmu_numero")` and L1565 `(m.get("cmu") or {}).get("numero", "")` with `r.get("cmu_numero", "")`. rdv.cmu_numero is already stored CLEAR on rdv creation (server.py L813) and is the single source of truth for facturation. The users-collection join can then be used only for `maman_nom`.
+      Alternative: call decrypt_cmu_dict(m.get("cmu")) before reading numero.
+
+      Side note (not a regression): PATCH /enfants/{id} uses EnfantIn (required: nom/date_naissance/sexe) so partial PATCH with only {numero_cmu} fails 422. Encryption logic in PATCH verified OK when all required fields are sent. Consider an EnfantPatchIn with all-optional fields for future cleanup.
+
+      Cleanup: enfants, tele_echo, consultation_notes, prestations, rdv removed; maman CMU deleted; pro.accepte_cmu reset to false. Script idempotent.

@@ -1,6 +1,15 @@
 from dotenv import load_dotenv
 from pathlib import Path
 
+# Load .env first so ENCRYPTION_KEY is available
+load_dotenv("/app/backend/.env")
+
+from encryption import (
+    encrypt_str, decrypt_str, encrypt_list, decrypt_list,
+    encrypt_cmu_dict, decrypt_cmu_dict, decrypt_enfant,
+    decrypt_tele_echo, decrypt_consultation_note,
+)
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -525,7 +534,8 @@ async def update_grossesse(gid: str, payload: GrossesseIn, user=Depends(require_
 @api.get("/enfants")
 async def list_enfants(user=Depends(require_roles("maman"))):
     items = await db.enfants.find({"user_id": user["id"]}, {"_id": 0}).to_list(100)
-    return items
+    # 🔐 Déchiffrer numero_cmu + allergies
+    return [decrypt_enfant(e) for e in items]
 
 
 @api.post("/enfants/{eid}/mesures")
@@ -535,7 +545,8 @@ async def add_mesure(eid: str, payload: MesureIn, user=Depends(require_roles("ma
         {"id": eid, "user_id": user["id"]},
         {"$push": {"mesures": mesure}},
     )
-    return await db.enfants.find_one({"id": eid}, {"_id": 0})
+    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    return decrypt_enfant(e)
 
 
 @api.post("/enfants/{eid}/photo")
@@ -544,32 +555,45 @@ async def set_enfant_photo(eid: str, payload: PhotoIn, user=Depends(require_role
         {"id": eid, "user_id": user["id"]},
         {"$set": {"photo": payload.photo_base64}},
     )
-    return await db.enfants.find_one({"id": eid}, {"_id": 0})
+    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    return decrypt_enfant(e)
 
 
 @api.post("/enfants")
 async def create_enfant(payload: EnfantIn, user=Depends(require_roles("maman"))):
     current = await db.enfants.count_documents({"user_id": user["id"]})
     await check_quota(user, "enfants_max", current)
+    data = payload.dict()
+    # 🔐 Chiffrer les champs sensibles avant insertion
+    if data.get("numero_cmu"):
+        data["numero_cmu"] = encrypt_str(data["numero_cmu"])
+    if isinstance(data.get("allergies"), list):
+        data["allergies"] = encrypt_list(data["allergies"])
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
-        **payload.dict(),
+        **data,
         "vaccins": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.enfants.insert_one(doc)
     doc.pop("_id", None)
-    return doc
+    return decrypt_enfant(doc)
 
 
 @api.patch("/enfants/{eid}")
 async def update_enfant(eid: str, payload: EnfantIn, user=Depends(require_roles("maman"))):
+    data = payload.dict(exclude_unset=True)
+    if "numero_cmu" in data and data["numero_cmu"]:
+        data["numero_cmu"] = encrypt_str(data["numero_cmu"])
+    if "allergies" in data and isinstance(data["allergies"], list):
+        data["allergies"] = encrypt_list(data["allergies"])
     await db.enfants.update_one(
         {"id": eid, "user_id": user["id"]},
-        {"$set": payload.dict(exclude_unset=True)},
+        {"$set": data},
     )
-    return await db.enfants.find_one({"id": eid}, {"_id": 0})
+    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    return decrypt_enfant(e)
 
 
 @api.delete("/enfants/{eid}")
@@ -663,9 +687,10 @@ def _classify(value: float, p3, p15, p50, p85, p97) -> str:
 
 @api.get("/enfants/{eid}/croissance-oms")
 async def croissance_oms(eid: str, user=Depends(require_roles("maman"))):
-    enfant = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
-    if not enfant:
+    enfant_raw = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    if not enfant_raw:
         raise HTTPException(404, "Enfant introuvable")
+    enfant = decrypt_enfant(enfant_raw)  # 🔐 déchiffrer numero_cmu avant exposition
     sexe = enfant.get("sexe", "M")
     born = enfant.get("date_naissance")
     mesures = enfant.get("mesures") or []
@@ -760,8 +785,10 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
     cmu_montant = 0
     reste_a_charge = tarif_fcfa
     maman_cmu = (user.get("cmu") or {}) if isinstance(user.get("cmu"), dict) else {}
+    # 🔐 Déchiffrer pour la logique (statut + numero à copier sur le rdv)
+    maman_cmu_clear = decrypt_cmu_dict(maman_cmu)
     pro_accepte = bool(pro.get("accepte_cmu"))
-    cmu_status = cmu_statut(maman_cmu)
+    cmu_status = cmu_statut(maman_cmu_clear)
     if prestation and prestation.get("cmu_prise_en_charge") and pro_accepte and cmu_status == "actif":
         cmu_taux = float(prestation.get("cmu_taux", 0.70))
         cmu_montant = int(round(tarif_fcfa * cmu_taux))
@@ -782,7 +809,8 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "cmu_taux": cmu_taux,
         "cmu_montant_fcfa": cmu_montant,
         "reste_a_charge_fcfa": reste_a_charge,
-        "cmu_numero": maman_cmu.get("numero") if cmu_applique else None,
+        # Note : on stocke le numéro CMU en clair sur le RDV car c'est nécessaire pour la facturation à la CNAM (visible par le Pro)
+        "cmu_numero": maman_cmu_clear.get("numero") if cmu_applique else None,
         "paye": False,
         "status": "en_attente",
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1217,7 +1245,8 @@ async def pro_dossier(patient_id: str, user=Depends(require_roles("professionnel
     gross = await db.grossesses.find_one({"user_id": patient_id, "active": True}, {"_id": 0})
     enfants = await db.enfants.find({"user_id": patient_id}, {"_id": 0}).to_list(100)
     rdvs = await db.rdv.find({"maman_id": patient_id, "pro_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(100)
-    notes = await db.consultation_notes.find({"patient_id": patient_id, "pro_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(200)
+    notes_raw = await db.consultation_notes.find({"patient_id": patient_id, "pro_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(200)
+    notes = [decrypt_consultation_note(n) for n in notes_raw]
     return {
         "patient": patient,
         "grossesse": gross,
@@ -1246,14 +1275,15 @@ async def create_consultation_note(payload: ConsultationNoteIn, user=Depends(req
         "pro_name": user.get("name"),
         "patient_id": payload.patient_id,
         "date": payload.date or datetime.now(timezone.utc).isoformat(),
-        "diagnostic": payload.diagnostic,
-        "traitement": payload.traitement,
-        "notes": payload.notes,
+        # 🔐 Chiffrement AES-256-GCM
+        "diagnostic": encrypt_str(payload.diagnostic) if payload.diagnostic else payload.diagnostic,
+        "traitement": encrypt_str(payload.traitement) if payload.traitement else payload.traitement,
+        "notes": encrypt_str(payload.notes) if payload.notes else payload.notes,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.consultation_notes.insert_one(doc)
     doc.pop("_id", None)
-    return doc
+    return decrypt_consultation_note(doc)
 
 
 @api.delete("/pro/consultation-notes/{note_id}")
@@ -1435,7 +1465,8 @@ async def get_my_cmu(user=Depends(get_current_user)):
     if user.get("role") not in ("maman", "famille"):
         raise HTTPException(403, "CMU réservé aux mamans et familles")
     cmu = user.get("cmu") or {}
-    return {"cmu": cmu, "statut": cmu_statut(cmu)}
+    cmu_clear = decrypt_cmu_dict(cmu)
+    return {"cmu": cmu_clear, "statut": cmu_statut(cmu_clear)}
 
 
 @api.post("/cmu/me")
@@ -1445,7 +1476,7 @@ async def set_my_cmu(payload: CMUIn, user=Depends(get_current_user)):
     numero = (payload.numero or "").strip().replace(" ", "")
     if not numero.isdigit() or len(numero) not in (10, 12):
         raise HTTPException(400, "Numéro CMU invalide (10 ou 12 chiffres attendus)")
-    doc = {
+    clear_doc = {
         "numero": numero,
         "nom_complet": payload.nom_complet.strip(),
         "date_delivrance": payload.date_delivrance,
@@ -1453,11 +1484,15 @@ async def set_my_cmu(payload: CMUIn, user=Depends(get_current_user)):
         "photo_recto": payload.photo_recto,
         "photo_verso": payload.photo_verso,
         "beneficiaires": [b.dict() for b in (payload.beneficiaires or [])],
-        "verifie": False,  # pas d'API d'État : non vérifié
+        "verifie": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.users.update_one({"id": user["id"]}, {"$set": {"cmu": doc}})
-    return {"cmu": doc, "statut": cmu_statut(doc)}
+    # 🔐 Chiffrement AES-256-GCM au repos
+    import hashlib as _hl
+    enc_doc = encrypt_cmu_dict(clear_doc)
+    enc_doc["numero_hash"] = _hl.sha256(numero.encode()).hexdigest()[:16]
+    await db.users.update_one({"id": user["id"]}, {"$set": {"cmu": enc_doc}})
+    return {"cmu": clear_doc, "statut": cmu_statut(clear_doc)}
 
 
 @api.delete("/cmu/me")
@@ -2108,10 +2143,11 @@ async def upload_echo(payload: TeleEchoIn, user=Depends(require_roles("professio
         "maman_id": rdv["maman_id"],
         "pro_id": user["id"],
         "pro_name": user["name"],
-        "image_base64": payload.image_base64,
+        # 🔐 Champs sensibles chiffrés au repos AES-256-GCM
+        "image_base64": encrypt_str(payload.image_base64) if payload.image_base64 else None,
         "description": payload.description,
         "semaine_grossesse": payload.semaine_grossesse,
-        # Rapport structuré
+        # Rapport structuré (numérique = pas chiffré)
         "bpd_mm": payload.bpd_mm,
         "fl_mm": payload.fl_mm,
         "cc_mm": payload.cc_mm,
@@ -2121,8 +2157,8 @@ async def upload_echo(payload: TeleEchoIn, user=Depends(require_roles("professio
         "placenta_position": payload.placenta_position,
         "sexe_foetal": payload.sexe_foetal,
         "battements_cardiaques_bpm": payload.battements_cardiaques_bpm,
-        "commentaires_medicaux": payload.commentaires_medicaux,
-        "conclusion": payload.conclusion,
+        "commentaires_medicaux": encrypt_str(payload.commentaires_medicaux) if payload.commentaires_medicaux else None,
+        "conclusion": encrypt_str(payload.conclusion) if payload.conclusion else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.tele_echo.insert_one(doc)
@@ -2133,7 +2169,7 @@ async def upload_echo(payload: TeleEchoIn, user=Depends(require_roles("professio
         f"Dr. {user['name']} a partagé un rapport (semaine {payload.semaine_grossesse or '?'})",
         "info",
     )
-    return doc
+    return decrypt_tele_echo(doc)
 
 
 @api.get("/tele-echo")
@@ -2142,7 +2178,7 @@ async def list_echos(user=Depends(get_current_user)):
         {"pro_id": user["id"]} if user["role"] == "professionnel" else {}
     )
     items = await db.tele_echo.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return items
+    return [decrypt_tele_echo(e) for e in items]
 
 
 @api.get("/tele-echo/rdv/{rdv_id}")
@@ -2150,7 +2186,7 @@ async def echos_for_rdv(rdv_id: str, user=Depends(get_current_user)):
     items = await db.tele_echo.find({"rdv_id": rdv_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
     if items and user["id"] not in [items[0]["maman_id"], items[0]["pro_id"]] and user["role"] != "admin":
         raise HTTPException(403, "Accès refusé")
-    return items
+    return [decrypt_tele_echo(e) for e in items]
 
 
 # ----------------------------------------------------------------------
