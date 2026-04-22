@@ -2,10 +2,12 @@ import { Tabs, Redirect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../lib/auth";
 import { COLORS } from "../../constants/theme";
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function TabsLayout() {
   const { user, loading } = useAuth();
+  const insets = useSafeAreaInsets();
 
   if (loading) {
     return (
@@ -22,6 +24,10 @@ export default function TabsLayout() {
   const isCentre = user.role === "centre_sante";
   const isFamille = user.role === "famille";
 
+  // Android edge-to-edge : ajouter le padding bottom = inset safe area
+  const bottomPad = Platform.OS === "web" ? 8 : Math.max(insets.bottom, 8);
+  const tabBarHeight = 58 + bottomPad;
+
   return (
     <Tabs
       screenOptions={{
@@ -31,13 +37,16 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: COLORS.surface,
           borderTopColor: COLORS.border,
-          height: 68,
-          paddingBottom: 10,
+          borderTopWidth: 1,
+          height: tabBarHeight,
+          paddingBottom: bottomPad,
           paddingTop: 6,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: "700", marginBottom: 2 },
+        tabBarItemStyle: { paddingVertical: 2 },
       }}
     >
+      {/* --------- Accueil (tous rôles) --------- */}
       <Tabs.Screen
         name="index"
         options={{
@@ -45,6 +54,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
         }}
       />
+
+      {/* --------- Maman : Grossesse --------- */}
       <Tabs.Screen
         name="grossesse"
         options={{
@@ -53,6 +64,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
         }}
       />
+
+      {/* --------- Maman : Enfants --------- */}
       <Tabs.Screen
         name="enfants"
         options={{
@@ -61,14 +74,18 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="people" size={size} color={color} />,
         }}
       />
+
+      {/* --------- Pro/Centre : Patients --------- */}
       <Tabs.Screen
         name="patients"
         options={{
-          title: "Pros",
+          title: "Patients",
           href: isPro || isCentre ? "/(tabs)/patients" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="medkit" size={size} color={color} />,
         }}
       />
+
+      {/* --------- Maman/Pro/Centre : RDV --------- */}
       <Tabs.Screen
         name="rdv"
         options={{
@@ -77,6 +94,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} />,
         }}
       />
+
+      {/* --------- Admin : Admin --------- */}
       <Tabs.Screen
         name="admin"
         options={{
@@ -85,30 +104,28 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="analytics" size={size} color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="communaute"
-        options={{
-          title: "Communauté",
-          href: isAdmin ? null : "/(tabs)/communaute",
-          tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="assistant"
-        options={{
-          title: "IA",
-          href: isAdmin ? null : "/(tabs)/assistant",
-          tabBarIcon: ({ color, size }) => <Ionicons name="sparkles" size={size} color={color} />,
-        }}
-      />
+
+      {/* --------- Messages : Pro uniquement dans la tab bar (Maman via dashboard) --------- */}
       <Tabs.Screen
         name="messages"
         options={{
           title: "Messages",
-          href: isAdmin ? null : "/(tabs)/messages",
+          href: isPro ? "/(tabs)/messages" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="mail" size={size} color={color} />,
         }}
       />
+
+      {/* --------- Onglets cachés mais routes conservées (accessibles depuis dashboard / profil) --------- */}
+      <Tabs.Screen
+        name="communaute"
+        options={{ title: "Communauté", href: null }}
+      />
+      <Tabs.Screen
+        name="assistant"
+        options={{ title: "IA", href: null }}
+      />
+
+      {/* --------- Profil (tous rôles) --------- */}
       <Tabs.Screen
         name="profil"
         options={{
