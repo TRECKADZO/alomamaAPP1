@@ -51,6 +51,11 @@ export default function Register() {
     email_contact: "",
   });
   const [loading, setLoading] = useState(false);
+  // Consentement
+  const [accepteCgu, setAccepteCgu] = useState(false);
+  const [acceptePolitique, setAcceptePolitique] = useState(false);
+  const [accepteDonneesSante, setAccepteDonneesSante] = useState(false);
+  const [accepteComms, setAccepteComms] = useState(false);
 
   const update = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -75,6 +80,15 @@ export default function Register() {
       Alert.alert("Champ requis", "Nom du centre obligatoire");
       return;
     }
+    // Consentement
+    if (!accepteCgu || !acceptePolitique) {
+      Alert.alert("Consentement requis", "Vous devez accepter les CGU et la Politique de Confidentialité pour créer votre compte.");
+      return;
+    }
+    if ((role === "maman" || role === "professionnel" || role === "centre_sante") && !accepteDonneesSante) {
+      Alert.alert("Consentement santé requis", "Les rôles Maman, Professionnel et Centre nécessitent le consentement au traitement des données de santé.");
+      return;
+    }
     setLoading(true);
     try {
       await register({
@@ -92,6 +106,10 @@ export default function Register() {
         ville: form.ville || undefined,
         region: form.region || undefined,
         email_contact: role === "centre_sante" ? form.email_contact : undefined,
+        accepte_cgu: accepteCgu,
+        accepte_politique_confidentialite: acceptePolitique,
+        accepte_donnees_sante: accepteDonneesSante,
+        accepte_communications: accepteComms,
       } as any);
       router.replace("/(tabs)");
     } catch (e) {
@@ -271,6 +289,43 @@ export default function Register() {
             </>
           )}
 
+          <View style={styles.consentBox}>
+            <Text style={styles.consentTitle}>✅ Consentement requis</Text>
+            <ConsentRow
+              checked={accepteCgu}
+              onToggle={() => setAccepteCgu((v) => !v)}
+              testID="chk-cgu"
+            >
+              J'accepte les{" "}
+              <Text style={styles.consentLink} onPress={() => router.push("/cgu")}>Conditions Générales d'Utilisation</Text>
+            </ConsentRow>
+            <ConsentRow
+              checked={acceptePolitique}
+              onToggle={() => setAcceptePolitique((v) => !v)}
+              testID="chk-politique"
+            >
+              J'accepte la{" "}
+              <Text style={styles.consentLink} onPress={() => router.push("/privacy")}>Politique de Confidentialité</Text>
+            </ConsentRow>
+            {(role === "maman" || role === "professionnel" || role === "centre_sante") && (
+              <ConsentRow
+                checked={accepteDonneesSante}
+                onToggle={() => setAccepteDonneesSante((v) => !v)}
+                testID="chk-sante"
+              >
+                J'autorise le traitement sécurisé de mes données de santé (grossesse, enfants, CMU, consultations) conformément à la loi ivoirienne n°2013-450
+              </ConsentRow>
+            )}
+            <ConsentRow
+              checked={accepteComms}
+              onToggle={() => setAccepteComms((v) => !v)}
+              testID="chk-comms"
+              optional
+            >
+              Je souhaite recevoir des rappels et conseils santé (optionnel)
+            </ConsentRow>
+          </View>
+
           <TouchableOpacity style={styles.btnPrimary} onPress={handleRegister} disabled={loading} testID="register-submit-btn">
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Créer mon compte</Text>}
           </TouchableOpacity>
@@ -298,6 +353,22 @@ function Field({ label, icon, children }: { label: string; icon: any; children: 
         {children}
       </View>
     </View>
+  );
+}
+
+function ConsentRow({ checked, onToggle, children, testID, optional }: {
+  checked: boolean; onToggle: () => void; children: React.ReactNode; testID?: string; optional?: boolean;
+}) {
+  return (
+    <TouchableOpacity style={styles.consentRow} onPress={onToggle} testID={testID} activeOpacity={0.7}>
+      <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+        {checked && <Ionicons name="checkmark" size={14} color="#fff" />}
+      </View>
+      <Text style={styles.consentText}>
+        {children}
+        {optional && <Text style={styles.consentOptional}>  (optionnel)</Text>}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
@@ -335,4 +406,13 @@ const styles = StyleSheet.create({
   footerRow: { flexDirection: "row", justifyContent: "center", marginTop: SPACING.lg },
   footerText: { color: COLORS.textSecondary },
   footerLink: { color: COLORS.primary, fontWeight: "700" },
+  // Consentement
+  consentBox: { marginTop: SPACING.lg, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, gap: 10 },
+  consentTitle: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary, marginBottom: 4 },
+  consentRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  checkbox: { width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: COLORS.border, alignItems: "center", justifyContent: "center", marginTop: 1 },
+  checkboxChecked: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  consentText: { flex: 1, fontSize: 12, color: COLORS.textSecondary, lineHeight: 18 },
+  consentOptional: { color: COLORS.textMuted, fontSize: 11, fontStyle: "italic" },
+  consentLink: { color: COLORS.primary, fontWeight: "700", textDecorationLine: "underline" },
 });

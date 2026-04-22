@@ -245,7 +245,37 @@ frontend:
         comment: "Nouvelle route /famille. Création groupe avec code partage 6 chars, partage natif via Share API, rejoindre avec code+relation, gestion des membres (accepter/refuser/supprimer), permissions granulaires (7 catégories) via toggles."
 
 backend:
-  - task: "CMU (Couverture Maladie Universelle) — profils maman, accept pro, tarification RDV"
+  - task: "Module Ressources éducatives (vidéos, fiches, quiz) + Consentement RGPD"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          **Consentement RGPD à l'inscription** (loi ivoirienne n°2013-450) :
+          - `RegisterIn` étendu avec `accepte_cgu`, `accepte_politique_confidentialite`, `accepte_donnees_sante`, `accepte_communications`.
+          - `/auth/register` renvoie 400 si CGU ou Politique non acceptées; pour rôles maman/pro/centre, `accepte_donnees_sante` obligatoire.
+          - Consentement journalisé sur user : `consent_version=1.0`, `consent_accepted_at`, 4 booléens.
+          - Tests manuels : PASS. (1) Register sans consent→400 "Vous devez accepter les CGU". (2) Register sans donnees_sante pour maman→400. (3) Register complet→token+user retournés avec succès.
+
+          **Module Ressources éducatives** (`/api/resources/*`) :
+          - Schémas : `ResourceIn` (type=video|fiche|quiz, category, video_url, content_md, questions[]), `ResourcePatch`, `QuizQuestion`, `QuizSubmitIn`.
+          - 10 endpoints : GET /resources (filtres type/category/q), GET /resources/{id} (incrément vues, masque correct_index pour non-admin), POST /resources (admin/pro), PATCH/DELETE (auteur ou admin), POST /resources/{id}/like, POST /resources/{id}/quiz-submit (retourne score_pct + results avec explications), GET /resources/me/quiz-history, GET /resources/meta/categories.
+          - Validation POST : type video→video_url obligatoire, type fiche→content_md, type quiz→≥1 question avec ≥2 options et correct_index valide.
+          - **8 ressources seedées automatiquement au démarrage** : 4 fiches (consultations prénatales OMS, calendrier vaccinal PEV Côte d'Ivoire, allaitement exclusif OMS, nutrition grossesse), 2 vidéos YouTube (UNICEF allaitement, OMS signes d'alarme), 2 quiz (grossesse 5Q, vaccination 3Q).
+
+          **Frontend** :
+          - `/ressources` (index) — liste paginée avec recherche + filtres Type (tous/vidéos/fiches/quiz) + 10 Catégories (Grossesse, Allaitement, Nutrition, Vaccination, etc.).
+          - `/ressources/[id]` — détail polymorphe : vidéo YouTube (iframe web / WebView natif), fiche Markdown (renderer custom sans dépendance : H1-H3, listes, gras **, citations), quiz interactif (choix multiples + scoring + review avec bonnes réponses + explications).
+          - `/cgu` et `/privacy` — pages statiques lisibles.
+          - `/register` — 4 checkboxes de consentement (CGU, Politique, Données santé conditionnel au rôle, Communications optionnel) avec liens vers /cgu et /privacy.
+          - Dashboard maman : QuickAction "Ressources" ajoutée.
+
+          À tester : tout le parcours CGU/Politique depuis register, filtrage ressources, soumission quiz avec scoring.
     implemented: true
     working: true
     file: "/app/backend/server.py"

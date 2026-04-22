@@ -174,6 +174,11 @@ class RegisterIn(BaseModel):
     email_contact: Optional[str] = None
     # Pro/Maman optional
     code_invitation_centre: Optional[str] = None
+    # Consentement (RGPD + Côte d'Ivoire)
+    accepte_cgu: bool = False
+    accepte_politique_confidentialite: bool = False
+    accepte_donnees_sante: bool = False  # requis pour maman/pro/centre
+    accepte_communications: bool = False  # opt-in newsletter (optionnel)
 
 
 class LoginIn(BaseModel):
@@ -330,6 +335,14 @@ async def register(payload: RegisterIn):
     if not payload.email and not payload.phone:
         raise HTTPException(status_code=400, detail="Email ou téléphone requis")
 
+    # Consentement obligatoire
+    if not payload.accepte_cgu:
+        raise HTTPException(status_code=400, detail="Vous devez accepter les Conditions Générales d'Utilisation")
+    if not payload.accepte_politique_confidentialite:
+        raise HTTPException(status_code=400, detail="Vous devez accepter la Politique de Confidentialité")
+    if payload.role in ("maman", "professionnel", "centre_sante") and not payload.accepte_donnees_sante:
+        raise HTTPException(status_code=400, detail="Le traitement des données de santé nécessite votre consentement explicite")
+
     email = payload.email.lower().strip() if payload.email else None
     phone = _normalize_phone(payload.phone) if payload.phone else None
 
@@ -344,6 +357,7 @@ async def register(payload: RegisterIn):
     user_id = str(uuid.uuid4())
     # Si pas d'email, en synthétiser un pour la clé interne (login email)
     internal_email = email or f"{phone.replace('+', '')}@phone.alomaman.local"
+    now_iso = datetime.now(timezone.utc).isoformat()
     doc = {
         "id": user_id,
         "email": internal_email,
@@ -356,7 +370,14 @@ async def register(payload: RegisterIn):
         "ville": payload.ville,
         "region": payload.region,
         "avatar": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": now_iso,
+        # Consentement journalisé
+        "consent_version": "1.0",
+        "consent_accepted_at": now_iso,
+        "consent_cgu": True,
+        "consent_politique": True,
+        "consent_donnees_sante": bool(payload.accepte_donnees_sante),
+        "consent_communications": bool(payload.accepte_communications),
     }
     await db.users.insert_one(doc)
 
@@ -1411,6 +1432,227 @@ async def admin_cmu_stats(user=Depends(require_roles("admin"))):
 
 
 # ----------------------------------------------------------------------
+# Ressources éducatives (Vidéos, Fiches, Quiz) — validées par OMS/UNICEF/MSHP-CI
+# ----------------------------------------------------------------------
+# Catégories : grossesse | accouchement | allaitement | post_partum | nutrition
+#            | vaccination | planification_familiale | sante_enfant | hygiene | general
+RESOURCE_CATEGORIES = [
+    "grossesse", "accouchement", "allaitement", "post_partum", "nutrition",
+    "vaccination", "planification_familiale", "sante_enfant", "hygiene", "general",
+]
+
+class QuizQuestion(BaseModel):
+    question: str
+    options: List[str]  # 2-6 options
+    correct_index: int
+    explication: Optional[str] = None
+
+class ResourceIn(BaseModel):
+    type: str  # video | fiche | quiz
+    title: str = Field(min_length=3, max_length=200)
+    description: Optional[str] = None
+    category: str = "general"
+    # pour video
+    video_url: Optional[str] = None  # YouTube, Vimeo, lien direct
+    duration_sec: Optional[int] = None
+    # pour fiche
+    content_md: Optional[str] = None  # Markdown (ou texte)
+    cover_image: Optional[str] = None  # URL ou base64
+    # pour quiz
+    questions: List[QuizQuestion] = []
+    # méta
+    tags: List[str] = []
+    source: Optional[str] = None  # "OMS", "UNICEF", "MSHP-CI"
+    author_name: Optional[str] = None
+    published: bool = True
+    langue: str = "fr"
+
+class ResourcePatch(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    video_url: Optional[str] = None
+    content_md: Optional[str] = None
+    cover_image: Optional[str] = None
+    questions: Optional[List[QuizQuestion]] = None
+    tags: Optional[List[str]] = None
+    source: Optional[str] = None
+    published: Optional[bool] = None
+    langue: Optional[str] = None
+
+
+@api.get("/resources")
+async def list_resources(
+    user=Depends(get_current_user),
+    type: Optional[str] = None,
+    category: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 100,
+):
+    query: dict = {"published": True}
+    if type in ("video", "fiche", "quiz"):
+        query["type"] = type
+    if category and category != "toutes":
+        query["category"] = category
+    if q:
+        query["$or"] = [
+            {"title": {"$regex": q, "$options": "i"}},
+            {"description": {"$regex": q, "$options": "i"}},
+            {"tags": {"$in": [q.lower()]}},
+        ]
+    projection = {"_id": 0, "content_md": 0, "questions": 0}  # léger en liste
+    items = await db.resources.find(query, projection).sort("created_at", -1).to_list(min(limit, 300))
+    return items
+
+
+@api.get("/resources/{rid}")
+async def get_resource(rid: str, user=Depends(get_current_user)):
+    r = await db.resources.find_one({"id": rid}, {"_id": 0})
+    if not r or not r.get("published"):
+        raise HTTPException(404, "Ressource introuvable")
+    # Ne pas exposer la réponse correcte sur le GET (quiz)
+    if r.get("type") == "quiz" and not user.get("role") == "admin":
+        for q in (r.get("questions") or []):
+            q.pop("correct_index", None)
+            q.pop("explication", None)
+    # Incrémenter vues
+    await db.resources.update_one({"id": rid}, {"$inc": {"views": 1}})
+    return r
+
+
+@api.post("/resources")
+async def create_resource(payload: ResourceIn, user=Depends(require_roles("admin", "professionnel"))):
+    if payload.type not in ("video", "fiche", "quiz"):
+        raise HTTPException(400, "Type invalide (video | fiche | quiz)")
+    if payload.category not in RESOURCE_CATEGORIES:
+        raise HTTPException(400, f"Catégorie invalide. Choix : {', '.join(RESOURCE_CATEGORIES)}")
+    if payload.type == "video" and not payload.video_url:
+        raise HTTPException(400, "video_url requis pour une vidéo")
+    if payload.type == "fiche" and not payload.content_md:
+        raise HTTPException(400, "content_md requis pour une fiche")
+    if payload.type == "quiz":
+        if not payload.questions or len(payload.questions) < 1:
+            raise HTTPException(400, "Au moins 1 question requise pour un quiz")
+        for q in payload.questions:
+            if len(q.options) < 2:
+                raise HTTPException(400, "Chaque question doit avoir au moins 2 options")
+            if q.correct_index < 0 or q.correct_index >= len(q.options):
+                raise HTTPException(400, "Index correct hors limites")
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.dict(),
+        "author_id": user["id"],
+        "author_role": user.get("role"),
+        "views": 0,
+        "likes": [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not doc.get("author_name"):
+        doc["author_name"] = user.get("name")
+    await db.resources.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/resources/{rid}")
+async def update_resource(rid: str, payload: ResourcePatch, user=Depends(get_current_user)):
+    r = await db.resources.find_one({"id": rid})
+    if not r:
+        raise HTTPException(404, "Ressource introuvable")
+    # Admin = tout, pro = uniquement ses ressources
+    if user.get("role") not in ("admin",) and r.get("author_id") != user["id"]:
+        raise HTTPException(403, "Vous ne pouvez modifier que vos propres ressources")
+    data = {k: v for k, v in payload.dict().items() if v is not None}
+    if "category" in data and data["category"] not in RESOURCE_CATEGORIES:
+        raise HTTPException(400, "Catégorie invalide")
+    if data:
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.resources.update_one({"id": rid}, {"$set": data})
+    return await db.resources.find_one({"id": rid}, {"_id": 0})
+
+
+@api.delete("/resources/{rid}")
+async def delete_resource(rid: str, user=Depends(get_current_user)):
+    r = await db.resources.find_one({"id": rid})
+    if not r:
+        raise HTTPException(404, "Ressource introuvable")
+    if user.get("role") != "admin" and r.get("author_id") != user["id"]:
+        raise HTTPException(403, "Vous ne pouvez supprimer que vos propres ressources")
+    await db.resources.delete_one({"id": rid})
+    return {"ok": True}
+
+
+@api.post("/resources/{rid}/like")
+async def like_resource(rid: str, user=Depends(get_current_user)):
+    r = await db.resources.find_one({"id": rid})
+    if not r:
+        raise HTTPException(404, "Ressource introuvable")
+    if user["id"] in (r.get("likes") or []):
+        await db.resources.update_one({"id": rid}, {"$pull": {"likes": user["id"]}})
+        return {"liked": False}
+    await db.resources.update_one({"id": rid}, {"$push": {"likes": user["id"]}})
+    return {"liked": True}
+
+
+class QuizSubmitIn(BaseModel):
+    answers: List[int]  # une réponse (index) par question
+
+
+@api.post("/resources/{rid}/quiz-submit")
+async def submit_quiz(rid: str, payload: QuizSubmitIn, user=Depends(get_current_user)):
+    r = await db.resources.find_one({"id": rid}, {"_id": 0})
+    if not r or r.get("type") != "quiz":
+        raise HTTPException(404, "Quiz introuvable")
+    questions = r.get("questions") or []
+    if len(payload.answers) != len(questions):
+        raise HTTPException(400, "Nombre de réponses incorrect")
+    results = []
+    correct_count = 0
+    for i, q in enumerate(questions):
+        is_ok = int(payload.answers[i]) == int(q.get("correct_index", -1))
+        if is_ok:
+            correct_count += 1
+        results.append({
+            "question": q.get("question"),
+            "your_answer_index": int(payload.answers[i]),
+            "correct_index": int(q.get("correct_index", -1)),
+            "correct": is_ok,
+            "explication": q.get("explication"),
+        })
+    score_pct = round(100 * correct_count / len(questions)) if questions else 0
+    attempt = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "resource_id": rid,
+        "resource_title": r.get("title"),
+        "score_pct": score_pct,
+        "correct_count": correct_count,
+        "total": len(questions),
+        "answers": payload.answers,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.quiz_attempts.insert_one(attempt)
+    return {
+        "score_pct": score_pct,
+        "correct_count": correct_count,
+        "total": len(questions),
+        "results": results,
+    }
+
+
+@api.get("/resources/me/quiz-history")
+async def my_quiz_history(user=Depends(get_current_user)):
+    items = await db.quiz_attempts.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return items
+
+
+@api.get("/resources/meta/categories")
+async def resource_categories():
+    return {"categories": RESOURCE_CATEGORIES}
+
+
+
+# ----------------------------------------------------------------------
 # Cycle menstruel
 # ----------------------------------------------------------------------
 @api.get("/cycle")
@@ -2419,6 +2661,205 @@ async def startup():
                     "created_at": now,
                 },
             ])
+
+    # Seed educational resources (OMS/UNICEF validated baseline)
+    if await db.resources.count_documents({}) == 0:
+        now = datetime.now(timezone.utc).isoformat()
+        await db.resources.insert_many([
+            {
+                "id": str(uuid.uuid4()),
+                "type": "fiche",
+                "title": "Les 8 consultations prénatales recommandées",
+                "description": "L'OMS recommande au moins 8 contacts prénatals pour réduire la mortalité maternelle et néonatale.",
+                "category": "grossesse",
+                "content_md": "# Les 8 consultations prénatales\n\nSelon les recommandations **OMS 2016**, toute femme enceinte devrait bénéficier de **8 contacts prénatals** minimum :\n\n1. **Avant 12 semaines** — Confirmation grossesse, bilan initial, dépistage\n2. **20 semaines** — Échographie morphologique\n3. **26 semaines** — Dépistage anémie, diabète gestationnel\n4. **30 semaines** — Surveillance tension, croissance fœtale\n5. **34 semaines** — Position du bébé, préparation accouchement\n6. **36 semaines** — Dépistage streptocoque B\n7. **38 semaines** — Évaluation col, terme prévu\n8. **40 semaines** — Surveillance dépassement de terme\n\n> ⚠️ **Côte d'Ivoire** : La CMU prend en charge 100% des consultations prénatales chez les pros partenaires.\n\n## Bilans recommandés\n- Groupe sanguin / Rhésus\n- Sérologies (VIH, hépatite B, syphilis, toxoplasmose, rubéole)\n- NFS, glycémie\n- Albuminurie (urine)\n\n*Source : OMS — Recommandations concernant les soins prénatals 2016*",
+                "source": "OMS",
+                "tags": ["prenatal", "consultation", "oms"],
+                "author_name": "À lo Maman",
+                "author_role": "admin",
+                "published": True,
+                "langue": "fr",
+                "views": 0,
+                "likes": [],
+                "created_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "type": "fiche",
+                "title": "Calendrier vaccinal PEV Côte d'Ivoire",
+                "description": "Calendrier officiel du Programme Élargi de Vaccination (0-5 ans).",
+                "category": "vaccination",
+                "content_md": "# Calendrier vaccinal PEV — Côte d'Ivoire\n\n## À la naissance\n- **BCG** (tuberculose) — dose unique\n- **VPO 0** (polio oral)\n- **Hépatite B** (première dose)\n\n## 6 semaines\n- **Pentavalent 1** (DTC-HepB-Hib)\n- **VPO 1**\n- **PCV 1** (pneumocoque)\n- **Rotavirus 1**\n\n## 10 semaines\n- **Pentavalent 2**, **VPO 2**, **PCV 2**, **Rotavirus 2**\n\n## 14 semaines\n- **Pentavalent 3**, **VPO 3**, **PCV 3**, **VPI** (polio injectable)\n\n## 9 mois\n- **Rougeole 1**\n- **Fièvre jaune**\n\n## 15-18 mois\n- **Rougeole 2**\n\n## 9-14 ans (filles)\n- **HPV** (2 doses à 6 mois d'intervalle)\n\n> 💡 La vaccination est **gratuite** dans tous les centres de santé publics de Côte d'Ivoire.\n\n*Source : Ministère de la Santé et de l'Hygiène Publique / UNICEF Côte d'Ivoire*",
+                "source": "MSHP-CI",
+                "tags": ["vaccination", "pev", "enfant"],
+                "author_name": "À lo Maman",
+                "author_role": "admin",
+                "published": True,
+                "langue": "fr",
+                "views": 0,
+                "likes": [],
+                "created_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "type": "fiche",
+                "title": "Allaitement maternel exclusif : le guide",
+                "description": "Pourquoi et comment allaiter exclusivement jusqu'à 6 mois selon l'OMS.",
+                "category": "allaitement",
+                "content_md": "# Allaitement maternel exclusif\n\nL'**OMS** et l'**UNICEF** recommandent l'allaitement maternel **exclusif** jusqu'à 6 mois, puis poursuivi avec diversification jusqu'à 2 ans.\n\n## Les bénéfices prouvés\n- 🛡️ **Protection immunitaire** : réduit la mortalité infantile de 13%\n- 🧠 **Développement cognitif** supérieur\n- ❤️ **Lien mère-enfant** renforcé\n- 💰 **Économique** : zéro coût\n- 🩺 **Protège la mère** : réduit risques cancers sein/ovaire\n\n## Les bonnes positions\n1. **Berceau** — le plus classique\n2. **Football** — idéal après césarienne\n3. **Allongée** — pour les tétées de nuit\n\n## Fréquence\n- 8 à 12 tétées / 24h les premières semaines\n- À la demande du bébé (pas d'horaires stricts)\n- Signes de faim : bouge les lèvres, cherche le sein, porte main à la bouche\n\n## Quand consulter ?\n- Crevasses douloureuses persistantes\n- Fièvre maternelle > 38.5°\n- Bébé qui ne prend pas de poids\n- Refus répété du sein",
+                "source": "OMS",
+                "tags": ["allaitement", "lait_maternel", "0-6mois"],
+                "author_name": "À lo Maman",
+                "author_role": "admin",
+                "published": True,
+                "langue": "fr",
+                "views": 0,
+                "likes": [],
+                "created_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "type": "video",
+                "title": "Comment positionner bébé pour l'allaitement — UNICEF",
+                "description": "Démonstration officielle des bonnes positions d'allaitement.",
+                "category": "allaitement",
+                "video_url": "https://www.youtube.com/watch?v=OsE76lQMAcw",
+                "duration_sec": 240,
+                "source": "UNICEF",
+                "tags": ["video", "allaitement", "position"],
+                "author_name": "UNICEF",
+                "author_role": "admin",
+                "published": True,
+                "langue": "fr",
+                "views": 0,
+                "likes": [],
+                "created_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "type": "video",
+                "title": "Les signes d'alarme pendant la grossesse",
+                "description": "Quand consulter en urgence : saignements, douleurs, œdèmes.",
+                "category": "grossesse",
+                "video_url": "https://www.youtube.com/watch?v=F3jbxn_ejEc",
+                "duration_sec": 360,
+                "source": "OMS",
+                "tags": ["video", "urgence", "grossesse"],
+                "author_name": "OMS",
+                "author_role": "admin",
+                "published": True,
+                "langue": "fr",
+                "views": 0,
+                "likes": [],
+                "created_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "type": "quiz",
+                "title": "Quiz — Connaissez-vous les signes d'une grossesse saine ?",
+                "description": "5 questions pour tester vos connaissances sur le suivi prénatal.",
+                "category": "grossesse",
+                "questions": [
+                    {
+                        "question": "Combien de consultations prénatales minimum l'OMS recommande-t-elle ?",
+                        "options": ["3", "4", "6", "8"],
+                        "correct_index": 3,
+                        "explication": "Depuis 2016, l'OMS recommande 8 contacts prénatals minimum pour réduire la mortalité maternelle.",
+                    },
+                    {
+                        "question": "À partir de quelle semaine peut-on ressentir les premiers mouvements du bébé ?",
+                        "options": ["8-10 SA", "12-14 SA", "16-22 SA", "28-30 SA"],
+                        "correct_index": 2,
+                        "explication": "Les premiers mouvements sont généralement perçus entre 16 et 22 semaines d'aménorrhée.",
+                    },
+                    {
+                        "question": "Quel saignement nécessite une consultation en URGENCE ?",
+                        "options": [
+                            "Tout saignement, à tout stade",
+                            "Seulement au 3e trimestre",
+                            "Seulement s'il y a douleur",
+                            "Jamais, c'est normal",
+                        ],
+                        "correct_index": 0,
+                        "explication": "Tout saignement pendant la grossesse nécessite une consultation rapide pour éliminer toute complication.",
+                    },
+                    {
+                        "question": "Quel supplément est recommandé dès le début de la grossesse ?",
+                        "options": ["Vitamine C", "Acide folique (B9)", "Calcium", "Fer uniquement"],
+                        "correct_index": 1,
+                        "explication": "L'acide folique (400 µg/j) prévient les malformations du tube neural. Idéalement commencé avant la conception.",
+                    },
+                    {
+                        "question": "Combien de temps dure une grossesse normale ?",
+                        "options": ["36 SA", "38 SA", "40 SA", "42 SA"],
+                        "correct_index": 2,
+                        "explication": "40 semaines d'aménorrhée (SA), soit environ 9 mois à partir des dernières règles.",
+                    },
+                ],
+                "source": "OMS",
+                "tags": ["quiz", "grossesse", "prenatal"],
+                "author_name": "À lo Maman",
+                "author_role": "admin",
+                "published": True,
+                "langue": "fr",
+                "views": 0,
+                "likes": [],
+                "created_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "type": "quiz",
+                "title": "Quiz — Vaccination de bébé",
+                "description": "Testez vos connaissances sur le calendrier PEV.",
+                "category": "vaccination",
+                "questions": [
+                    {
+                        "question": "À la naissance, quel vaccin est administré en premier ?",
+                        "options": ["Rougeole", "BCG", "Pentavalent", "Fièvre jaune"],
+                        "correct_index": 1,
+                        "explication": "Le BCG (contre la tuberculose) est donné dès la naissance en Côte d'Ivoire.",
+                    },
+                    {
+                        "question": "À quel âge se fait le premier vaccin contre la rougeole ?",
+                        "options": ["6 semaines", "3 mois", "9 mois", "18 mois"],
+                        "correct_index": 2,
+                        "explication": "La 1ère dose est administrée à 9 mois, la 2e à 15-18 mois.",
+                    },
+                    {
+                        "question": "Le Pentavalent protège contre combien de maladies ?",
+                        "options": ["3", "4", "5", "6"],
+                        "correct_index": 2,
+                        "explication": "Diphtérie, Tétanos, Coqueluche, Hépatite B, Haemophilus influenzae type b (Hib).",
+                    },
+                ],
+                "source": "MSHP-CI",
+                "tags": ["quiz", "vaccination"],
+                "author_name": "À lo Maman",
+                "author_role": "admin",
+                "published": True,
+                "langue": "fr",
+                "views": 0,
+                "likes": [],
+                "created_at": now,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "type": "fiche",
+                "title": "Nutrition pendant la grossesse",
+                "description": "Aliments recommandés et à éviter pendant les 9 mois.",
+                "category": "nutrition",
+                "content_md": "# Bien manger pendant la grossesse\n\n## ✅ À privilégier chaque jour\n- **Légumes variés** (épinards, gombo, carottes, aubergines) — riches en acide folique et fer\n- **Fruits frais** (mangue, papaye, orange) — vitamine C\n- **Céréales complètes** (riz, mil, sorgho)\n- **Protéines** : poisson frais, viande bien cuite, œufs, haricots\n- **Produits laitiers** (yaourt, fromage pasteurisé) — calcium\n- **1,5-2 L d'eau** par jour\n\n## ❌ À éviter\n- **Poisson et viande crus** (risque toxoplasmose, listériose)\n- **Fromage au lait cru**\n- **Alcool** (aucune dose sécure)\n- **Excès de caféine** (max 200 mg/j = 2 tasses de café)\n- **Poissons à haute teneur en mercure** (thon, espadon)\n\n## 💊 Supplémentations\n- **Acide folique 400 µg/j** — tout le 1er trimestre (et idéalement 3 mois avant conception)\n- **Fer + Acide folique** — dès la 1ère consultation prénatale (Côte d'Ivoire : souvent gratuit au CSU)\n- **Vitamine D** si peu d'exposition solaire\n\n> 🌍 Contexte Côte d'Ivoire : pensez à laver soigneusement tous légumes/fruits, bien cuire viandes et poissons.",
+                "source": "OMS",
+                "tags": ["nutrition", "alimentation", "grossesse"],
+                "author_name": "À lo Maman",
+                "author_role": "admin",
+                "published": True,
+                "langue": "fr",
+                "views": 0,
+                "likes": [],
+                "created_at": now,
+            },
+        ])
 
     logger.info("Startup complete")
 

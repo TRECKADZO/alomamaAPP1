@@ -36,6 +36,9 @@ export default function RootLayout() {
                 <Stack.Screen name="portail-pro" options={{ title: "Portail Pro - À lo Maman" }} />
                 <Stack.Screen name="plans" options={{ title: "Nos offres - À lo Maman" }} />
                 <Stack.Screen name="cmu" options={{ title: "CMU - Ma couverture" }} />
+                <Stack.Screen name="cgu" options={{ title: "CGU - À lo Maman" }} />
+                <Stack.Screen name="privacy" options={{ title: "Politique de Confidentialité" }} />
+                <Stack.Screen name="ressources" options={{ title: "Ressources éducatives" }} />
               </Stack>
             </View>
           </View>
