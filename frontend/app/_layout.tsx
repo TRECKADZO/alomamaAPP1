@@ -14,9 +14,7 @@ export default function RootLayout() {
         <AuthProvider>
           <StatusBar style="dark" />
           <View style={{ flex: 1 }}>
-            <SafeAreaView edges={["top"]} style={{ backgroundColor: COLORS.bgPrimary }}>
-              <OfflineBanner />
-            </SafeAreaView>
+            <OfflineBanner />
             <View style={{ flex: 1 }}>
               <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: COLORS.bgPrimary } }}>
                 <Stack.Screen name="index" />

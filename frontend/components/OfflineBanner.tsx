@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, Animated, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, Animated, TouchableOpacity, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useOnlineStatus, useQueueCount, flushQueue, useAutoSync } from "../lib/offline";
 
 export default function OfflineBanner() {
@@ -8,7 +9,8 @@ export default function OfflineBanner() {
   const queueCount = useQueueCount();
   const [justReconnected, setJustReconnected] = useState(false);
   const prevOnline = useRef(online);
-  const slide = useRef(new Animated.Value(-50)).current;
+  const slide = useRef(new Animated.Value(-60)).current;
+  const insets = useSafeAreaInsets();
 
   // Kick off the auto-sync interval for the whole app
   useAutoSync();
@@ -27,7 +29,7 @@ export default function OfflineBanner() {
 
   useEffect(() => {
     Animated.timing(slide, {
-      toValue: visible ? 0 : -50,
+      toValue: visible ? 0 : -60,
       duration: 220,
       useNativeDriver: true,
     }).start();
@@ -48,8 +50,16 @@ export default function OfflineBanner() {
     label = `Synchronisation · ${queueCount} en attente`;
   }
 
+  // Padding top = status bar height sur mobile, 0 sur web
+  const topPadding = Platform.OS === "web" ? 6 : Math.max(insets.top, 8) + 4;
+
+  if (!visible) return null;
+
   return (
-    <Animated.View style={[styles.wrap, { backgroundColor: bg, transform: [{ translateY: slide }] }]} pointerEvents={visible ? "auto" : "none"}>
+    <Animated.View
+      style={[styles.wrap, { backgroundColor: bg, paddingTop: topPadding, transform: [{ translateY: slide }] }]}
+      pointerEvents={visible ? "auto" : "none"}
+    >
       <Ionicons name={icon} size={16} color="#fff" />
       <Text style={styles.text} numberOfLines={1}>{label}</Text>
       {online && queueCount > 0 && (
@@ -67,7 +77,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingBottom: 8,
     width: "100%",
   },
   text: { flex: 1, color: "#fff", fontWeight: "700", fontSize: 12 },
