@@ -13,7 +13,7 @@ import DateField from "../components/DateField";
 const MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 const JOURS_FR = ["L", "M", "M", "J", "V", "S", "D"];
 
-type DayType = "regles" | "fertile" | "ovulation" | "predit" | null;
+type DayType = "regles" | "fertile" | "ovulation" | "predit" | "fertile_predit" | "ovulation_predit" | null;
 
 function addDays(d: Date, n: number) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 function sameDay(a: Date, b: Date) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
@@ -54,6 +54,24 @@ export default function Cycle() {
     ? { moyenne: Math.round(durees.reduce((a: number, b: number) => a + b, 0) / durees.length), min: Math.min(...durees), max: Math.max(...durees) }
     : null;
 
+  // Projection sur 6 prochains cycles (6 mois)
+  const projections = (() => {
+    if (!dernier) return [] as { start: Date; dureeR: number; ovulation: Date; fertileStart: Date; fertileEnd: Date; isPredict: boolean }[];
+    const cycleLen = dernier.duree_cycle || stats?.moyenne || 28;
+    const dureeR = dernier.duree_regles || 5;
+    const base = new Date(dernier.date_debut_regles);
+    const proj: any[] = [];
+    // Ajouter la prochaine règle puis 5 autres (total 6 à venir)
+    for (let k = 1; k <= 6; k++) {
+      const start = addDays(base, cycleLen * k);
+      const ovulation = addDays(start, -14);  // 14j avant les règles suivantes
+      const fertileStart = addDays(ovulation, -5);
+      const fertileEnd = addDays(ovulation, 1);
+      proj.push({ start, dureeR, ovulation, fertileStart, fertileEnd, isPredict: true });
+    }
+    return proj;
+  })();
+
   const fertile = dernier
     ? (() => {
         const start = new Date(dernier.date_debut_regles);
@@ -73,31 +91,38 @@ export default function Cycle() {
       })()
     : null;
 
-  // ---------- Rendu du mois courant ----------
-  const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-  const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-  const firstDow = (monthStart.getDay() + 6) % 7; // lundi=0
-  const daysInMonth = monthEnd.getDate();
-  const gridDays: (Date | null)[] = [];
-  for (let i = 0; i < firstDow; i++) gridDays.push(null);
-  for (let d = 1; d <= daysInMonth; d++) gridDays.push(new Date(cursor.getFullYear(), cursor.getMonth(), d));
-  while (gridDays.length % 7 !== 0) gridDays.push(null);
+  // ---------- Rendu ----------
+  // (la grille de chaque mois est calculée inline dans le rendu)
 
   function typeOf(d: Date): DayType {
-    // Règles historiques + prédites + fenêtre fertile
+    // 1) Règles historiques (cycles enregistrés)
     for (const c of list) {
       const s = new Date(c.date_debut_regles);
       const dureeR = c.duree_regles || 5;
       for (let i = 0; i < dureeR; i++) if (sameDay(addDays(s, i), d)) return "regles";
+      // Fenêtre fertile + ovulation du cycle enregistré (si on a la durée)
+      const cycleLen = c.duree_cycle;
+      if (cycleLen) {
+        const ovu = addDays(s, cycleLen - 14);
+        const fStart = addDays(ovu, -5);
+        const fEnd = addDays(ovu, 1);
+        if (sameDay(ovu, d)) return "ovulation";
+        if (d >= fStart && d <= fEnd) return "fertile";
+      }
     }
-    if (fertile) {
-      // Règles prédites prochaines
-      for (let i = 0; i < fertile.dureeRegles; i++) if (sameDay(addDays(fertile.next, i), d)) return "predit";
-      if (sameDay(fertile.ovulation, d)) return "ovulation";
-      if (d >= fertile.fertileStart && d <= fertile.fertileEnd) return "fertile";
+    // 2) Projections : 6 cycles à venir
+    for (const p of projections) {
+      for (let i = 0; i < p.dureeR; i++) if (sameDay(addDays(p.start, i), d)) return "predit";
+      if (sameDay(p.ovulation, d)) return "ovulation_predit";
+      if (d >= p.fertileStart && d <= p.fertileEnd) return "fertile_predit";
     }
     return null;
   }
+
+  // Liste des 6 prochains mois à afficher (cursor = mois de départ)
+  const sixMonths = Array.from({ length: 6 }, (_, i) =>
+    new Date(cursor.getFullYear(), cursor.getMonth() + i, 1)
+  );
 
   if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
 
@@ -163,53 +188,79 @@ export default function Cycle() {
           </View>
         )}
 
-        {/* Calendrier mensuel */}
-        <View style={styles.calCard}>
-          <View style={styles.calHead}>
-            <TouchableOpacity onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))} testID="cal-prev">
-              <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
+        {/* Calendrier 6 mois */}
+        <View style={styles.calHeader}>
+          <Text style={styles.sectionTitle}>📅 Calendrier sur 6 mois</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))} style={styles.navBtn} testID="cal-prev">
+              <Ionicons name="chevron-back" size={18} color={COLORS.primary} />
             </TouchableOpacity>
-            <Text style={styles.calMonth}>{MOIS_FR[cursor.getMonth()]} {cursor.getFullYear()}</Text>
-            <TouchableOpacity onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))} testID="cal-next">
-              <Ionicons name="chevron-forward" size={22} color={COLORS.primary} />
+            <TouchableOpacity onPress={() => setCursor(new Date())} style={styles.todayBtn}>
+              <Text style={styles.todayBtnText}>Aujourd'hui</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))} style={styles.navBtn} testID="cal-next">
+              <Ionicons name="chevron-forward" size={18} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
+        </View>
 
-          <View style={styles.dowRow}>
-            {JOURS_FR.map((j, i) => <Text key={i} style={styles.dow}>{j}</Text>)}
-          </View>
+        {sixMonths.map((mDate, mi) => {
+          const mStart = new Date(mDate.getFullYear(), mDate.getMonth(), 1);
+          const mEnd = new Date(mDate.getFullYear(), mDate.getMonth() + 1, 0);
+          const firstDow = (mStart.getDay() + 6) % 7;
+          const daysInM = mEnd.getDate();
+          const grid: (Date | null)[] = [];
+          for (let i = 0; i < firstDow; i++) grid.push(null);
+          for (let d = 1; d <= daysInM; d++) grid.push(new Date(mDate.getFullYear(), mDate.getMonth(), d));
+          while (grid.length % 7 !== 0) grid.push(null);
 
-          <View style={styles.gridDays}>
-            {gridDays.map((d, i) => {
-              if (!d) return <View key={i} style={styles.dayEmpty} />;
-              const t = typeOf(d);
-              const today = sameDay(d, new Date());
-              return (
-                <View key={i} style={styles.dayCell}>
-                  <View style={[
-                    styles.dayInner,
-                    t === "regles" && styles.dayRegles,
-                    t === "predit" && styles.dayPredit,
-                    t === "fertile" && styles.dayFertile,
-                    t === "ovulation" && styles.dayOvulation,
-                    today && styles.dayToday,
-                  ]}>
-                    <Text style={[
-                      styles.dayNum,
-                      (t === "regles" || t === "ovulation") && { color: "#fff", fontWeight: "800" },
-                      today && !t && { color: COLORS.primary, fontWeight: "800" },
-                    ]}>{d.getDate()}</Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
+          return (
+            <View key={mi} style={styles.calCard}>
+              <Text style={styles.calMonth}>{MOIS_FR[mDate.getMonth()]} {mDate.getFullYear()}</Text>
+              <View style={styles.dowRow}>
+                {JOURS_FR.map((j, i) => <Text key={i} style={styles.dow}>{j}</Text>)}
+              </View>
+              <View style={styles.gridDays}>
+                {grid.map((d, i) => {
+                  if (!d) return <View key={i} style={styles.dayEmpty} />;
+                  const t = typeOf(d);
+                  const today = sameDay(d, new Date());
+                  return (
+                    <View key={i} style={styles.dayCell}>
+                      <View style={[
+                        styles.dayInner,
+                        t === "regles" && styles.dayRegles,
+                        t === "predit" && styles.dayPredit,
+                        t === "fertile" && styles.dayFertile,
+                        t === "fertile_predit" && styles.dayFertilePredit,
+                        t === "ovulation" && styles.dayOvulation,
+                        t === "ovulation_predit" && styles.dayOvulationPredit,
+                        today && styles.dayToday,
+                      ]}>
+                        <Text style={[
+                          styles.dayNum,
+                          (t === "regles" || t === "ovulation") && { color: "#fff", fontWeight: "800" },
+                          today && !t && { color: COLORS.primary, fontWeight: "800" },
+                        ]}>{d.getDate()}</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
 
+        {/* Légende globale */}
+        <View style={styles.legendCard}>
+          <Text style={styles.legendTitle}>Légende</Text>
           <View style={styles.legend}>
-            <LegendDot color="#E11D48" label="Règles" />
+            <LegendDot color="#E11D48" label="Règles (historique)" />
             <LegendDot color="#FDA4B8" label="Règles prédites" />
             <LegendDot color="#FCD34D" label="Fenêtre fertile" />
+            <LegendDot color="#FEF3C7" label="Fenêtre fertile prédite" />
             <LegendDot color="#10B981" label="Ovulation" />
+            <LegendDot color="#A7F3D0" label="Ovulation prédite" />
           </View>
         </View>
 
@@ -308,8 +359,16 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 11, color: COLORS.textSecondary, textTransform: "uppercase" },
   statsSub: { textAlign: "center", color: COLORS.textMuted, fontSize: 11, marginTop: 8 },
   calCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, marginBottom: 14 },
+  calHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6, marginBottom: 10 },
+  navBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.primaryLight, alignItems: "center", justifyContent: "center" },
+  todayBtn: { backgroundColor: COLORS.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 18 },
+  todayBtnText: { color: "#fff", fontWeight: "800", fontSize: 11 },
+  legendCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border, marginBottom: 14 },
+  legendTitle: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary, marginBottom: 10 },
+  dayFertilePredit: { backgroundColor: "#FEF3C7" },
+  dayOvulationPredit: { backgroundColor: "#A7F3D0", borderWidth: 1.5, borderColor: "#10B981", borderStyle: "dashed" },
   calHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 10, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  calMonth: { fontWeight: "800", fontSize: 16, color: COLORS.textPrimary, textTransform: "capitalize" },
+  calMonth: { fontWeight: "800", fontSize: 16, color: COLORS.textPrimary, textTransform: "capitalize", marginBottom: 8 },
   dowRow: { flexDirection: "row", marginBottom: 6 },
   dow: { flex: 1, textAlign: "center", fontSize: 11, fontWeight: "700", color: COLORS.textSecondary },
   gridDays: { flexDirection: "row", flexWrap: "wrap" },
