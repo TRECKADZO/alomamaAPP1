@@ -280,6 +280,24 @@ backend:
           • Admin stats, RDV listings, login, tous endpoints non-sensibles inchangés.
 
           À tester par deep_testing_backend_v2 : régression complète + round-trip chiffrement sur tous les endpoints impactés.
+      - working: true
+        agent: "testing"
+        comment: |
+          VALIDATION Phase 3 : 96/97 PASS initialement (1 bug critique signalé), puis **100% après fix**.
+          • Case 1 CMU round-trip (20/20) : API en clair, DB en `enc_v1:...`, `numero_hash` présent, `date_validite` en clair.
+          • Case 2 Enfant round-trip (13/13) : `numero_cmu` + `allergies[]` chiffrés, `groupe_sanguin` en clair.
+          • Case 3 Tele-echo (18/18) : `image_base64` + `conclusion` + `commentaires_medicaux` chiffrés, champs numériques en clair, bi-role (maman/pro) OK.
+          • Case 4 Consultation notes (12/12) : `diagnostic` + `traitement` + `notes` chiffrés.
+          • Case 5 CMU pricing (8/8 après fix) : RDV creation déchiffre correctement, taux appliqué.
+          • Case 6 Legacy plaintext fallback (4/4) : données non-préfixées retournées telles quelles.
+          • Case 7 Key persistence (3/3) : 1 entrée `ENCRYPTION_KEY` dans .env, base64 valide 32 bytes.
+          • Case 8 Régression (14/14) : tous les rôles, admin stats, etc.
+          Bug identifié et corrigé : `/pro/facturation-cmu` + `/csv` lisaient `users.cmu.numero` (chiffré) → remplacé par `rdv.cmu_numero` (stocké en clair sur chaque rdv).
+      - working: true
+        agent: "main"
+        comment: |
+          Fix appliqué L1534 et L1565 : lecture de `rdv.cmu_numero` (stocké en clair) au lieu de `users.cmu.numero` (chiffré).
+          Vérification manuelle : facturation-cmu API retourne "0102030405" en clair. CSV contient "0102030405" et zéro "enc_v1:". ✅
       - working: false
         agent: "testing"
         comment: |

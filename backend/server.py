@@ -1531,7 +1531,8 @@ async def pro_facturation_cmu(user=Depends(require_roles("professionnel"))):
     for r in rdvs:
         m = mamans.get(r.get("maman_id"), {})
         r["maman_nom"] = m.get("name")
-        r["numero_cmu"] = (m.get("cmu") or {}).get("numero")
+        # Utiliser rdv.cmu_numero (stocké en clair) — users.cmu.numero est chiffré
+        r["numero_cmu"] = r.get("cmu_numero") or ""
     return {
         "total_rdv": len(rdvs),
         "total_brut_fcfa": total_brut,
@@ -1562,7 +1563,7 @@ async def pro_facturation_cmu_csv(user=Depends(require_roles("professionnel"))):
         w.writerow([
             (r.get("date") or "")[:10],
             m.get("name", ""),
-            (m.get("cmu") or {}).get("numero", ""),
+            r.get("cmu_numero", ""),  # stocké en clair sur le rdv (users.cmu.numero est chiffré)
             r.get("prestation_nom") or r.get("motif", ""),
             r.get("tarif_fcfa", 0),
             f"{int((r.get('cmu_taux') or 0) * 100)}%",
