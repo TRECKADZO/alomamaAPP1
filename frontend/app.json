@@ -1,22 +1,42 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "À lo Maman",
+    "slug": "alomaman",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "alomaman",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.alomaman",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scanner ordonnances et prendre photos médicales",
+        "NSPhotoLibraryUsageDescription": "Partager photos dans dossier médical",
+        "NSMicrophoneUsageDescription": "Téléconsultation avec les professionnels",
+        "NSLocationWhenInUseUsageDescription": "Trouver les centres de santé près de vous"
+      }
     },
     "android": {
+      "package": "com.alomaman",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "INTERNET",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED"
+      ]
     },
     "web": {
       "bundler": "metro",
