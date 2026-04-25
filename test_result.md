@@ -496,6 +496,34 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+frontend:
+  - task: "9 nouvelles fonctionnalités éducatives Maman (foetus, diversification, jalons, plan-naissance, infolettre, maison-securisee, glossaire, activites, outils, quiz)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/index.tsx, /app/frontend/app/foetus, /app/frontend/app/diversification.tsx, /app/frontend/app/jalons, /app/frontend/app/plan-naissance.tsx, /app/frontend/app/infolettre.tsx, /app/frontend/app/maison-securisee.tsx, /app/frontend/app/glossaire.tsx, /app/frontend/app/activites.tsx, /app/frontend/app/outils.tsx, /app/frontend/app/quiz"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          13/13 PASS sur https://cycle-tracker-pro.preview.emergentagent.com (mobile 390x844 + 360x800).
+          (1) Login maman@test.com/Maman123! via "J'ai déjà un compte" → dashboard rendu avec toutes les nouvelles tuiles.
+          (2) Toutes les 10 nouvelles tuiles présentes : qa-foetus, qa-diversif, qa-jalons, qa-plan-naissance, qa-infolettre, qa-maison, qa-glossaire, qa-activites, qa-outils, qa-quiz.
+          (3) /foetus charge (SA actuelle 14, mots clés "semaine"/"SA"/"Bienvenue"/"🌟" présents).
+          (4) /diversification affiche les 5 onglets (texte "6 mois" présent).
+          (5) /jalons charge la liste enfants/jalons.
+          (6) /plan-naissance : input lieu rempli + bouton save-plan-btn cliqué → enregistrement OK.
+          (7) /infolettre rendu avec contenu.
+          (8) /maison-securisee : 5 pièces affichées (Salon/Cuisine/Chambre).
+          (9) /glossaire : recherche "fer" fonctionne.
+          (10) /activites : tranches d'âge affichées.
+          (11) /outils : 4 onglets (DPA/IMC/Temp/Poids) rendus.
+          (12) /quiz/anemie : 8 réponses OUI → submit → écran "Risque élevé 🚨" Score: 16 ✓.
+          (13) Galaxy S21 (360x800) : dashboard rendu correctement, toutes les tuiles accessibles.
+          Aucun crash, navigation fluide. Fonctionnalités prêtes pour production.
+
 backend:
   - task: "Endpoints éducatifs (foetus / diversification / jalons) + Plan de naissance + Infolettre"
     implemented: true
