@@ -496,6 +496,47 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend:
+  - task: "Account deletion (GDPR / Google Play) — DELETE /api/auth/me"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          37/37 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_account_deletion.py).
+
+          (1) Pre-setup: registered fresh maman gdpr_maman_<rnd>@test.alomaman.com / GdprTest123! (role=maman, full consent). Seeded 1 grossesse (date_debut=2026-01-01), 1 grossesse_tracking entry (poids 65kg @ 2026-04-25), 1 enfant ('Test Enfant' F 2025-01-01), 1 reminder. NOTE: there is NO /api/notifications/preferences endpoint in server.py — used /api/reminders POST instead as the 4th collection tied to user, which is functionally equivalent.
+          (2) DELETE /auth/me without Authorization header → 403 ✓ (401/403 accepted).
+          (3) DELETE /auth/me with auth but EMPTY body → 422 ✓ (FastAPI validation rejects missing required fields password+confirmation).
+          (4) DELETE /auth/me {confirmation:"autre chose"} → 400 with detail "Veuillez taper SUPPRIMER pour confirmer la suppression." ✓.
+          (5) DELETE /auth/me {confirmation:"SUPPRIMER", password:"WrongPass!2026"} → 401 with detail "Mot de passe incorrect" ✓.
+          (6) DELETE /auth/me {confirmation:"SUPPRIMER", password:correct} → 200 with body {success:true, message:"Votre compte et vos données personnelles ont été supprimés définitivement.", deleted_collections:{grossesses:1, grossesse_tracking:1, enfants:1, reminders:1}}. All 3 required collections (grossesses, grossesse_tracking, enfants) present with deleted_count ≥ 1 ✓.
+          (7) After deletion: (a) GET /auth/me with the same Bearer token → 401 ("Utilisateur introuvable") ✓. (b) POST /auth/login with same email/password → 401 ("Identifiants incorrects") ✓. (c) Direct Mongo verification (alomaman db, mongodb+srv://...): users {id:user_id} count=0, grossesses count=0, grossesse_tracking count=0, enfants count=0, reminders count=0 — all data wiped ✓.
+          (8) Super admin protection: logged in as klenakan.eric@gmail.com / 474Treckadzo$1986 → 200. DELETE /auth/me with correct password + confirmation="SUPPRIMER" → 403 with detail "Le compte super administrateur ne peut pas être supprimé via cette API." ✓. Verified directly in Mongo: user still exists with is_super_admin=true ✓ — super admin NOT deleted.
+          (9) Anonymization of payments: inserted fake payment {user_id:test_user_id, amount:1000, status:"completed", user_email:test_email} BEFORE deletion. After DELETE: payment doc still exists in db.payments with anonymized=True, user_email=None, user_id replaced by 'deleted_user_<hex12>' (anonymized identifier). ✓ Required by GDPR + 5–10 years legal retention for accounting. Cleanup: anonymized payment removed at end of run.
+
+          Implementation review (server.py L497-594):
+          • Order of checks is correct: confirmation first, then user lookup, then super_admin guard, then password verification.
+          • All 24 user-tied collections covered in delete_filters (grossesses, grossesse_tracking, enfants, mesures, rdv, messages, conversations, notifications, reminders, cycles, plan_naissance, consultation_notes, dossiers_medicaux, tele_echo, ressources_lues, quiz_responses, prestations, disponibilites, avis, communaute_posts, communaute_replies, expo_push_tokens, famille_invitations, documents_partages).
+          • Anonymization of db.payments and db.payouts uses anonymized=True + null user_email + obfuscated user_id/account_alias — preserves accounting data while complying with RGPD Art. 17.
+          • Logging line 589 correctly outputs the deletion event.
+
+          Cleanup OK: anonymized payment removed; super admin intact. No critical or minor bugs found.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Account deletion (GDPR / Google Play) — DELETE /api/auth/me — 37/37 PASS.
+      All 9 review scenarios verified including super admin protection (403, NOT deleted) and payment anonymization (anonymized=true, user_email=null, user_id replaced). Direct Mongo queries confirm user + all related docs wiped after deletion. Token reuse → 401, login same credentials → 401. No bugs. Main agent can summarize and finish.
+
+      NOTE for future: review payload mentioned POST /api/notifications/preferences but that endpoint does not exist in server.py — used POST /api/reminders as the 4th seed collection, which provided equivalent coverage (reminders are also covered by delete_filters and confirmed wiped).
+
 frontend:
   - task: "Pro Mobile Money Withdrawal UI (/pro/retraits)"
     implemented: true

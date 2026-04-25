@@ -38,6 +38,7 @@ export default function RootLayout() {
                 <Stack.Screen name="privacy" options={{ title: "Politique de Confidentialité" }} />
                 <Stack.Screen name="ressources" options={{ title: "Ressources éducatives" }} />
                 <Stack.Screen name="croissance" options={{ title: "Courbes OMS" }} />
+                <Stack.Screen name="supprimer-compte" options={{ title: "Supprimer mon compte" }} />
               </Stack>
             </View>
           </View>

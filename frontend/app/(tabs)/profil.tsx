@@ -167,6 +167,16 @@ export default function Profil() {
             <Text style={styles.logoutText}>Se déconnecter</Text>
           </TouchableOpacity>
 
+          {/* Suppression de compte (RGPD / Google Play) */}
+          <TouchableOpacity
+            style={styles.deleteAccountBtn}
+            onPress={() => router.push("/supprimer-compte")}
+            testID="delete-account-link"
+          >
+            <Ionicons name="trash-outline" size={16} color={COLORS.textMuted} />
+            <Text style={styles.deleteAccountText}>Supprimer mon compte</Text>
+          </TouchableOpacity>
+
           <Text style={styles.appVersion}>À lo Maman · v1.0.0</Text>
         </View>
       </ScrollView>
@@ -334,6 +344,22 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   logoutText: { color: COLORS.error, fontWeight: "700" },
+
+  deleteAccountBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    marginTop: 6,
+  },
+  deleteAccountText: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    textDecorationLine: "underline",
+    fontWeight: "600",
+  },
+
   appVersion: { textAlign: "center", color: COLORS.textMuted, marginTop: 14, fontSize: 12 },
 
   // Logout confirmation modal

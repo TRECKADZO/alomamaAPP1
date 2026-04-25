@@ -487,6 +487,114 @@ async def me(user=Depends(get_current_user)):
 
 
 # ----------------------------------------------------------------------
+# Suppression de compte (RGPD / Google Play / Apple App Store)
+# ----------------------------------------------------------------------
+class DeleteAccountIn(BaseModel):
+    password: str
+    confirmation: str  # doit valoir "SUPPRIMER" pour confirmer
+
+
+@api.delete("/auth/me")
+async def delete_my_account(payload: DeleteAccountIn, user=Depends(get_current_user)):
+    """
+    Supprime définitivement le compte de l'utilisateur connecté et toutes ses données associées.
+    Conforme RGPD (Article 17 - Droit à l'effacement) et exigences Google Play Store / Apple App Store.
+
+    Sécurité :
+    - Vérifie le mot de passe
+    - Exige le texte "SUPPRIMER" en confirmation explicite
+    - Supprime / anonymise toutes les données dans toutes les collections
+    """
+    if (payload.confirmation or "").strip().upper() != "SUPPRIMER":
+        raise HTTPException(400, "Veuillez taper SUPPRIMER pour confirmer la suppression.")
+
+    db_user = await db.users.find_one({"id": user["id"]})
+    if not db_user:
+        raise HTTPException(404, "Utilisateur introuvable")
+    if db_user.get("is_super_admin"):
+        raise HTTPException(403, "Le compte super administrateur ne peut pas être supprimé via cette API.")
+    if not verify_password(payload.password, db_user.get("password_hash", "")):
+        raise HTTPException(401, "Mot de passe incorrect")
+
+    user_id = user["id"]
+    user_email = user.get("email", "")
+
+    # 1) Supprimer les données personnelles dans toutes les collections
+    delete_filters = [
+        ("grossesses", {"user_id": user_id}),
+        ("grossesse_tracking", {"user_id": user_id}),
+        ("enfants", {"user_id": user_id}),
+        ("mesures", {"user_id": user_id}),
+        ("rdv", {"$or": [{"maman_id": user_id}, {"pro_id": user_id}, {"famille_id": user_id}]}),
+        ("messages", {"$or": [{"from_id": user_id}, {"to_id": user_id}]}),
+        ("conversations", {"$or": [{"user_a": user_id}, {"user_b": user_id}]}),
+        ("notifications", {"user_id": user_id}),
+        ("reminders", {"user_id": user_id}),
+        ("cycles", {"user_id": user_id}),
+        ("plan_naissance", {"user_id": user_id}),
+        ("consultation_notes", {"$or": [{"patient_id": user_id}, {"pro_id": user_id}]}),
+        ("dossiers_medicaux", {"user_id": user_id}),
+        ("tele_echo", {"$or": [{"maman_id": user_id}, {"pro_id": user_id}]}),
+        ("ressources_lues", {"user_id": user_id}),
+        ("quiz_responses", {"user_id": user_id}),
+        ("prestations", {"pro_id": user_id}),
+        ("disponibilites", {"pro_id": user_id}),
+        ("avis", {"$or": [{"author_id": user_id}, {"pro_id": user_id}]}),
+        ("communaute_posts", {"user_id": user_id}),
+        ("communaute_replies", {"user_id": user_id}),
+        ("expo_push_tokens", {"user_id": user_id}),
+        ("famille_invitations", {"$or": [{"maman_id": user_id}, {"membre_id": user_id}]}),
+        ("documents_partages", {"$or": [{"user_id": user_id}, {"shared_with": user_id}]}),
+    ]
+    summary: dict = {}
+    for coll, q in delete_filters:
+        try:
+            res = await db[coll].delete_many(q)
+            if res.deleted_count:
+                summary[coll] = res.deleted_count
+        except Exception as e:
+            logging.warning(f"Erreur suppression {coll}: {e}")
+
+    # 2) Anonymiser les paiements et payouts (obligation comptable — conservation 5-10 ans selon législation)
+    anon_id = f"deleted_user_{uuid.uuid4().hex[:12]}"
+    try:
+        await db.payments.update_many(
+            {"$or": [{"user_id": user_id}, {"pro_id": user_id}]},
+            {"$set": {
+                "anonymized": True,
+                "anonymized_at": datetime.now(timezone.utc).isoformat(),
+                "user_id": anon_id if user_id else None,
+                "user_email": None,
+                "custom_data": {},
+            }},
+        )
+        await db.payouts.update_many(
+            {"pro_id": user_id},
+            {"$set": {
+                "anonymized": True,
+                "pro_email": None,
+                "account_alias": "***",
+            }},
+        )
+    except Exception as e:
+        logging.warning(f"Erreur anonymisation paiements: {e}")
+
+    # 3) Supprimer définitivement le compte utilisateur
+    try:
+        await db.users.delete_one({"id": user_id})
+    except Exception as e:
+        logging.error(f"Erreur suppression user {user_id}: {e}")
+        raise HTTPException(500, "Erreur lors de la suppression du compte")
+
+    logging.info(f"🗑️  Compte supprimé : {user_email} (id={user_id}) — collections impactées : {summary}")
+    return {
+        "success": True,
+        "message": "Votre compte et vos données personnelles ont été supprimés définitivement.",
+        "deleted_collections": summary,
+    }
+
+
+# ----------------------------------------------------------------------
 # Grossesse (Pregnancy) — maman
 # ----------------------------------------------------------------------
 @api.get("/grossesse")
