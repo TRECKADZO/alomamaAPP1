@@ -149,7 +149,7 @@ function MamanDash({ user, data, router }: any) {
           <View style={{ flexDirection: "row", gap: 8 }}>
             <TouchableOpacity
               style={styles.welcomeBtn}
-              onPress={() => Alert.alert("Rapport PDF", "Génération du rapport bientôt disponible")}
+              onPress={() => router.push("/dossier-medical")}
               testID="rapport-pdf-btn"
             >
               <Ionicons name="sparkles" size={18} color={COLORS.textPrimary} />

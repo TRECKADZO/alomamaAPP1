@@ -353,7 +353,8 @@ export default function Enfants() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.actionBtn}
-                      onPress={() => Alert.alert("Carnet", "Vue complète du carnet bientôt disponible")}
+                      onPress={() => router.push(`/enfants/${e.id}/carnet`)}
+                      testID={`view-carnet-${e.id}`}
                     >
                       <Ionicons name="book-outline" size={16} color={COLORS.primary} />
                       <Text style={styles.actionBtnText}>Carnet</Text>

@@ -4,9 +4,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { api, formatError } from "../../lib/api";
-import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
-import DateField from "../../components/DateField";
+import { api, formatError } from "../../../lib/api";
+import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
+import DateField from "../../../components/DateField";
 
 type TrackingType = "poids" | "tension" | "symptome" | "journal" | "vaccin";
 
