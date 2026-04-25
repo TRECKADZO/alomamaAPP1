@@ -163,7 +163,7 @@ export default function Search() {
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: SPACING.xl, paddingTop: 0 }}
           renderItem={({ item }) => tab === "pros" ? (
-            <TouchableOpacity style={styles.resCard} onPress={() => router.push(`/chat/${item.id}?name=${encodeURIComponent(item.name)}`)} testID={`pro-${item.id}`}>
+            <View style={styles.resCard}>
               <View style={styles.proHead}>
                 <View style={styles.avatar}><Text style={styles.avatarText}>{item.name?.charAt(0)}</Text></View>
                 <View style={{ flex: 1 }}>
@@ -176,7 +176,6 @@ export default function Search() {
                   <Text style={styles.resMeta}>{item.specialite}</Text>
                   {item.ville ? <Text style={styles.resMetaSm}>📍 {item.ville}</Text> : null}
                 </View>
-                <Ionicons name="chatbubble-outline" size={20} color={COLORS.primary} />
               </View>
               {(item.prestations_match || []).length > 0 && (
                 <View style={styles.prestList}>
@@ -189,7 +188,25 @@ export default function Search() {
                   ))}
                 </View>
               )}
-            </TouchableOpacity>
+              <View style={styles.proActions}>
+                <TouchableOpacity
+                  style={styles.actionChat}
+                  onPress={() => router.push(`/chat/${item.id}?name=${encodeURIComponent(item.name)}`)}
+                  testID={`chat-${item.id}`}
+                >
+                  <Ionicons name="chatbubble-outline" size={16} color={COLORS.primary} />
+                  <Text style={styles.actionChatText}>Discuter</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.actionRdv}
+                  onPress={() => router.push({ pathname: "/(tabs)/rdv", params: { pro_id: item.id } })}
+                  testID={`book-rdv-${item.id}`}
+                >
+                  <Ionicons name="calendar" size={16} color="#fff" />
+                  <Text style={styles.actionRdvText}>Prendre RDV</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           ) : (
             <View style={styles.resCard}>
               <View style={[styles.avatar, { backgroundColor: COLORS.secondary }]}><Text style={styles.avatarText}>{item.user_name?.charAt(0)}</Text></View>
@@ -245,5 +262,32 @@ const styles = StyleSheet.create({
   prestRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   prestName: { flex: 1, color: COLORS.textPrimary, fontSize: 12, fontWeight: "600" },
   prestPrix: { color: COLORS.primary, fontSize: 12, fontWeight: "800" },
+
+  proActions: { flexDirection: "row", gap: 8, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: COLORS.border },
+  actionChat: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.primaryLight,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  actionChatText: { color: COLORS.primary, fontWeight: "700", fontSize: 13 },
+  actionRdv: {
+    flex: 1.4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.primary,
+  },
+  actionRdvText: { color: "#fff", fontWeight: "800", fontSize: 13 },
+
   empty: { color: COLORS.textMuted, textAlign: "center", marginTop: 30, fontStyle: "italic" },
 });

@@ -1,11 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput,
   KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { api, formatError, isQuotaError } from "../../lib/api";
 import { cachedGet, smartPost, smartPatch } from "../../lib/offline";
 import { useAuth } from "../../lib/auth";
@@ -31,6 +31,7 @@ function sameDay(a: Date, b: Date) {
 export default function Rdv() {
   const { user } = useAuth();
   const router = useRouter();
+  const params = useLocalSearchParams<{ pro_id?: string }>();
   const [rdv, setRdv] = useState<any[]>([]);
   const [pros, setPros] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +54,24 @@ export default function Rdv() {
     } finally { setLoading(false); }
   };
   useFocusEffect(useCallback(() => { load(); }, [user]));
+
+  // Auto-open modal si on arrive depuis la recherche avec un pro_id pré-sélectionné
+  useEffect(() => {
+    const pid = params?.pro_id as string | undefined;
+    if (pid && user?.role === "maman") {
+      (async () => {
+        setForm((f) => ({ ...f, pro_id: pid, prestation_id: "", tarif_fcfa: 10000 }));
+        try {
+          const pr = await api.get(`/professionnels/${pid}/prestations`);
+          setPrestations(pr.data || []);
+        } catch {}
+        setModal(true);
+        // nettoyer le paramètre pour éviter ré-ouverture au focus
+        router.setParams({ pro_id: undefined as any });
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.pro_id, user?.role]);
 
   const create = async () => {
     if (!form.pro_id || !form.date || !form.motif || !form.type_consultation) return Alert.alert("Champs requis", "Veuillez remplir tous les champs");
@@ -122,6 +141,24 @@ export default function Rdv() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: SPACING.xl, paddingTop: 6, paddingBottom: 60 }}>
+        {/* CTA principal pour trouver un médecin (Maman) */}
+        {user?.role === "maman" && (
+          <TouchableOpacity
+            style={styles.findDoctorCta}
+            onPress={() => router.push("/search")}
+            testID="find-doctor-cta"
+          >
+            <View style={styles.findDoctorIcon}>
+              <Ionicons name="search" size={24} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.findDoctorTitle}>Trouver un médecin</Text>
+              <Text style={styles.findDoctorSub}>Sage-femme · Pédiatre · Échographie · CMU</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#fff" />
+          </TouchableOpacity>
+        )}
+
         {/* Filtres statut */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersRow}>
           {statuts.map((s) => (
@@ -391,6 +428,26 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: SPACING.xl, paddingBottom: 10 },
   title: { fontSize: 24, fontWeight: "800", color: COLORS.textPrimary },
   addHeader: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+
+  findDoctorCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    padding: 16,
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.primary,
+    marginBottom: 14,
+  },
+  findDoctorIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  findDoctorTitle: { color: "#fff", fontWeight: "800", fontSize: 16 },
+  findDoctorSub: { color: "rgba(255,255,255,0.95)", fontSize: 12, marginTop: 2 },
   tabsRow: { flexDirection: "row", gap: 6, paddingHorizontal: SPACING.xl, marginBottom: 4 },
   tab: { flex: 1, flexDirection: "row", gap: 6, paddingVertical: 10, borderRadius: RADIUS.pill, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
   tabActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
