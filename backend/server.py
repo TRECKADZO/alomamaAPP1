@@ -2981,6 +2981,354 @@ async def paydunya_confirm(token: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+# ----------------------------------------------------------------------
+# PayDunya Disburse / Payout API (transferts vers Mobile Money)
+# https://developers.paydunya.com/doc/EN/api_deboursement
+# ----------------------------------------------------------------------
+PAYDUNYA_DISBURSE_BASE = (
+    "https://app.paydunya.com/api/v2/disburse"
+    if PAYDUNYA_MODE == "live"
+    else "https://app.paydunya.com/sandbox-api/v2/disburse"
+)
+
+
+async def paydunya_disburse_get_invoice(account_alias: str, amount: int, withdraw_mode: str, callback_url: str = "", disburse_id: str = "") -> dict:
+    """Crée une facture de déboursement PayDunya (étape 1)."""
+    import httpx
+    if not os.environ.get("PAYDUNYA_TOKEN"):
+        return {"success": False, "error": "PayDunya non configuré (PAYDUNYA_TOKEN manquant)", "simulated": True}
+    payload: dict = {
+        "account_alias": account_alias,
+        "amount": amount,
+        "withdraw_mode": withdraw_mode,
+    }
+    if callback_url:
+        payload["callback_url"] = callback_url
+    if disburse_id:
+        payload["disburse_id"] = disburse_id
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.post(
+                f"{PAYDUNYA_DISBURSE_BASE}/get-invoice",
+                json=payload,
+                headers=paydunya_headers(),
+            )
+            data = r.json()
+        if data.get("response_code") == "00":
+            return {"success": True, "disburse_invoice": data.get("disburse_invoice") or data.get("disburse_token"), "raw": data}
+        return {"success": False, "error": data.get("response_text") or data.get("description") or "Erreur PayDunya Disburse", "raw": data}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def paydunya_disburse_submit_invoice(disburse_invoice: str, disburse_id: str = "") -> dict:
+    """Soumet la facture de déboursement (étape 2)."""
+    import httpx
+    if not os.environ.get("PAYDUNYA_TOKEN"):
+        return {"success": False, "error": "PayDunya non configuré", "simulated": True}
+    payload: dict = {"disburse_invoice": disburse_invoice}
+    if disburse_id:
+        payload["disburse_id"] = disburse_id
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as http:
+            r = await http.post(
+                f"{PAYDUNYA_DISBURSE_BASE}/submit-invoice",
+                json=payload,
+                headers=paydunya_headers(),
+            )
+            data = r.json()
+        ok = data.get("response_code") == "00" or (data.get("status") or "").lower() in ("success", "completed", "pending")
+        return {"success": ok, "status": data.get("status"), "raw": data, "error": None if ok else (data.get("response_text") or data.get("description"))}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def paydunya_disburse_check_balance() -> dict:
+    """Vérifie le solde du compte PayDunya marchand."""
+    import httpx
+    if not os.environ.get("PAYDUNYA_TOKEN"):
+        return {"success": False, "error": "Non configuré", "balance": 0, "simulated": True}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as http:
+            r = await http.get(f"{PAYDUNYA_DISBURSE_BASE}/check-balance", headers=paydunya_headers())
+            data = r.json()
+        return {"success": data.get("response_code") == "00", "raw": data}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# Modes de retrait supportés par PayDunya pour la Côte d'Ivoire (et autres)
+WITHDRAW_PROVIDERS = {
+    "orange-money-ci": {"label": "Orange Money CI", "mode": "orange-money-ci", "country": "CI"},
+    "mtn-ci": {"label": "MTN Money CI", "mode": "mtn-ci", "country": "CI"},
+    "moov-ci": {"label": "Moov Money CI", "mode": "moov-ci", "country": "CI"},
+    "wave-ci": {"label": "Wave CI", "mode": "wave-ci", "country": "CI"},
+    "orange-money-senegal": {"label": "Orange Money Sénégal", "mode": "orange-money-senegal", "country": "SN"},
+    "wave-senegal": {"label": "Wave Sénégal", "mode": "wave-senegal", "country": "SN"},
+    "free-money-senegal": {"label": "Free Money Sénégal", "mode": "free-money-senegal", "country": "SN"},
+    "mtn-benin": {"label": "MTN Money Bénin", "mode": "mtn-benin", "country": "BJ"},
+    "moov-benin": {"label": "Moov Money Bénin", "mode": "moov-benin", "country": "BJ"},
+    "paydunya": {"label": "Compte PayDunya", "mode": "paydunya", "country": "*"},
+}
+
+
+class MobileMoneyAccountIn(BaseModel):
+    provider: str  # cle de WITHDRAW_PROVIDERS
+    account_alias: str  # numero (ou code BBJ pour paydunya)
+    holder_name: Optional[str] = None
+    debit_account_number: Optional[str] = None  # pour withdraw_mode=paydunya seulement
+
+
+class WithdrawIn(BaseModel):
+    amount_fcfa: int
+    provider: Optional[str] = None  # si fourni override le compte enregistré
+    account_alias: Optional[str] = None
+
+
+# Frais de retrait que la plateforme prélève (couvre frais PayDunya + traitement)
+WITHDRAW_FEE_FCFA = 100  # frais fixes minimum
+WITHDRAW_FEE_PERCENT = 0.01  # 1% du montant
+WITHDRAW_MIN_FCFA = 1000
+
+
+async def compute_pro_balance(pro_id: str) -> dict:
+    """Calcule le solde disponible d'un pro = total_net (consultations payées) - retraits déjà effectués/en cours."""
+    payments = await db.payments.find(
+        {"pro_id": pro_id, "kind": "consultation", "status": "completed"},
+        {"_id": 0, "pro_amount": 1},
+    ).to_list(2000)
+    total_net = sum(p.get("pro_amount", 0) for p in payments)
+    # Soustraire les payouts non échoués
+    payouts = await db.payouts.find(
+        {"pro_id": pro_id, "status": {"$in": ["pending", "processing", "completed"]}},
+        {"_id": 0, "amount_fcfa": 1},
+    ).to_list(500)
+    total_withdrawn = sum(p.get("amount_fcfa", 0) for p in payouts)
+    return {
+        "total_earned": total_net,
+        "total_withdrawn": total_withdrawn,
+        "available": max(0, total_net - total_withdrawn),
+    }
+
+
+@api.get("/pro/mobile-money/providers")
+async def list_withdraw_providers(user=Depends(require_roles("professionnel"))):
+    return [{"key": k, **v} for k, v in WITHDRAW_PROVIDERS.items()]
+
+
+@api.get("/pro/mobile-money")
+async def get_mobile_money(user=Depends(require_roles("professionnel"))):
+    """Récupère le compte Mobile Money enregistré du Pro."""
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "mobile_money": 1})
+    return (u or {}).get("mobile_money") or {}
+
+
+@api.post("/pro/mobile-money")
+async def set_mobile_money(payload: MobileMoneyAccountIn, user=Depends(require_roles("professionnel"))):
+    """Enregistre / met à jour le compte Mobile Money utilisé pour les retraits."""
+    if payload.provider not in WITHDRAW_PROVIDERS:
+        raise HTTPException(400, f"Fournisseur non supporté. Liste: {list(WITHDRAW_PROVIDERS.keys())}")
+    alias = (payload.account_alias or "").strip()
+    if not alias:
+        raise HTTPException(400, "Numéro de téléphone / alias requis")
+    # Validation basique du numéro (digits only, 8-15 chars) sauf pour paydunya
+    if payload.provider != "paydunya":
+        digits = "".join(c for c in alias if c.isdigit())
+        if len(digits) < 8 or len(digits) > 15:
+            raise HTTPException(400, "Numéro de téléphone invalide")
+        alias = digits
+    info = {
+        "provider": payload.provider,
+        "account_alias": alias,
+        "holder_name": payload.holder_name or user.get("nom") or "",
+        "debit_account_number": payload.debit_account_number or "",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.update_one({"id": user["id"]}, {"$set": {"mobile_money": info}})
+    return info
+
+
+@api.get("/pro/balance")
+async def pro_balance(user=Depends(require_roles("professionnel"))):
+    bal = await compute_pro_balance(user["id"])
+    return {
+        **bal,
+        "min_withdraw_fcfa": WITHDRAW_MIN_FCFA,
+        "fee_fixed_fcfa": WITHDRAW_FEE_FCFA,
+        "fee_percent": WITHDRAW_FEE_PERCENT,
+    }
+
+
+@api.get("/pro/payouts")
+async def list_payouts(user=Depends(require_roles("professionnel"))):
+    items = await db.payouts.find({"pro_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api.post("/pro/withdraw")
+async def request_withdraw(payload: WithdrawIn, user=Depends(require_roles("professionnel"))):
+    """Demande de retrait des gains vers le Mobile Money via PayDunya Disburse."""
+    amount = int(payload.amount_fcfa)
+    if amount < WITHDRAW_MIN_FCFA:
+        raise HTTPException(400, f"Montant minimum : {WITHDRAW_MIN_FCFA} FCFA")
+    # Vérifier balance
+    bal = await compute_pro_balance(user["id"])
+    if amount > bal["available"]:
+        raise HTTPException(400, f"Solde insuffisant. Disponible : {bal['available']} FCFA")
+    # Récupérer compte mobile money
+    u_full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    mm = (u_full or {}).get("mobile_money") or {}
+    provider = payload.provider or mm.get("provider")
+    alias = payload.account_alias or mm.get("account_alias")
+    if not provider or not alias:
+        raise HTTPException(400, "Configurez d'abord votre compte Mobile Money dans Paramètres > Retraits")
+    if provider not in WITHDRAW_PROVIDERS:
+        raise HTTPException(400, "Fournisseur non supporté")
+
+    # Calcul des frais
+    fee = WITHDRAW_FEE_FCFA + int(round(amount * WITHDRAW_FEE_PERCENT))
+    net_to_send = amount - fee
+    if net_to_send <= 0:
+        raise HTTPException(400, "Montant trop faible après frais")
+
+    # Création de l'enregistrement payout
+    payout_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    payout_doc = {
+        "id": payout_id,
+        "pro_id": user["id"],
+        "pro_email": user.get("email"),
+        "amount_fcfa": amount,  # montant débité du solde
+        "fee_fcfa": fee,
+        "net_amount_fcfa": net_to_send,  # montant réellement envoyé au mobile money
+        "provider": provider,
+        "withdraw_mode": WITHDRAW_PROVIDERS[provider]["mode"],
+        "account_alias": alias,
+        "status": "pending",
+        "created_at": now.isoformat(),
+        "disburse_invoice": None,
+        "paydunya_response": None,
+        "completed_at": None,
+        "error": None,
+    }
+    await db.payouts.insert_one(payout_doc)
+
+    # Étape 1 : générer l'invoice de déboursement
+    backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
+    callback_url = (backend_url + "/api/payouts/callback") if backend_url else ""
+    inv = await paydunya_disburse_get_invoice(
+        account_alias=alias,
+        amount=net_to_send,
+        withdraw_mode=WITHDRAW_PROVIDERS[provider]["mode"],
+        callback_url=callback_url,
+        disburse_id=payout_id,
+    )
+    if not inv.get("success"):
+        await db.payouts.update_one(
+            {"id": payout_id},
+            {"$set": {"status": "failed", "error": inv.get("error") or "Erreur création invoice", "paydunya_response": inv.get("raw")}},
+        )
+        return {
+            "success": False,
+            "payout_id": payout_id,
+            "error": inv.get("error"),
+            "simulated": inv.get("simulated", False),
+        }
+
+    disburse_invoice_token = inv.get("disburse_invoice")
+    await db.payouts.update_one(
+        {"id": payout_id},
+        {"$set": {"status": "processing", "disburse_invoice": disburse_invoice_token, "paydunya_response": inv.get("raw")}},
+    )
+
+    # Étape 2 : soumettre la facture
+    sub = await paydunya_disburse_submit_invoice(disburse_invoice_token, disburse_id=payout_id)
+    sub_status = (sub.get("status") or "").lower()
+    if sub.get("success"):
+        new_status = "completed" if sub_status == "success" else ("processing" if sub_status in ("pending", "processing") else "completed")
+        update = {"status": new_status, "paydunya_response": sub.get("raw")}
+        if new_status == "completed":
+            update["completed_at"] = datetime.now(timezone.utc).isoformat()
+        await db.payouts.update_one({"id": payout_id}, {"$set": update})
+        try:
+            await push_notif(
+                user["id"],
+                "Retrait envoyé 💸",
+                f"{net_to_send} FCFA en route vers votre {WITHDRAW_PROVIDERS[provider]['label']}",
+                "info",
+            )
+        except Exception:
+            pass
+        return {"success": True, "payout_id": payout_id, "status": new_status, "amount_fcfa": amount, "net_amount_fcfa": net_to_send, "fee_fcfa": fee}
+    else:
+        await db.payouts.update_one(
+            {"id": payout_id},
+            {"$set": {"status": "failed", "error": sub.get("error") or "Erreur submit invoice", "paydunya_response": sub.get("raw")}},
+        )
+        return {"success": False, "payout_id": payout_id, "error": sub.get("error")}
+
+
+@api.post("/payouts/callback")
+async def payouts_callback(request: Request):
+    """Callback PayDunya pour les déboursements (statut final mis à jour)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    disburse_id = body.get("disburse_id") or body.get("data", {}).get("disburse_id")
+    disburse_token = body.get("disburse_invoice") or body.get("data", {}).get("disburse_invoice")
+    status_val = (body.get("status") or body.get("data", {}).get("status") or "").lower()
+    q: dict = {}
+    if disburse_id:
+        q["id"] = disburse_id
+    elif disburse_token:
+        q["disburse_invoice"] = disburse_token
+    if not q:
+        return {"ok": False}
+    payout = await db.payouts.find_one(q, {"_id": 0})
+    if not payout:
+        return {"ok": False}
+    new_status = "completed" if status_val in ("success", "completed", "done") else (
+        "failed" if status_val in ("failed", "error", "rejected") else "processing"
+    )
+    update = {"status": new_status, "paydunya_response": body}
+    if new_status == "completed":
+        update["completed_at"] = datetime.now(timezone.utc).isoformat()
+    await db.payouts.update_one({"id": payout["id"]}, {"$set": update})
+    if new_status == "completed":
+        try:
+            await push_notif(
+                payout["pro_id"],
+                "Retrait confirmé ✅",
+                f"{payout['net_amount_fcfa']} FCFA crédités sur votre Mobile Money",
+                "info",
+            )
+        except Exception:
+            pass
+    elif new_status == "failed":
+        try:
+            await push_notif(
+                payout["pro_id"],
+                "Retrait échoué ❌",
+                "Veuillez vérifier votre numéro Mobile Money et réessayer",
+                "info",
+            )
+        except Exception:
+            pass
+    return {"ok": True}
+
+
+@api.get("/admin/payouts")
+async def admin_list_payouts(user=Depends(require_roles("admin"))):
+    items = await db.payouts.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+
+@api.get("/admin/payouts/balance")
+async def admin_check_balance(user=Depends(require_roles("admin"))):
+    return await paydunya_disburse_check_balance()
+
+
 class SubscribeIn(BaseModel):
     months: int = 1
 

@@ -42,6 +42,15 @@ export default function Revenus() {
           <Text style={styles.heroValue}>{(d.total_net_fcfa || 0).toLocaleString()} <Text style={styles.heroUnit}>FCFA</Text></Text>
         </LinearGradient>
 
+        <TouchableOpacity style={styles.withdrawBtn} onPress={() => router.push("/pro/retraits")}>
+          <Ionicons name="wallet" size={20} color="#fff" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.withdrawTitle}>Retirer vers Mobile Money</Text>
+            <Text style={styles.withdrawSub}>Orange, MTN, Moov, Wave — virement instantané</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#fff" />
+        </TouchableOpacity>
+
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Brut total</Text>
@@ -135,6 +144,10 @@ const styles = StyleSheet.create({
   upgrade: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: RADIUS.md, backgroundColor: "#F59E0B", marginBottom: 20 },
   upgradeTitle: { color: "#fff", fontWeight: "800", fontSize: 14 },
   upgradeSub: { color: "rgba(255,255,255,0.95)", fontSize: 11, marginTop: 2 },
+
+  withdrawBtn: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: RADIUS.md, backgroundColor: "#0EA5E9", marginBottom: 16 },
+  withdrawTitle: { color: "#fff", fontWeight: "800", fontSize: 14 },
+  withdrawSub: { color: "rgba(255,255,255,0.95)", fontSize: 11, marginTop: 2 },
 
   sectionTitle: { fontSize: 15, fontWeight: "800", color: COLORS.textPrimary, marginTop: 14, marginBottom: 8 },
   empty: { color: COLORS.textMuted, textAlign: "center", padding: 20 },
