@@ -497,6 +497,36 @@ test_plan:
   test_priority: "high_first"
 
 frontend:
+  - task: "Pro Mobile Money Withdrawal UI (/pro/retraits)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/pro/retraits.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          End-to-end UI validation PASS on https://cycle-tracker-pro.preview.emergentagent.com (mobile 390x844 + 360x800).
+          Fresh pro account registered via API (test_pro_retraits_90500@test.com / TestPro123!).
+          NOTE: review payload doc says 'nom' but backend RegisterIn now requires 'name' — sent BOTH to succeed (200).
+          (1) /pro/revenus shows hero "Net encaissé" 0 FCFA; blue button "Retirer vers Mobile Money" with subtitle
+              "Orange, MTN, Moov, Wave — virement instantané" present; tap → navigates to /pro/retraits.
+          (2) /pro/retraits header "Retraits Mobile Money" + back chevron; green hero "Solde disponible" 0 FCFA + Total gagné 0 F + Retiré 0 F.
+          (3) Section "Mon compte Mobile Money" in form mode; fields Opérateur (dropdown), Numéro, Nom titulaire (optionnel); button Enregistrer.
+          (4) Tapped Opérateur → modal sheet shows all 4 expected providers (Orange Money CI, MTN Money CI, Moov Money CI, Wave CI) visible.
+          (5) Selected Orange Money CI → modal closes → dropdown shows "Orange Money CI". Filled phone "0707070707" + holder "Dr Test Retraits" → tapped Enregistrer → form switched to display mode showing provider+phone+holder + Modifier button.
+          (6) New section "Demander un retrait" appeared. Entered "500" → live summary visible: "Montant débité du solde : 500 F", "Frais (1% + 100 F) : -105 F", "Vous recevrez : 395 F" — all values exact.
+          (7) Tap green "Envoyer vers Mobile Money" → confirmation dialog (auto-accepted in test) → Solde insuffisant alert (expected with balance=0). No crash.
+          (8) Tapped Modifier → form re-opens with "Annuler" button visible. Tapped Annuler → returns to display mode with saved data intact.
+          (9) "Historique des retraits" → "Aucun retrait pour le moment" shown.
+          (10) Galaxy S21 viewport (360x800): horizontal overflow = 0px, layout intact.
+          (11) Back chevron returns to /pro/revenus.
+          (12) Console errors: 0 (only standard expo-notifications/shadow style warnings, no JS errors).
+          Test pro account NOT deleted (per instructions).
+
+frontend:
   - task: "9 nouvelles fonctionnalités éducatives Maman (foetus, diversification, jalons, plan-naissance, infolettre, maison-securisee, glossaire, activites, outils, quiz)"
     implemented: true
     working: true
