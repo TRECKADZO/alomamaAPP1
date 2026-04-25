@@ -155,7 +155,7 @@ export default function Profil() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Paramètres</Text>
             <MenuRow icon="notifications-outline" label="Notifications" onPress={() => router.push("/notifications")} />
-            <MenuRow icon="lock-closed-outline" label="Sécurité & Mot de passe" />
+            <MenuRow icon="lock-closed-outline" label="Sécurité & Mot de passe" onPress={() => router.push("/changer-mot-de-passe")} />
             <MenuRow icon="language-outline" label="Langue" value="Français" />
             <MenuRow icon="help-circle-outline" label="Aide & Support" />
             <MenuRow icon="information-circle-outline" label="À propos" />

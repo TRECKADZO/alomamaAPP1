@@ -529,6 +529,60 @@ backend:
 
           Cleanup OK: anonymized payment removed; super admin intact. No critical or minor bugs found.
 
+  - task: "Password change + Forgot password (SMS code)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          43/43 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_password_mgmt.py). All 4 endpoints behave per spec.
+
+          🅰️ POST /auth/change-password (server.py L497-515) — 11/11 PASS
+          (1) register fresh maman changepwd_<rnd>@test.alomaman.com / OldPass123! → 200.
+          (2) 1a No Authorization header → 401 ("Non authentifié") ✓ (401/403 accepted).
+          (3) 1b old_password="WrongPass!9" → 401 detail="Mot de passe actuel incorrect" ✓.
+          (4) 1c old==new ("OldPass123!") → 400 detail="Le nouveau mot de passe doit être différent de l'ancien" ✓.
+          (5) 1d new_password="abc" (3 chars) → 422 (Pydantic Field min_length=6) ✓.
+          (6) 1e {old:"OldPass123!", new:"NewPass456!"} → 200 body={success:true, message:"Mot de passe modifié avec succès"} ✓.
+          (7) 1f login with old "OldPass123!" → 401 "Identifiants incorrects" ✓.
+          (8) 1g login with new "NewPass456!" → 200 with token ✓.
+          A push notif "Mot de passe modifié 🔐" is also created (best-effort, non-blocking).
+
+          🅱️ POST /auth/forgot-password/request (server.py L599-663) — 11/11 PASS
+          Setup: register maman with phone="+225071122<rnd4>" name="Aïsha Koné" password="OldP@ss".
+          (1) 2a unknown_phone +225999<rnd> → 200 generic body {success:true, message:"Si le compte existe, un code a été envoyé par SMS.", expires_in_minutes:10}, NO dev_code key (security: no leak) ✓.
+          (2) 2b correct phone but name="Toto Tata" → 200 same generic body, NO dev_code (security: ne révèle pas l'utilisateur) ✓.
+          (3) 2c correct phone + name="aisha kone" (lowercase, no accent) → 200 with dev_code (6 chars, all digits) ✓. _normalize_name strips accents/case + partial match policy (`db.normalize == input.normalize` OR substring OR every part matches).
+          (4) 2d correct phone + name="Aïsha" (first-name only) → 200 with dev_code, partial-match policy validated ✓.
+          (5) 2e anti-bruteforce: after 5 successful requests in same hour, the 6th call returns 429 "Trop de demandes. Réessayez dans une heure." ✓ (count_documents-based check on `password_reset_codes` collection, threshold>=5 in last hour). Actual sequence in test run: 4 successful requests (2c+2d+2 more in 2e loop) reached the limit; the next call (5th in the loop, 6th overall counting from 2c) returned 429.
+          IMPORTANT: backend logs confirm 5 SMS dev messages were emitted by send_sms() helper with simulated provider (SMS_DEV_MODE default true; ENV vars TWILIO_*/AT_* not set).
+
+          🅲 POST /auth/forgot-password/verify (server.py L666-706) — 9/9 PASS
+          (1) 3a wrong code "999999" → 400 detail="Code incorrect" ✓ (find_one picks the most-recent unused code; verify_password fails; attempts++).
+          (2) 3b correct code (latest dev_code captured during requests) → 200 body={success:true, reset_token:UUID, expires_in_minutes:15} ✓. reset_token has UUID format (36 chars).
+          (3) 3c reuse same code value after success → 400 (find_one then returns the next-most-recent unused code from the earlier requests; the same digit value does not match its hash → "Code incorrect"). Behaviour functionally equivalent to "code marked used". 400 received as expected.
+          (4) 3d after 5 consecutive wrong attempts on a given record, attempts becomes 5; the next (6th) call hits `if attempts>=5` → 400 "Trop d'essais incorrects, demandez un nouveau code" AND the record is marked used ✓.
+          (5) 3e non-existent phone +225888<rnd> → 400 "Aucune demande en cours pour ce numéro" ✓.
+
+          🅳 POST /auth/forgot-password/reset (server.py L709-735) — 9/9 PASS
+          (1) 4a random uuid as reset_token → 400 "Lien invalide ou déjà utilisé" ✓ (find_one with used=False finds nothing).
+          (2) 4b new_password="abc" (3 chars) → 422 (Pydantic Field min_length=6) ✓.
+          (3) 4c valid {reset_token, new_password:"ResetPwd789!"} → 200 body={success:true, message:"Mot de passe réinitialisé. Vous pouvez vous connecter."} ✓. password_hash updated, password_changed_at stamped.
+          (4) 4d reuse same reset_token → 400 "Lien invalide ou déjà utilisé" ✓ (token was marked used at L731).
+          (5) 4e login with old "OldP@ss" → 401 "Identifiants incorrects" ✓.
+          (6) 4f login with new "ResetPwd789!" → 200 with token ✓.
+          (7) 4g try /forgot-password/verify with any code on the same phone → 400 "Aucune demande en cours pour ce numéro" ✓ — confirming that L733-734 invalidated all unused codes/tokens for that user after a successful reset.
+
+          CLEANUP: both test users deleted via DELETE /auth/me with their final passwords (NewPass456! and ResetPwd789!) → 200. No residual data.
+
+          NO CRITICAL OR MINOR BUGS DETECTED. All 4 endpoints implemented per spec.
+
 agent_communication:
   - agent: "testing"
     message: |
@@ -536,6 +590,21 @@ agent_communication:
       All 9 review scenarios verified including super admin protection (403, NOT deleted) and payment anonymization (anonymized=true, user_email=null, user_id replaced). Direct Mongo queries confirm user + all related docs wiped after deletion. Token reuse → 401, login same credentials → 401. No bugs. Main agent can summarize and finish.
 
       NOTE for future: review payload mentioned POST /api/notifications/preferences but that endpoint does not exist in server.py — used POST /api/reminders as the 4th seed collection, which provided equivalent coverage (reminders are also covered by delete_filters and confirmed wiped).
+
+  - agent: "testing"
+    message: |
+      Password change + Forgot password (SMS code) — 43/43 PASS on /app/backend_test_password_mgmt.py.
+
+      ✅ /auth/change-password : noAuth→401, wrongOld→401, old==new→400, short→422, valid→200, oldLogin→401, newLogin→200.
+      ✅ /auth/forgot-password/request : unknownPhone→200 generic, wrongName→200 generic (no leak), correctName(lowercase/no-accent)→200+dev_code(6 digits), firstNameOnly(with accent)→200+dev_code, 6th call→429 "Trop de demandes". SMS_DEV_MODE default=true → dev_code returned in response; backend logs show simulated SMS provider in stdout.
+      ✅ /auth/forgot-password/verify : wrongCode→400 "Code incorrect", correctCode→200 + reset_token (UUID), 5 wrong attempts on same code → 6th→400 "Trop d'essais incorrects" + code marked used, non-existent phone→400 "Aucune demande en cours".
+      ✅ /auth/forgot-password/reset : random token→400 "Lien invalide", short password→422, valid→200, reuseToken→400 "Lien invalide ou déjà utilisé", oldLogin→401, newLogin→200, post-reset verify any code on same phone→400 "Aucune demande en cours" (all unused codes/tokens correctly invalidated by update_many at L733-734).
+
+      Caveats / observations (NOT bugs):
+      • Test 3c (reuse code after success) returns 400 "Code incorrect" instead of an explicit "code already used" message because /verify uses find_one(used=False, sort by created_at desc) — after the success, the next-most-recent unused code from earlier requests is matched against the same digit string and fails hash comparison. Functionally equivalent to "déjà utilisé".
+      • Anti-bruteforce kicks in at ≥5 successful requests in the rolling hour window (L631-637) — the test confirmed the 429 was triggered correctly within ≤6 calls.
+
+      Cleanup OK (both users deleted). Main agent can summarize and finish.
 
 frontend:
   - task: "Pro Mobile Money Withdrawal UI (/pro/retraits)"

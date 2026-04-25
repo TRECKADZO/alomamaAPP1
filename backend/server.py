@@ -487,6 +487,255 @@ async def me(user=Depends(get_current_user)):
 
 
 # ----------------------------------------------------------------------
+# Changement de mot de passe (utilisateur connecté)
+# ----------------------------------------------------------------------
+class ChangePasswordIn(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6)
+
+
+@api.post("/auth/change-password")
+async def change_password(payload: ChangePasswordIn, user=Depends(get_current_user)):
+    db_user = await db.users.find_one({"id": user["id"]})
+    if not db_user:
+        raise HTTPException(404, "Utilisateur introuvable")
+    if not verify_password(payload.old_password, db_user.get("password_hash", "")):
+        raise HTTPException(401, "Mot de passe actuel incorrect")
+    if payload.old_password == payload.new_password:
+        raise HTTPException(400, "Le nouveau mot de passe doit être différent de l'ancien")
+    new_hash = hash_password(payload.new_password)
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": new_hash, "password_changed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    try:
+        await push_notif(user["id"], "Mot de passe modifié 🔐", "Votre mot de passe a été changé avec succès.", "info")
+    except Exception:
+        pass
+    return {"success": True, "message": "Mot de passe modifié avec succès"}
+
+
+# ----------------------------------------------------------------------
+# Réinitialisation de mot de passe par code SMS
+# Flux : (1) Request — téléphone+nom+prénom → code SMS  (2) Verify — code → reset_token  (3) Reset — token+new_password
+# ----------------------------------------------------------------------
+import unicodedata as _ud
+import random as _random
+
+
+def _normalize_name(s: str) -> str:
+    """Compare-friendly name : minuscules, sans accents, sans espaces multiples."""
+    if not s:
+        return ""
+    s = s.strip().lower()
+    s = "".join(c for c in _ud.normalize("NFD", s) if _ud.category(c) != "Mn")
+    s = " ".join(s.split())
+    return s
+
+
+async def send_sms(to_phone: str, message: str) -> dict:
+    """
+    Helper d'envoi SMS pluggable.
+    - Si TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_FROM_NUMBER : envoie via Twilio
+    - Si AT_USERNAME + AT_API_KEY : envoie via Africa's Talking
+    - Sinon : log + retourne {sent: false, simulated: true}
+    """
+    import httpx
+    twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    twilio_token = os.environ.get("TWILIO_AUTH_TOKEN")
+    twilio_from = os.environ.get("TWILIO_FROM_NUMBER")
+    at_user = os.environ.get("AT_USERNAME")
+    at_key = os.environ.get("AT_API_KEY")
+    at_sender = os.environ.get("AT_SENDER_ID", "AloMaman")
+
+    # 1) Twilio
+    if twilio_sid and twilio_token and twilio_from:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as http:
+                r = await http.post(
+                    f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json",
+                    auth=(twilio_sid, twilio_token),
+                    data={"To": to_phone, "From": twilio_from, "Body": message},
+                )
+            ok = 200 <= r.status_code < 300
+            return {"sent": ok, "provider": "twilio", "status": r.status_code, "raw": r.text[:200] if not ok else None}
+        except Exception as e:
+            logging.warning(f"Twilio SMS error: {e}")
+
+    # 2) Africa's Talking
+    if at_user and at_key:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as http:
+                r = await http.post(
+                    "https://api.africastalking.com/version1/messaging",
+                    headers={"apiKey": at_key, "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+                    data={"username": at_user, "to": to_phone, "message": message, "from": at_sender},
+                )
+            ok = 200 <= r.status_code < 300
+            return {"sent": ok, "provider": "africastalking", "status": r.status_code}
+        except Exception as e:
+            logging.warning(f"Africa's Talking SMS error: {e}")
+
+    # 3) Mode dev / non configuré
+    logging.info(f"📱 [SMS DEV] {to_phone} → {message}")
+    return {"sent": False, "simulated": True, "provider": "none"}
+
+
+class ForgotPasswordRequestIn(BaseModel):
+    phone: str = Field(min_length=6)
+    name: str = Field(min_length=2)  # nom complet ou prénom+nom (libre)
+
+
+class ForgotPasswordVerifyIn(BaseModel):
+    phone: str
+    code: str = Field(min_length=4, max_length=8)
+
+
+class ForgotPasswordResetIn(BaseModel):
+    reset_token: str
+    new_password: str = Field(min_length=6)
+
+
+@api.post("/auth/forgot-password/request")
+async def forgot_password_request(payload: ForgotPasswordRequestIn):
+    """
+    Étape 1 : l'utilisateur saisit son téléphone + son nom (ou prénom+nom).
+    Si le compte existe ET que le nom correspond, un code à 6 chiffres est envoyé par SMS.
+    Réponse identique en cas de succès et d'échec (sécurité — ne révèle pas l'existence du compte).
+    """
+    phone = _normalize_phone(payload.phone)
+    user = await db.users.find_one({"phone": phone})
+
+    generic_response = {
+        "success": True,
+        "message": "Si le compte existe, un code a été envoyé par SMS.",
+        "expires_in_minutes": 10,
+    }
+    dev_mode = os.environ.get("SMS_DEV_MODE", "true").lower() == "true"
+
+    if not user:
+        return generic_response
+
+    # Vérification du nom (case + accent insensitive, partiel acceptable des deux côtés)
+    db_name_norm = _normalize_name(user.get("name", ""))
+    input_name_norm = _normalize_name(payload.name)
+    name_ok = (
+        db_name_norm == input_name_norm
+        or input_name_norm in db_name_norm
+        or db_name_norm in input_name_norm
+        or all(part in db_name_norm for part in input_name_norm.split() if len(part) >= 2)
+    )
+    if not name_ok:
+        return generic_response
+
+    # Anti-bruteforce : max 5 demandes par téléphone par heure
+    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    recent_count = await db.password_reset_codes.count_documents(
+        {"phone": phone, "created_at": {"$gte": one_hour_ago}}
+    )
+    if recent_count >= 5:
+        raise HTTPException(429, "Trop de demandes. Réessayez dans une heure.")
+
+    # Générer un code à 6 chiffres
+    code = f"{_random.randint(0, 999999):06d}"
+    code_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=10)
+    await db.password_reset_codes.insert_one({
+        "id": code_id,
+        "user_id": user["id"],
+        "phone": phone,
+        "code_hash": hash_password(code),  # on stocke seulement le hash
+        "created_at": now.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "used": False,
+        "attempts": 0,
+    })
+
+    sms_text = f"À lo Maman : votre code de réinitialisation est {code}. Valable 10 minutes. Ne le partagez avec personne."
+    sms_res = await send_sms(phone, sms_text)
+
+    response = dict(generic_response)
+    if dev_mode and (not sms_res.get("sent")):
+        # En mode développement / SMS non configuré, on retourne le code pour permettre les tests
+        response["dev_code"] = code
+        response["dev_warning"] = "Mode développement actif — passez SMS_DEV_MODE=false en production."
+    return response
+
+
+@api.post("/auth/forgot-password/verify")
+async def forgot_password_verify(payload: ForgotPasswordVerifyIn):
+    """Étape 2 : vérifier le code SMS reçu. Retourne un reset_token à usage unique (15 min)."""
+    phone = _normalize_phone(payload.phone)
+    code = (payload.code or "").strip()
+    # Récupérer le code le plus récent non utilisé pour ce téléphone
+    record = await db.password_reset_codes.find_one(
+        {"phone": phone, "used": False},
+        sort=[("created_at", -1)],
+    )
+    if not record:
+        raise HTTPException(400, "Aucune demande en cours pour ce numéro")
+    # Expiré ?
+    try:
+        expires = datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00"))
+    except Exception:
+        expires = datetime.now(timezone.utc) - timedelta(seconds=1)
+    if datetime.now(timezone.utc) > expires:
+        raise HTTPException(400, "Code expiré, demandez un nouveau code")
+    # Trop d'essais ?
+    if (record.get("attempts") or 0) >= 5:
+        await db.password_reset_codes.update_one({"id": record["id"]}, {"$set": {"used": True}})
+        raise HTTPException(400, "Trop d'essais incorrects, demandez un nouveau code")
+    # Vérifier le code
+    if not verify_password(code, record["code_hash"]):
+        await db.password_reset_codes.update_one({"id": record["id"]}, {"$inc": {"attempts": 1}})
+        raise HTTPException(400, "Code incorrect")
+
+    # Code valide — générer un reset_token et marquer le code comme utilisé
+    reset_token = str(uuid.uuid4())
+    token_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+    await db.password_reset_tokens.insert_one({
+        "token": reset_token,
+        "user_id": record["user_id"],
+        "phone": phone,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": token_expires.isoformat(),
+        "used": False,
+    })
+    await db.password_reset_codes.update_one({"id": record["id"]}, {"$set": {"used": True}})
+    return {"success": True, "reset_token": reset_token, "expires_in_minutes": 15}
+
+
+@api.post("/auth/forgot-password/reset")
+async def forgot_password_reset(payload: ForgotPasswordResetIn):
+    """Étape 3 : utiliser le reset_token pour définir un nouveau mot de passe."""
+    record = await db.password_reset_tokens.find_one({"token": payload.reset_token, "used": False})
+    if not record:
+        raise HTTPException(400, "Lien invalide ou déjà utilisé")
+    try:
+        expires = datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00"))
+    except Exception:
+        expires = datetime.now(timezone.utc) - timedelta(seconds=1)
+    if datetime.now(timezone.utc) > expires:
+        raise HTTPException(400, "Lien expiré, recommencez la procédure")
+
+    user = await db.users.find_one({"id": record["user_id"]})
+    if not user:
+        raise HTTPException(404, "Utilisateur introuvable")
+
+    new_hash = hash_password(payload.new_password)
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": new_hash, "password_changed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await db.password_reset_tokens.update_one({"token": payload.reset_token}, {"$set": {"used": True, "used_at": datetime.now(timezone.utc).isoformat()}})
+    # Invalider tout autre code/token actif pour cet utilisateur
+    await db.password_reset_codes.update_many({"user_id": user["id"], "used": False}, {"$set": {"used": True}})
+    await db.password_reset_tokens.update_many({"user_id": user["id"], "used": False, "token": {"$ne": payload.reset_token}}, {"$set": {"used": True}})
+    return {"success": True, "message": "Mot de passe réinitialisé. Vous pouvez vous connecter."}
+
+
+# ----------------------------------------------------------------------
 # Suppression de compte (RGPD / Google Play / Apple App Store)
 # ----------------------------------------------------------------------
 class DeleteAccountIn(BaseModel):

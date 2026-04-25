@@ -136,6 +136,14 @@ export default function Login() {
             )}
           </TouchableOpacity>
 
+          <TouchableOpacity
+            style={styles.forgotBtn}
+            onPress={() => router.push("/(auth)/mot-de-passe-oublie")}
+            testID="forgot-password-link"
+          >
+            <Text style={styles.forgotText}>Mot de passe oublié ?</Text>
+          </TouchableOpacity>
+
           <View style={styles.footerRow}>
             <Text style={styles.footerText}>Pas encore de compte ? </Text>
             <Link href="/(auth)/register" asChild>
@@ -183,6 +191,8 @@ const styles = StyleSheet.create({
     marginTop: SPACING.md,
   },
   btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  forgotBtn: { alignItems: "center", paddingVertical: 12, marginTop: 4 },
+  forgotText: { color: COLORS.primary, fontWeight: "700", fontSize: 13, textDecorationLine: "underline" },
   demoBox: {
     backgroundColor: COLORS.secondaryLight,
     padding: SPACING.lg,
