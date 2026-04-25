@@ -497,6 +497,44 @@ test_plan:
   test_priority: "high_first"
 
 backend:
+  - task: "Endpoints éducatifs (foetus / diversification / jalons) + Plan de naissance + Infolettre"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/educational_content.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          114/114 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_educational.py).
+
+          (1) GET /foetus/{sa} (9/9): /foetus/20→sa=20 title='Mi-parcours 🌟' with all keys {sa,taille,poids,fruit,title,highlights,conseil}; /foetus/4→sa=4 title='Bienvenue 💛'; /foetus/1→clamp to sa=4; /foetus/50→clamp to sa=41.
+          (2) GET /foetus auto SA (12/12): created grossesse for maman with date_debut~14 SA ago → returns current_sa=14, ddr present, all foetus keys; admin→403 'Réservé aux mamans'; pro→403.
+          (3) /diversification (12/12): GET /diversification returns exactly 5 etapes, etape[0]='6 mois', etape[-1]='18-24 mois'; /diversification/8→title 'Plus de saveurs 🍲', age_min=7, age_max=8; /diversification/20→title 'Petit gourmet autonome 🥢'; /diversification/3→404 detail "L'enfant est trop jeune (allaitement exclusif jusqu'à 6 mois)".
+          (4) /jalons (16/16): GET /jalons returns 11 entries with age_mois exactly {2,4,6,9,12,18,24,36,48,60,72}; /jalons/12→title contains '12 mois' (12 mois — 1 an 🎂); /jalons/24→'24 mois — 2 ans 🎈'; /jalons/72→'72 mois — 6 ans 🏫'. Created enfant 13mo → /enfants/{eid}/jalons returns age_mois=13 jalon.age_mois=12 trop_jeune=False; created newborn (1mo) → trop_jeune=True jalon.age_mois=2.
+          (5) /plan-naissance (24/24): GET initial returns {} or empty body; POST with full payload (lieu, accompagnant, position, anesthesie, peau_a_peau=true, allaitement, coupe_cordon, photos_video=false, notes) → 200 with all fields persisted + id + user_id + created_at + updated_at; subsequent GET retrieves same values; idempotent POST with only {lieu_souhaite:'Maternité du CHU'} → 200, lieu updated, updated_at incremented, other Optional fields reset to None (Pydantic upsert with full dict). pro POST→403 'Accès refusé'; admin GET→403.
+          (6) /infolettre (16/16): maman→200 with items=[foetus, jalon, diversification] (5 items: 1 foetus + 2 jalon + 2 diversification across 2 enfants), generated_at + subscriber_name='Aminata Koné' present. Foetus item has sa, fruit, taille, highlights[len=2], conseil. Jalon item has enfant_id, age_mois, alerte[]. Diversification item present for the 13mo child (6-24 range). pro→200 {items:[], message:'Disponible uniquement pour les mamans'}; admin→200 {items:[]}.
+          (7) Regression sanity (12/12): login + /auth/me for maman/pro/admin OK; maman GET /grossesse, /enfants, /rdv, /dossier all 200; GET /search/pros (no param) 200 array.
+
+          Cleanup OK (test enfants deleted). No critical or minor bugs detected. All endpoints behave per spec.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Educational/plan-naissance/infolettre review — 114/114 PASS on /app/backend_test_educational.py.
+      All assertions of the 7 review cases verified. Highlights:
+      • /foetus/{sa} clamp 4..41 OK; /foetus auto-SA correctly computes current_sa from grossesse.date_debut.
+      • Role guards correct everywhere (admin/pro→403 on /foetus; pro→403 on POST /plan-naissance; admin→403 on GET /plan-naissance).
+      • /diversification 5 étapes (6 mois → 18-24 mois), 6→24 lookup OK, <6 → 404 with proper FR detail.
+      • /jalons: 11 entries {2,4,6,9,12,18,24,36,48,60,72}; per-enfant route correctly returns trop_jeune flag + JALONS[0] for newborns.
+      • /plan-naissance upsert idempotent: full POST persists every Optional field; partial POST resets unsupplied Optional fields to None and bumps updated_at; required role-guard works.
+      • /infolettre returns properly typed items (foetus/jalon/diversification) with subscriber_name='Aminata Koné'; non-mamans get items=[] + message.
+      • Regression sanity (login, /auth/me, /grossesse, /enfants, /rdv, /dossier, /search/pros) all 200.
+      No bugs. Main agent can summarize and finish.
+
+backend:
   - task: "/api/search/pros étendu (prestation/max_prix/cmu_only)"
     implemented: true
     working: true
@@ -649,11 +687,45 @@ agent_communication:
       • backend/server.py : `/search/pros` étendu avec query params `prestation` (regex sur nom+description), `max_prix` (FCFA) et `cmu_only` (bool). Retourne les pros qui ont au moins une prestation active matchant les critères, et enrichit chaque pro avec `prestations_match` (top 3 prestations triées par prix).
       • app/search.tsx : refonte de l'UI avec chips rapides (Échographie / Consultation / Accouchement / Suivi prénatal / Vaccination / Pédiatrie), section "Filtres avancés" repliable contenant : Spécialité, Type de prestation, Prix max FCFA, toggle "Seulement les pros qui acceptent la CMU", bouton "Effacer les filtres". Affichage des cartes pro enrichi avec badge CMU + liste des prestations matching avec leurs prix.
 
-      Demande de test backend ciblé sur :
-      1) GET /search/pros sans paramètres → fonctionne comme avant (régression)
-      2) GET /search/pros?prestation=... → ne retourne que les pros qui ont une prestation matching, avec `prestations_match`
-      3) GET /search/pros?max_prix=20000 → ne retourne que les pros ayant au moins 1 prestation ≤20000 FCFA
-      4) GET /search/pros?prestation=...&max_prix=... combiné
-      5) GET /search/pros?cmu_only=true → ne retourne que les pros avec accepte_cmu=true
-      6) Vérifier que le scheduler de rappels démarre bien au startup (log "📅 Reminders scheduler started")
-      7) Régression : tous les autres endpoints existants (auth, grossesse, enfants, rdv, cmu, dossier, fhir, prestations CRUD) fonctionnent toujours.
+  - agent: "main"
+    message: |
+      🆕 Implémentation des 5 fonctionnalités HAUTE PRIORITÉ inspirées de Naître et Grandir, adaptées Afrique de l'Ouest :
+
+      📚 NOUVEAU FICHIER : /app/backend/educational_content.py — datasets statiques :
+      • FOETUS_SEMAINE : 38 semaines (4 → 41 SA) avec taille, poids, fruit comparable, highlights, conseils
+      • DIVERSIFICATION : 5 étapes (6 → 24 mois) avec aliments locaux Afrique de l'Ouest (mil, foufou, igname, niébé, mangue, papaye, foie de poulet, huile de palme rouge, etc.)
+      • JALONS : 11 jalons OMS (2 mois → 72 mois) avec 5 axes : moteur, cognitif, langage, affectif, social + signaux d'alerte
+
+      🔧 NOUVEAUX ENDPOINTS BACKEND (/app/backend/server.py) :
+      1. `GET /api/foetus/{sa}` — Contenu pour la SA donnée (4-41, clamp auto)
+      2. `GET /api/foetus` — Auto-détection SA actuelle de la maman via sa grossesse active (404 si aucune)
+      3. `GET /api/diversification` — Toutes les 5 étapes
+      4. `GET /api/diversification/{age_mois}` — Étape pour l'âge donné (404 si <6 mois)
+      5. `GET /api/jalons` — Tous les jalons (11 entries)
+      6. `GET /api/jalons/{age_mois}` — Jalon pour âge donné
+      7. `GET /api/enfants/{eid}/jalons` — Calcul auto âge en mois + jalon adapté + flag "trop_jeune"
+      8. `GET /api/plan-naissance` — Récupère le plan de la maman (vide si pas créé)
+      9. `POST /api/plan-naissance` — Upsert (16 champs : lieu, accompagnant, position, anesthésie, allaitement, peau-à-peau, photos, notes, en cas de césarienne/complications, etc.)
+      10. `GET /api/infolettre` — Contenu personnalisé : foetus actuel + jalons par enfant + diversification (3 enfants max)
+
+      🎨 NOUVEAUX ÉCRANS FRONTEND :
+      • `/foetus/[sa].tsx` — Écran semaine/semaine avec navigation flèches, fruit emoji, progression trimestres, jump rapide à toute SA
+      • `/foetus/index.tsx` — Redirige vers la SA actuelle de la maman
+      • `/diversification.tsx` — Tabs des 5 étapes, repas type, aliments OK/à éviter, tips
+      • `/jalons/index.tsx` — Liste des enfants pour choisir lequel évaluer
+      • `/jalons/[id].tsx` — Bilan par enfant avec checklist 5 axes, score auto, alertes "quand consulter", lien vers recherche pédiatre
+      • `/plan-naissance.tsx` — Formulaire complet avec chips (position/anesthésie/allaitement/coupe cordon), toggles (peau-à-peau, photos), 10 champs texte, bouton sauver + export PDF
+      • `/infolettre.tsx` — Vue personnalisée avec cartes colorées par type, pull-to-refresh
+
+      🏠 Dashboard Maman : ajout de 5 QuickActions : Foetus S/S, Diversification, Étapes dévelop., Plan naissance, Infolettre.
+
+      Demande de test backend ciblé :
+      1. `/foetus/{sa}` : tester sa=20 (Mi-parcours), sa=4 (clamp inférieur), sa=42 (clamp à 41), sa=12 (1er trimestre), tous doivent retourner les clés title/taille/poids/fruit/highlights/conseil.
+      2. `/foetus` (sans param) en tant que maman avec grossesse active : doit retourner current_sa + ddr. En tant qu'admin/pro/centre : doit retourner 403.
+      3. `/diversification` : doit retourner array de 5 étapes.
+      4. `/diversification/{age_mois}` : age=8 → "Plus de saveurs" (7-8m), age=20 → "Petit gourmet autonome" (18-24m), age=3 → 404.
+      5. `/jalons/{age_mois}` : age=12 → "12 mois — 1 an", age=2 → "2 mois", age=72 → "72 mois — 6 ans".
+      6. `/enfants/{id}/jalons` en tant que maman : doit retourner age_mois, jalon, trop_jeune. Si l'enfant a <2 mois → trop_jeune=true.
+      7. `/plan-naissance` : GET initial = {} ; POST avec {lieu_souhaite, accompagnant, position_souhaitee, anesthesie, peau_a_peau:true, allaitement, notes} → sauvegardé ; GET = données. POST encore (idempotent / mise à jour) → updated_at change.
+      8. `/infolettre` en tant que maman avec grossesse + 1 enfant : items inclut au moins 1 entry de type "foetus" + 1 entry "jalon" pour l'enfant. En tant qu'autre rôle : items=[].
+      9. Régression : tous les endpoints existants (auth, grossesse, enfants, rdv, search/pros, dossier) toujours OK.

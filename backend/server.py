@@ -1821,6 +1821,220 @@ async def resource_categories():
     return {"categories": RESOURCE_CATEGORIES}
 
 
+# ----------------------------------------------------------------------
+# 📚 Contenus éducatifs (foetus semaine/semaine, diversification, jalons)
+# ----------------------------------------------------------------------
+from educational_content import (
+    FOETUS_SEMAINE, DIVERSIFICATION, JALONS,
+    get_foetus_week, get_diversification_step, get_jalons_for_age,
+)
+
+
+@api.get("/foetus/{sa}")
+async def foetus_week(sa: int, user=Depends(get_current_user)):
+    """Retourne le développement du foetus pour la semaine d'aménorrhée donnée."""
+    return get_foetus_week(sa)
+
+
+@api.get("/foetus")
+async def foetus_current(user=Depends(get_current_user)):
+    """Retourne le contenu pour la SA actuelle de la maman (basé sur sa grossesse active)."""
+    if user.get("role") != "maman":
+        raise HTTPException(403, "Réservé aux mamans")
+    g = await db.grossesses.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    if not g or not g.get("date_debut"):
+        raise HTTPException(404, "Aucune grossesse active. Veuillez en créer une dans l'onglet Grossesse.")
+    try:
+        ddr = datetime.fromisoformat(g["date_debut"].replace("Z", "+00:00"))
+        if ddr.tzinfo is None:
+            ddr = ddr.replace(tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(400, "Date de début de grossesse invalide")
+    sa = max(4, min(41, int((datetime.now(timezone.utc) - ddr).days / 7)))
+    return {**get_foetus_week(sa), "current_sa": sa, "ddr": g["date_debut"]}
+
+
+@api.get("/diversification")
+async def diversification_all(user=Depends(get_current_user)):
+    """Retourne tout le calendrier de diversification (5 étapes)."""
+    return {"etapes": DIVERSIFICATION}
+
+
+@api.get("/diversification/{age_mois}")
+async def diversification_for_age(age_mois: int, user=Depends(get_current_user)):
+    """Retourne l'étape de diversification pour l'âge donné en mois."""
+    step = get_diversification_step(age_mois)
+    if not step:
+        raise HTTPException(404, "L'enfant est trop jeune (allaitement exclusif jusqu'à 6 mois)")
+    return step
+
+
+@api.get("/jalons")
+async def jalons_all(user=Depends(get_current_user)):
+    return {"jalons": JALONS}
+
+
+@api.get("/jalons/{age_mois}")
+async def jalons_for_age(age_mois: int, user=Depends(get_current_user)):
+    """Retourne les jalons attendus à un âge donné."""
+    j = get_jalons_for_age(age_mois)
+    if not j:
+        raise HTTPException(404, "Trop jeune pour avoir des jalons spécifiques")
+    return j
+
+
+@api.get("/enfants/{eid}/jalons")
+async def jalons_for_enfant(eid: str, user=Depends(require_roles("maman"))):
+    """Calcule l'âge en mois et retourne les jalons + alertes."""
+    enfant = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    if not enfant:
+        raise HTTPException(404, "Enfant introuvable")
+    try:
+        nais = datetime.fromisoformat(enfant["date_naissance"].replace("Z", "+00:00"))
+        if nais.tzinfo is None:
+            nais = nais.replace(tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(400, "Date de naissance invalide")
+    age_mois = max(0, int((datetime.now(timezone.utc) - nais).days / 30.4375))
+    j = get_jalons_for_age(age_mois)
+    if not j:
+        # Encore trop jeune : retourne le 1er jalon (2 mois) avec un message
+        return {"age_mois": age_mois, "jalon": JALONS[0], "trop_jeune": True}
+    return {"age_mois": age_mois, "jalon": j, "trop_jeune": False}
+
+
+# ----------------------------------------------------------------------
+# 📋 Plan de naissance
+# ----------------------------------------------------------------------
+class PlanNaissanceIn(BaseModel):
+    lieu_souhaite: Optional[str] = None  # "Domicile" / "Centre" / etc.
+    centre_id: Optional[str] = None
+    accompagnant: Optional[str] = None  # nom de l'accompagnant
+    accompagnant_relation: Optional[str] = None  # "conjoint", "mère", "soeur"
+    position_souhaitee: Optional[str] = None  # "Allongée", "Assise", "Accroupie", "Autre"
+    anesthesie: Optional[str] = None  # "Péridurale si possible", "Naturelle", "À discuter"
+    musique: Optional[str] = None
+    ambiance: Optional[str] = None  # "Lumière tamisée", "Calme", etc.
+    peau_a_peau: bool = True
+    coupe_cordon: Optional[str] = None  # "Conjoint", "Médecin", "Moi-même"
+    allaitement: Optional[str] = None  # "Maternel exclusif", "Mixte", "Biberon"
+    placenta: Optional[str] = None
+    photos_video: bool = False
+    visiteurs_apres: Optional[str] = None
+    notes: Optional[str] = None
+    en_cas_cesarienne: Optional[str] = None
+    en_cas_complications: Optional[str] = None
+
+
+@api.get("/plan-naissance")
+async def get_plan_naissance(user=Depends(require_roles("maman"))):
+    """Retourne le plan de naissance de la maman (ou {} si pas encore créé)."""
+    plan = await db.plans_naissance.find_one({"user_id": user["id"]}, {"_id": 0})
+    return plan or {}
+
+
+@api.post("/plan-naissance")
+async def upsert_plan_naissance(payload: PlanNaissanceIn, user=Depends(require_roles("maman"))):
+    """Crée ou met à jour le plan de naissance de la maman."""
+    existing = await db.plans_naissance.find_one({"user_id": user["id"]})
+    data = payload.dict(exclude_none=False)
+    if existing:
+        await db.plans_naissance.update_one(
+            {"user_id": user["id"]},
+            {"$set": {**data, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    else:
+        doc = {
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            **data,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.plans_naissance.insert_one(doc)
+    return await db.plans_naissance.find_one({"user_id": user["id"]}, {"_id": 0})
+
+
+# ----------------------------------------------------------------------
+# 📰 Infolettre hebdomadaire personnalisée (génère contenu adapté SA/âge enfant)
+# ----------------------------------------------------------------------
+@api.get("/infolettre")
+async def infolettre_perso(user=Depends(get_current_user)):
+    """
+    Retourne le contenu personnalisé de la semaine pour la maman.
+    Si grossesse active : développement foetus + conseil. Si enfant actif : jalon + diversification.
+    """
+    if user.get("role") != "maman":
+        return {"items": [], "message": "Disponible uniquement pour les mamans"}
+
+    items = []
+    g = await db.grossesses.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    if g and g.get("date_debut"):
+        try:
+            ddr = datetime.fromisoformat(g["date_debut"].replace("Z", "+00:00"))
+            if ddr.tzinfo is None:
+                ddr = ddr.replace(tzinfo=timezone.utc)
+            sa = max(4, min(41, int((datetime.now(timezone.utc) - ddr).days / 7)))
+            f = get_foetus_week(sa)
+            items.append({
+                "type": "foetus",
+                "sa": sa,
+                "title": f"Semaine {sa} : {f['title']}",
+                "fruit": f["fruit"],
+                "taille": f["taille"],
+                "highlights": f["highlights"][:2],
+                "conseil": f["conseil"],
+                "cta": "Voir le détail",
+                "link": f"/foetus/{sa}",
+            })
+        except Exception:
+            pass
+
+    enfants = await db.enfants.find({"user_id": user["id"]}, {"_id": 0}).to_list(10)
+    for e in enfants[:3]:
+        try:
+            nais = datetime.fromisoformat(e["date_naissance"].replace("Z", "+00:00"))
+            if nais.tzinfo is None:
+                nais = nais.replace(tzinfo=timezone.utc)
+            age_mois = max(0, int((datetime.now(timezone.utc) - nais).days / 30.4375))
+            if age_mois <= 72:
+                jal = get_jalons_for_age(age_mois)
+                if jal:
+                    items.append({
+                        "type": "jalon",
+                        "enfant_id": e["id"],
+                        "enfant_nom": e["nom"],
+                        "age_mois": age_mois,
+                        "title": f"{e['nom']} — {jal['title']}",
+                        "highlights": (jal["moteur"][:1] + jal["langage"][:1] + jal["affectif"][:1]),
+                        "alerte": jal["alerte"][:2],
+                        "cta": "Faire le bilan",
+                        "link": f"/jalons/{e['id']}",
+                    })
+            if 6 <= age_mois <= 24:
+                step = get_diversification_step(age_mois)
+                if step:
+                    items.append({
+                        "type": "diversification",
+                        "enfant_id": e["id"],
+                        "enfant_nom": e["nom"],
+                        "age_mois": age_mois,
+                        "title": f"Alimentation à {age_mois} mois",
+                        "etape": step["title"],
+                        "tips": step["tips"],
+                        "cta": "Voir le calendrier",
+                        "link": "/diversification",
+                    })
+        except Exception:
+            continue
+
+    return {
+        "items": items,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "subscriber_name": user.get("name"),
+    }
+
+
 
 # ----------------------------------------------------------------------
 # Cycle menstruel

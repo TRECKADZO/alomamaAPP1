@@ -388,6 +388,11 @@ function MamanDash({ user, data, router }: any) {
           <QuickAction icon="shield" label="Dossier" onPress={() => router.push("/fhir")} testID="qa-fhir" color="#0EA5E9" />
           <QuickAction icon="medical" label="CMU" onPress={() => router.push("/cmu")} testID="qa-cmu" color="#16A34A" />
           <QuickAction icon="school" label="Ressources" onPress={() => router.push("/ressources")} testID="qa-ressources" color="#10B981" />
+          <QuickAction icon="heart" label="Foetus S/S" onPress={() => router.push("/foetus")} testID="qa-foetus" color="#F472B6" />
+          <QuickAction icon="restaurant" label="Diversification" onPress={() => router.push("/diversification")} testID="qa-diversif" color="#F59E0B" />
+          <QuickAction icon="checkmark-done" label="Étapes dévelop." onPress={() => router.push("/jalons")} testID="qa-jalons" color="#10B981" />
+          <QuickAction icon="clipboard" label="Plan naissance" onPress={() => router.push("/plan-naissance")} testID="qa-plan-naissance" color="#EC4899" />
+          <QuickAction icon="mail" label="Infolettre" onPress={() => router.push("/infolettre")} testID="qa-infolettre" color="#7C3AED" />
           <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} testID="qa-premium" color="#F59E0B" />
         </View>
       </View>
