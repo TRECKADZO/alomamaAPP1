@@ -5,6 +5,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { api } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
@@ -15,6 +16,7 @@ interface Msg {
 }
 
 export default function AssistantIA() {
+  const tabBarHeight = useBottomTabBarHeight();
   const [messages, setMessages] = useState<Msg[]>([
     {
       id: "welcome",
@@ -69,8 +71,8 @@ export default function AssistantIA() {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={tabBarHeight}
       >
         <ScrollView
           ref={scrollRef}
