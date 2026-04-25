@@ -15,7 +15,7 @@ import json
 import requests
 from datetime import datetime, timezone, timedelta
 
-BASE = "https://health-prestation.preview.emergentagent.com/api"
+BASE = "https://cycle-tracker-pro.preview.emergentagent.com/api"
 
 PRO_EMAIL = "pro@test.com"
 PRO_PW = "Pro123!"

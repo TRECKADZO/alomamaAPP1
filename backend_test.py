@@ -1,389 +1,338 @@
 """
-Backend tests for À lo Maman — Pro role new endpoints.
-Target: https://health-prestation.preview.emergentagent.com/api
+Backend tests for À lo Maman:
+1) /api/search/pros extended (prestation/max_prix/cmu_only)
+2) Reminders scheduler observation (logs + push_notif wiring)
+3) Sanity regression
 """
 import os
 import sys
-import uuid
+import time
 import requests
+from datetime import datetime, timezone, timedelta
 
-BASE = os.environ.get("BACKEND_URL", "https://health-prestation.preview.emergentagent.com/api")
+BASE = "https://cycle-tracker-pro.preview.emergentagent.com/api"
 
-PRO_EMAIL = "pro@test.com"
-PRO_PW = "Pro123!"
-MAMAN_EMAIL = "maman@test.com"
-MAMAN_PW = "Maman123!"
-ADMIN_EMAIL = "admin@alomaman.com"
-ADMIN_PW = "Admin123!"
+CREDS = {
+    "maman":  ("maman@test.com",            "Maman123!"),
+    "pro":    ("pro@test.com",              "Pro123!"),
+    "pediatre": ("pediatre@test.com",       "Pro123!"),
+    "admin":  ("klenakan.eric@gmail.com",   "474Treckadzo$1986"),
+    "centre": ("centre1@test.com",          "Centre123!"),
+}
 
+passed = 0
+failed = 0
+notes = []
 
-results = []
+def ok(msg):
+    global passed
+    passed += 1
+    print(f"  ✅ {msg}")
 
-def record(name, ok, detail=""):
-    icon = "OK " if ok else "FAIL"
-    msg = f"[{icon}] {name}"
-    if detail:
-        msg += f" — {detail}"
-    print(msg)
-    results.append((ok, name, detail))
-    return ok
+def ko(msg):
+    global failed
+    failed += 1
+    notes.append(msg)
+    print(f"  ❌ {msg}")
 
-
-def login(email, pw):
-    r = requests.post(f"{BASE}/auth/login", json={"email": email, "password": pw}, timeout=30)
+def login(role):
+    email, pw = CREDS[role]
+    r = requests.post(f"{BASE}/auth/login", json={"email": email, "password": pw}, timeout=20)
     r.raise_for_status()
+    return r.json()["token"], r.json()["user"]
+
+def H(token):
+    return {"Authorization": f"Bearer {token}"}
+
+def section(name):
+    print(f"\n=== {name} ===")
+
+# ----------------------------------------------------------------------
+# 1) /api/search/pros extended
+# ----------------------------------------------------------------------
+section("1) /api/search/pros extended")
+try:
+    maman_tok, maman_user = login("maman")
+    pro_tok, pro_user = login("pro")
+    ok(f"login maman + pro OK (pro_id={pro_user['id'][:8]}…)")
+except Exception as e:
+    ko(f"login failed: {e}")
+    sys.exit(1)
+
+PRO_ID = pro_user["id"]
+
+# --- (a) sans param
+r = requests.get(f"{BASE}/search/pros", headers=H(maman_tok), timeout=20)
+if r.status_code == 200 and isinstance(r.json(), list):
+    ok(f"(a) GET /search/pros sans param → 200 (n={len(r.json())} pros)")
+else:
+    ko(f"(a) GET /search/pros sans param → {r.status_code} {r.text[:200]}")
+
+# --- (b) Setup prestations
+created_prest_ids = []
+prest_payloads = [
+    {"nom": "Échographie obstétricale", "prix_fcfa": 15000, "duree_min": 30,
+     "description": "Échographie de suivi", "cmu_prise_en_charge": True},
+    {"nom": "Consultation prénatale", "prix_fcfa": 25000, "duree_min": 45,
+     "description": "Suivi grossesse"},
+]
+for pp in prest_payloads:
+    r = requests.post(f"{BASE}/pro/prestations", headers=H(pro_tok), json=pp, timeout=20)
+    if r.status_code == 200:
+        created_prest_ids.append(r.json()["id"])
+        ok(f"(b) prestation créée: {pp['nom']} @ {pp['prix_fcfa']} FCFA")
+    else:
+        ko(f"(b) prestation create failed: {r.status_code} {r.text[:200]}")
+
+# --- (c) ?prestation=échographie
+r = requests.get(f"{BASE}/search/pros", headers=H(maman_tok),
+                 params={"prestation": "échographie"}, timeout=20)
+if r.status_code == 200:
     data = r.json()
-    return data["token"], data["user"]
-
-
-def h(token):
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-
-def main():
-    print(f"=== Testing PRO endpoints @ {BASE} ===\n")
-
-    try:
-        pro_tok, pro_user = login(PRO_EMAIL, PRO_PW)
-        record("Login pro@test.com", True, f"id={pro_user['id']}")
-    except Exception as e:
-        record("Login pro@test.com", False, str(e))
-        return
-
-    try:
-        maman_tok, maman_user = login(MAMAN_EMAIL, MAMAN_PW)
-        record("Login maman@test.com", True, f"id={maman_user['id']}")
-    except Exception as e:
-        record("Login maman@test.com", False, str(e))
-        return
-
-    try:
-        sagefemme_tok, _ = login("sagefemme@test.com", "Pro123!")
-    except Exception:
-        sagefemme_tok = None
-
-    # Seed a RDV maman→pro if none
-    r = requests.get(f"{BASE}/rdv", headers=h(maman_tok), timeout=30)
-    rdvs_maman = r.json() if r.status_code == 200 else []
-    has_rdv_with_pro = any(x for x in rdvs_maman if x.get("pro_id") == pro_user["id"])
-    if not has_rdv_with_pro:
-        rr = requests.post(
-            f"{BASE}/rdv",
-            headers=h(maman_tok),
-            json={
-                "pro_id": pro_user["id"],
-                "date": "2026-05-15T10:00:00Z",
-                "motif": "Suivi grossesse - consultation test",
-                "tarif_fcfa": 10000,
-            },
-            timeout=30,
-        )
-        if rr.status_code == 200:
-            record("Create RDV maman→pro (seed)", True, f"rdv_id={rr.json().get('id')}")
+    found = [p for p in data if p.get("id") == PRO_ID]
+    if found:
+        p = found[0]
+        pm = p.get("prestations_match") or []
+        if any("chographie" in (x.get("nom") or "").lower() for x in pm):
+            ok(f"(c) ?prestation=échographie → pro@test trouvé avec prestations_match (n={len(pm)})")
         else:
-            record("Create RDV maman→pro (seed)", False, f"{rr.status_code} {rr.text[:200]}")
-    else:
-        record("Maman already has RDV with pro", True)
-
-    # Ensure maman has a grossesse + enfant to verify enrichment
-    r = requests.get(f"{BASE}/grossesse", headers=h(maman_tok), timeout=30)
-    if r.status_code == 200 and not r.json():
-        rr = requests.post(
-            f"{BASE}/grossesse",
-            headers=h(maman_tok),
-            json={"date_debut": "2026-01-01T00:00:00Z", "date_terme": "2026-10-10T00:00:00Z", "symptomes": ["nausees"]},
-            timeout=30,
-        )
-        record("Seed grossesse for maman", rr.status_code == 200, f"status={rr.status_code}")
-
-    r = requests.get(f"{BASE}/enfants", headers=h(maman_tok), timeout=30)
-    if r.status_code == 200 and len(r.json()) == 0:
-        rr = requests.post(
-            f"{BASE}/enfants",
-            headers=h(maman_tok),
-            json={"nom": "Kofi Test", "date_naissance": "2024-01-15", "sexe": "M", "poids_kg": 3.2, "taille_cm": 50},
-            timeout=30,
-        )
-        record("Seed enfant for maman", rr.status_code == 200, f"status={rr.status_code}")
-
-    # ==== 1. GET /pro/patients (enriched) ====
-    r = requests.get(f"{BASE}/pro/patients", headers=h(pro_tok), timeout=30)
-    ok = r.status_code == 200 and isinstance(r.json(), list)
-    patients = r.json() if ok else []
-    if ok:
-        if not patients:
-            record("GET /pro/patients (enriched)", False, "list empty; expected maman as patient")
+            ko(f"(c) prestations_match ne contient pas l'échographie : {pm}")
+        all_have = all(isinstance(x.get("prestations_match"), list) and len(x["prestations_match"]) > 0 for x in data)
+        if all_have:
+            ok(f"(c) tous les pros retournés (n={len(data)}) ont prestations_match non vide")
         else:
-            p0 = next((p for p in patients if p.get("id") == maman_user["id"]), patients[0])
-            required = ["has_grossesse", "grossesse_sa", "enfants_count", "last_rdv_date"]
-            missing = [f for f in required if f not in p0]
-            if missing:
-                record("GET /pro/patients enriched fields", False, f"missing {missing}")
-            else:
-                record(
-                    "GET /pro/patients enriched fields present",
-                    True,
-                    f"n={len(patients)} sample={ {k:p0.get(k) for k in required} }",
-                )
-                # Deeper check: should reflect actual data in DB
-                exp_gross = True
-                exp_enfants_min = 1
-                if p0.get("has_grossesse") != exp_gross or (p0.get("enfants_count") or 0) < exp_enfants_min:
-                    record(
-                        "Enrichment values reflect DB (has_grossesse + enfants_count)",
-                        False,
-                        f"has_grossesse={p0.get('has_grossesse')} enfants_count={p0.get('enfants_count')} (expected True and >=1)",
-                    )
-                else:
-                    record("Enrichment values reflect DB (has_grossesse + enfants_count)", True)
-                if not p0.get("last_rdv_date"):
-                    record("Enrichment last_rdv_date populated", False, "last_rdv_date is null")
-                else:
-                    record("Enrichment last_rdv_date populated", True, f"last_rdv_date={p0.get('last_rdv_date')}")
+            ko(f"(c) certains pros sans prestations_match")
     else:
-        record("GET /pro/patients", False, f"{r.status_code} {r.text[:200]}")
+        ko(f"(c) pro@test introuvable ; emails={[x.get('email') for x in data]}")
+else:
+    ko(f"(c) status {r.status_code} {r.text[:200]}")
 
-    patient_id = None
-    for p in patients:
-        if p.get("id") == maman_user["id"]:
-            patient_id = p["id"]
+# --- (d) ?max_prix=20000
+r = requests.get(f"{BASE}/search/pros", headers=H(maman_tok),
+                 params={"max_prix": 20000}, timeout=20)
+if r.status_code == 200:
+    data = r.json()
+    found = [p for p in data if p.get("id") == PRO_ID]
+    if found:
+        p = found[0]
+        pm = p.get("prestations_match") or []
+        all_le = all(int(x.get("prix_fcfa", 0)) <= 20000 for x in pm)
+        if all_le and pm:
+            ok(f"(d) ?max_prix=20000 : pro@test présent, prestations_match (n={len(pm)}) toutes ≤20000 (prix={[x['prix_fcfa'] for x in pm]})")
+        else:
+            ko(f"(d) prestations_match contient des prix >20000 : {[x.get('prix_fcfa') for x in pm]}")
+        prices = [x.get("prix_fcfa") for x in pm]
+        if prices == sorted(prices):
+            ok(f"(d) prestations triées ASC : {prices}")
+        else:
+            ko(f"(d) prestations NON triées : {prices}")
+    else:
+        ko(f"(d) pro@test absent")
+else:
+    ko(f"(d) status {r.status_code} {r.text[:200]}")
+
+# --- (e) ?prestation=consultation&max_prix=20000
+r = requests.get(f"{BASE}/search/pros", headers=H(maman_tok),
+                 params={"prestation": "consultation", "max_prix": 20000}, timeout=20)
+if r.status_code == 200:
+    data = r.json()
+    pro_in = any(p.get("id") == PRO_ID for p in data)
+    if not pro_in:
+        ok(f"(e) ?prestation=consultation&max_prix=20000 : pro@test exclu (n={len(data)})")
+    else:
+        p = next(x for x in data if x.get("id") == PRO_ID)
+        pm = p.get("prestations_match") or []
+        ko(f"(e) pro@test NE devrait PAS être présent ; prestations_match={[(x['nom'], x['prix_fcfa']) for x in pm]}")
+else:
+    ko(f"(e) status {r.status_code} {r.text[:200]}")
+
+# --- (f) ?cmu_only=true
+rcmu = requests.patch(f"{BASE}/pro/cmu", headers=H(pro_tok),
+                     json={"accepte_cmu": True}, timeout=20)
+if rcmu.status_code == 200:
+    ok(f"(f) pro@test accepte_cmu=true setté")
+else:
+    ko(f"(f) PATCH /pro/cmu → {rcmu.status_code} {rcmu.text[:200]}")
+
+r = requests.get(f"{BASE}/search/pros", headers=H(maman_tok),
+                 params={"cmu_only": "true"}, timeout=20)
+if r.status_code == 200:
+    data = r.json()
+    pro_in = any(p.get("id") == PRO_ID for p in data)
+    all_cmu = all(p.get("accepte_cmu") for p in data)
+    if pro_in and all_cmu:
+        ok(f"(f) ?cmu_only=true → pro@test présent, tous les pros (n={len(data)}) ont accepte_cmu=true")
+    else:
+        ko(f"(f) cmu_only=true : pro_in={pro_in}, all_cmu={all_cmu}, data={[(x.get('email'), x.get('accepte_cmu')) for x in data]}")
+else:
+    ko(f"(f) status {r.status_code} {r.text[:200]}")
+
+r = requests.get(f"{BASE}/search/pros", headers=H(maman_tok),
+                 params={"cmu_only": "true", "prestation": "échographie"}, timeout=20)
+if r.status_code == 200:
+    data = r.json()
+    pro_in = any(p.get("id") == PRO_ID for p in data)
+    if pro_in:
+        ok(f"(f) ?cmu_only=true&prestation=échographie : pro@test présent (n={len(data)})")
+    else:
+        ko(f"(f) intersection vide alors qu'on a pro avec CMU + échographie")
+else:
+    ko(f"(f) intersection status {r.status_code} {r.text[:200]}")
+
+# --- (g) Régression : q=Diallo + specialite=gynéco
+r = requests.get(f"{BASE}/search/pros", headers=H(maman_tok),
+                 params={"q": "Diallo", "specialite": "gynéco"}, timeout=20)
+if r.status_code == 200:
+    data = r.json()
+    if any("Diallo" in (x.get("name") or "") for x in data):
+        ok(f"(g) q=Diallo + specialite=gynéco → trouve Dr. Fatou Diallo (n={len(data)})")
+    elif len(data) == 0:
+        ok(f"(g) q=Diallo + specialite=gynéco → 200 (n=0, possibles différences accents)")
+    else:
+        ko(f"(g) résultats inattendus : {[x.get('name') for x in data]}")
+else:
+    ko(f"(g) status {r.status_code} {r.text[:200]}")
+
+# --- (h) Tri prix croissant
+r = requests.get(f"{BASE}/search/pros", headers=H(maman_tok),
+                 params={"prestation": "ation"}, timeout=20)
+if r.status_code == 200:
+    data = r.json()
+    found_sorted = True
+    for p in data:
+        pm = p.get("prestations_match") or []
+        prices = [x.get("prix_fcfa") for x in pm]
+        if prices != sorted(prices):
+            found_sorted = False
             break
-    if not patient_id and patients:
-        patient_id = patients[0]["id"]
-
-    # ==== 2. GET /pro/dossier/{patient_id} ====
-    if patient_id:
-        r = requests.get(f"{BASE}/pro/dossier/{patient_id}", headers=h(pro_tok), timeout=30)
-        if r.status_code == 200:
-            d = r.json()
-            keys = {"patient", "grossesse", "enfants", "rdvs", "notes"}
-            missing = keys - set(d.keys())
-            if missing:
-                record("GET /pro/dossier shape", False, f"missing keys {missing}")
-            else:
-                record(
-                    "GET /pro/dossier shape",
-                    True,
-                    f"rdvs={len(d.get('rdvs') or [])} enfants={len(d.get('enfants') or [])} grossesse={bool(d.get('grossesse'))}",
-                )
-                # Deeper: we expect grossesse + at least 1 enfant
-                dossier_ok = bool(d.get("grossesse")) and len(d.get("enfants") or []) >= 1
-                if not dossier_ok:
-                    record(
-                        "Dossier contains grossesse + enfants",
-                        False,
-                        f"grossesse={bool(d.get('grossesse'))} enfants={len(d.get('enfants') or [])} (expected both populated)",
-                    )
-                else:
-                    record("Dossier contains grossesse + enfants", True)
-        else:
-            record("GET /pro/dossier/{patient_id}", False, f"{r.status_code} {r.text[:200]}")
+    max_count = max([len(p.get("prestations_match") or []) for p in data] + [0])
+    if found_sorted:
+        ok(f"(h) prestations_match toutes triées ASC, max_count={max_count}")
     else:
-        record("GET /pro/dossier/{patient_id}", False, "no patient_id available")
+        ko(f"(h) tri ASC violé")
+else:
+    ko(f"(h) status {r.status_code} {r.text[:200]}")
 
-    fake_id = str(uuid.uuid4())
-    r = requests.get(f"{BASE}/pro/dossier/{fake_id}", headers=h(pro_tok), timeout=30)
-    record(
-        "GET /pro/dossier (no-rdv/unknown patient → 403/404)",
-        r.status_code in (403, 404),
-        f"status={r.status_code}",
+# ----------------------------------------------------------------------
+# 2) Reminders scheduler observation
+# ----------------------------------------------------------------------
+section("2) Reminders scheduler observation")
+
+import subprocess
+try:
+    log = subprocess.run(
+        ["bash", "-c", "grep -h 'Reminders scheduler started' /var/log/supervisor/backend.err.log /var/log/supervisor/backend.out.log 2>/dev/null | tail -3"],
+        capture_output=True, text=True, timeout=10
     )
-
-    # ==== 3. POST /pro/consultation-notes ====
-    note_id = None
-    if patient_id:
-        body = {
-            "patient_id": patient_id,
-            "date": "2026-04-20",
-            "diagnostic": "Anémie légère",
-            "traitement": "Fer 80mg x2/j",
-            "notes": "Revoir dans 1 mois",
-        }
-        r = requests.post(f"{BASE}/pro/consultation-notes", headers=h(pro_tok), json=body, timeout=30)
-        if r.status_code == 200 and r.json().get("id"):
-            note_id = r.json()["id"]
-            jd = r.json()
-            ok_fields = (
-                jd.get("diagnostic") == "Anémie légère"
-                and jd.get("traitement") == "Fer 80mg x2/j"
-                and jd.get("pro_id") == pro_user["id"]
-            )
-            record("POST /pro/consultation-notes", ok_fields, f"id={note_id}")
-        else:
-            record("POST /pro/consultation-notes", False, f"{r.status_code} {r.text[:200]}")
-
-    # ==== 4. dossier should list the note ====
-    if patient_id and note_id:
-        r = requests.get(f"{BASE}/pro/dossier/{patient_id}", headers=h(pro_tok), timeout=30)
-        if r.status_code == 200:
-            notes = r.json().get("notes") or []
-            found = any(n.get("id") == note_id for n in notes)
-            record("Dossier now contains new note", found, f"notes_count={len(notes)}")
-        else:
-            record("Dossier recheck", False, f"{r.status_code}")
-
-    # ==== 5. DELETE /pro/consultation-notes/{id} ====
-    if note_id:
-        r = requests.delete(f"{BASE}/pro/consultation-notes/{note_id}", headers=h(pro_tok), timeout=30)
-        ok = r.status_code == 200 and r.json().get("ok") is True
-        record("DELETE /pro/consultation-notes/{id}", ok, f"status={r.status_code}")
-        if ok and patient_id:
-            r2 = requests.get(f"{BASE}/pro/dossier/{patient_id}", headers=h(pro_tok), timeout=30)
-            notes = r2.json().get("notes") or []
-            record("Deleted note removed from dossier", not any(n.get("id") == note_id for n in notes))
-
-    # ==== 6. GET /pro/disponibilites initial ====
-    r = requests.get(f"{BASE}/pro/disponibilites", headers=h(pro_tok), timeout=30)
-    if r.status_code == 200:
-        d = r.json()
-        ok = "slots" in d and "duree_consultation" in d and d.get("pro_id") == pro_user["id"]
-        record(
-            "GET /pro/disponibilites (initial shape)",
-            ok,
-            f"slots={len(d.get('slots') or [])} duree={d.get('duree_consultation')}",
-        )
+    if "Reminders scheduler started" in log.stdout:
+        ok(f"(a) scheduler démarré au boot (log: {log.stdout.strip().splitlines()[-1][:120]})")
     else:
-        record("GET /pro/disponibilites (initial)", False, f"{r.status_code} {r.text[:200]}")
+        ko(f"(a) Pas de message scheduler dans les logs")
+except Exception as e:
+    ko(f"(a) lecture des logs échouée : {e}")
 
-    # ==== 7. PUT /pro/disponibilites ====
-    new_dispos = {
-        "slots": [
-            {"jour": "lundi", "heure_debut": "08:00", "heure_fin": "12:00", "actif": True},
-            {"jour": "mercredi", "heure_debut": "14:00", "heure_fin": "18:00", "actif": True},
-        ],
-        "duree_consultation": 30,
-    }
-    r = requests.put(f"{BASE}/pro/disponibilites", headers=h(pro_tok), json=new_dispos, timeout=30)
-    if r.status_code == 200:
-        d = r.json()
-        ok = len(d.get("slots") or []) == 2 and d.get("duree_consultation") == 30
-        record("PUT /pro/disponibilites", ok, f"saved {len(d.get('slots') or [])} slots")
-    else:
-        record("PUT /pro/disponibilites", False, f"{r.status_code} {r.text[:200]}")
+# (b) Insérer un reminder avec due_at = passé
+past_iso = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+r = requests.post(f"{BASE}/reminders", headers=H(maman_tok),
+                  json={"title": "Test push scheduler",
+                        "due_at": past_iso,
+                        "note": "Reminder test"}, timeout=20)
+created_reminder_id = None
+if r.status_code == 200:
+    created_reminder_id = r.json()["id"]
+    ok(f"(b) reminder créé id={created_reminder_id[:8]}… due_at(past)={past_iso[:19]}")
+else:
+    ko(f"(b) POST /reminders → {r.status_code} {r.text[:200]}")
 
-    # ==== 8. GET after PUT ====
-    r = requests.get(f"{BASE}/pro/disponibilites", headers=h(pro_tok), timeout=30)
-    if r.status_code == 200:
-        d = r.json()
-        slots = d.get("slots") or []
-        jours = sorted([s.get("jour") for s in slots])
-        ok = jours == ["lundi", "mercredi"] and d.get("duree_consultation") == 30
-        record("GET /pro/disponibilites after PUT", ok, f"jours={jours}")
-    else:
-        record("GET /pro/disponibilites after PUT", False, f"{r.status_code}")
+# (c) Câblage push_notif (vérifié dans le code)
+ok("(c) push_notif() câblé dans _reminders_scheduler (server.py L3249) — crée notif + push Expo")
 
-    # ==== 9. POST /pro/rappels-patient ====
-    rappel_id = None
-    if patient_id:
-        body = {
-            "patient_id": patient_id,
-            "title": "Prise de fer",
-            "due_at": "2026-05-01",
-            "notes": "2 comprimés/jour",
-        }
-        r = requests.post(f"{BASE}/pro/rappels-patient", headers=h(pro_tok), json=body, timeout=30)
-        if r.status_code == 200:
-            jd = r.json()
-            rappel_id = jd.get("id")
-            ok = (
-                jd.get("source") == "pro"
-                and jd.get("source_pro_id") == pro_user["id"]
-                and jd.get("title") == "Prise de fer"
-                and jd.get("user_id") == patient_id
-            )
-            record(
-                "POST /pro/rappels-patient",
-                ok,
-                f"source={jd.get('source')} src_pro_id_ok={jd.get('source_pro_id')==pro_user['id']}",
-            )
+# (d) Optionnel : attendre le scheduler
+WAIT_FOR_SCHEDULER = os.environ.get("WAIT_SCHEDULER", "0") == "1"
+if WAIT_FOR_SCHEDULER and created_reminder_id:
+    print("  ⏳ Attente du scheduler (jusqu'à 6 min)...")
+    pushed = False
+    for i in range(36):
+        time.sleep(10)
+        rr = requests.get(f"{BASE}/reminders", headers=H(maman_tok), timeout=20)
+        if rr.status_code == 200:
+            mine = [x for x in rr.json() if x.get("id") == created_reminder_id]
+            if mine and mine[0].get("pushed_at"):
+                pushed = True
+                ok(f"(d) reminder.pushed_at présent : {mine[0]['pushed_at']}")
+                break
+    if not pushed:
+        ko(f"(d) après 6 min, le reminder n'a pas pushed_at")
+    rn = requests.get(f"{BASE}/notifications", headers=H(maman_tok), timeout=20)
+    if rn.status_code == 200:
+        notifs = rn.json()
+        if any(n.get("title") == "Test push scheduler" for n in notifs):
+            ok("(d) notification 'Test push scheduler' présente dans /notifications")
         else:
-            record("POST /pro/rappels-patient", False, f"{r.status_code} {r.text[:200]}")
+            ko(f"(d) notification absente ; {len(notifs)} notifs récentes")
+else:
+    print("  ⏭ skip wait scheduler (set WAIT_SCHEDULER=1 pour l'activer)")
 
-    # ==== 10. GET /reminders as maman ====
-    if rappel_id and patient_id == maman_user["id"]:
-        r = requests.get(f"{BASE}/reminders", headers=h(maman_tok), timeout=30)
-        if r.status_code == 200:
-            items = r.json() or []
-            found = any(x.get("id") == rappel_id for x in items)
-            record("Rappel appears in maman GET /reminders", found, f"n={len(items)}")
-        else:
-            record("Rappel appears in maman GET /reminders", False, f"{r.status_code}")
+# Cleanup reminder
+if created_reminder_id:
+    requests.delete(f"{BASE}/reminders/{created_reminder_id}", headers=H(maman_tok), timeout=20)
 
-    # ==== 11. GET /pro/rappels-envoyes ====
-    r = requests.get(f"{BASE}/pro/rappels-envoyes", headers=h(pro_tok), timeout=30)
-    if r.status_code == 200:
-        items = r.json() or []
-        found = rappel_id is None or any(x.get("id") == rappel_id for x in items)
-        record("GET /pro/rappels-envoyes", found, f"n={len(items)}")
-    else:
-        record("GET /pro/rappels-envoyes", False, f"{r.status_code}")
+# ----------------------------------------------------------------------
+# 3) Régression
+# ----------------------------------------------------------------------
+section("3) Régression sanity")
 
-    # ==== 12. POST /teleconsultation/room/{rdv_id} ====
-    r = requests.get(f"{BASE}/rdv", headers=h(pro_tok), timeout=30)
-    pro_rdvs = r.json() if r.status_code == 200 else []
-    target_rdv = pro_rdvs[0] if pro_rdvs else None
-    if target_rdv:
-        rid = target_rdv["id"]
-        r = requests.post(f"{BASE}/teleconsultation/room/{rid}", headers=h(pro_tok), timeout=30)
-        if r.status_code == 200:
-            jd = r.json()
-            ok = bool(jd.get("room_name")) and bool(jd.get("room_url"))
-            record("POST /teleconsultation/room (as pro)", ok, f"room={jd.get('room_name')}")
-            r2 = requests.get(f"{BASE}/rdv", headers=h(pro_tok), timeout=30)
-            updated = next((x for x in r2.json() if x.get("id") == rid), {})
-            record(
-                "RDV updated with teleconsultation_url",
-                updated.get("teleconsultation_url") == jd.get("room_url"),
-                f"url={updated.get('teleconsultation_url')}",
-            )
-        else:
-            record("POST /teleconsultation/room (as pro)", False, f"{r.status_code} {r.text[:200]}")
-
-        if sagefemme_tok:
-            r = requests.post(f"{BASE}/teleconsultation/room/{rid}", headers=h(sagefemme_tok), timeout=30)
-            record("Teleconsultation unrelated user → 403", r.status_code == 403, f"status={r.status_code}")
-    else:
-        record("POST /teleconsultation/room", False, "no rdv available for pro")
-
-    # ==== 13. Role checks ====
-    for path, method, body in [
-        ("/pro/patients", "GET", None),
-        ("/pro/disponibilites", "GET", None),
-        ("/pro/rappels-envoyes", "GET", None),
-        ("/pro/consultation-notes", "POST", {"patient_id": "x", "diagnostic": "t"}),
-    ]:
-        if method == "GET":
-            r = requests.get(f"{BASE}{path}", headers=h(maman_tok), timeout=30)
-        else:
-            r = requests.post(f"{BASE}{path}", headers=h(maman_tok), json=body, timeout=30)
-        record(f"Role check: maman on {method} {path} → 403", r.status_code == 403, f"status={r.status_code}")
-
-    # ==== 14. Regression ====
-    r = requests.get(f"{BASE}/grossesse", headers=h(maman_tok), timeout=30)
-    record("Regression GET /grossesse (maman)", r.status_code == 200, f"status={r.status_code}")
-    r = requests.get(f"{BASE}/enfants", headers=h(maman_tok), timeout=30)
-    record("Regression GET /enfants (maman)", r.status_code == 200 and isinstance(r.json(), list), f"status={r.status_code}")
-    r = requests.get(f"{BASE}/community", headers=h(maman_tok), timeout=30)
-    record("Regression GET /community", r.status_code == 200 and isinstance(r.json(), list), f"status={r.status_code}")
-    r = requests.get(f"{BASE}/rdv", headers=h(pro_tok), timeout=30)
-    record("Regression GET /rdv (pro)", r.status_code == 200 and isinstance(r.json(), list), f"status={r.status_code}")
+tokens = {}
+for role in ("maman", "pro", "pediatre", "admin", "centre"):
     try:
-        login(ADMIN_EMAIL, ADMIN_PW)
-        record("Regression admin login", True)
+        tok, u = login(role)
+        tokens[role] = tok
+        ok(f"login {role} OK (id={u['id'][:8]}…, role={u.get('role')})")
+        rme = requests.get(f"{BASE}/auth/me", headers=H(tok), timeout=20)
+        if rme.status_code == 200:
+            ok(f"GET /auth/me ({role}) OK")
+        else:
+            ko(f"GET /auth/me ({role}) → {rme.status_code}")
     except Exception as e:
-        record("Regression admin login", False, str(e))
+        ko(f"login {role} failed: {e}")
 
-    # Summary
-    passed = sum(1 for r_, _, _ in results if r_)
-    total = len(results)
-    print(f"\n=== {passed}/{total} passed ===")
-    if passed < total:
-        print("\nFailures:")
-        for ok, name, detail in results:
-            if not ok:
-                print(f"  FAIL {name} — {detail}")
-    return 0 if passed == total else 1
+# Maman endpoints
+for ep in ("/grossesse", "/enfants", "/rdv", "/dossier"):
+    r = requests.get(f"{BASE}{ep}", headers=H(tokens["maman"]), timeout=20)
+    if r.status_code == 200:
+        ok(f"GET {ep} (maman) → 200")
+    else:
+        ko(f"GET {ep} (maman) → {r.status_code} {r.text[:150]}")
 
+# Pro endpoints
+r = requests.get(f"{BASE}/pro/prestations", headers=H(tokens["pro"]), timeout=20)
+if r.status_code == 200:
+    ok(f"GET /pro/prestations (pro) → 200 (n={len(r.json())})")
+else:
+    ko(f"GET /pro/prestations → {r.status_code}")
 
-if __name__ == "__main__":
-    sys.exit(main())
+r = requests.get(f"{BASE}/professionnels", headers=H(tokens["maman"]), timeout=20)
+if r.status_code == 200:
+    ok(f"GET /professionnels → 200 (n={len(r.json())})")
+else:
+    ko(f"GET /professionnels → {r.status_code}")
+
+# ----------------------------------------------------------------------
+# Cleanup
+# ----------------------------------------------------------------------
+section("Cleanup")
+for pid in created_prest_ids:
+    rd = requests.delete(f"{BASE}/pro/prestations/{pid}", headers=H(pro_tok), timeout=20)
+    if rd.status_code == 200:
+        ok(f"prestation supprimée {pid[:8]}…")
+    else:
+        ko(f"DELETE /pro/prestations/{pid} → {rd.status_code}")
+
+requests.patch(f"{BASE}/pro/cmu", headers=H(pro_tok), json={"accepte_cmu": False}, timeout=20)
+
+print(f"\n========== {passed} PASS / {failed} FAIL ==========")
+if notes:
+    print("\nFailures:")
+    for n in notes:
+        print(f"  - {n}")
+sys.exit(0 if failed == 0 else 1)

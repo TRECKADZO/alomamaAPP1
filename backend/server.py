@@ -2075,8 +2075,23 @@ async def push_notif(user_id: str, title: str, body: str, ntype: str = "info"):
 # Recherche
 # ----------------------------------------------------------------------
 @api.get("/search/pros")
-async def search_pros(q: str = "", specialite: str = "", user=Depends(get_current_user)):
-    query = {"role": "professionnel"}
+async def search_pros(
+    q: str = "",
+    specialite: str = "",
+    prestation: str = "",
+    max_prix: int = 0,
+    cmu_only: bool = False,
+    user=Depends(get_current_user),
+):
+    """
+    Recherche de professionnels.
+    - q: recherche libre dans nom/spécialité
+    - specialite: filtre par spécialité (regex)
+    - prestation: filtre par nom de prestation (ex: "échographie")
+    - max_prix: prix maximum FCFA (0 = ignoré)
+    - cmu_only: ne retourner que les pros qui acceptent la CMU
+    """
+    query: dict = {"role": "professionnel"}
     if specialite:
         query["specialite"] = {"$regex": specialite, "$options": "i"}
     if q:
@@ -2084,7 +2099,41 @@ async def search_pros(q: str = "", specialite: str = "", user=Depends(get_curren
             {"name": {"$regex": q, "$options": "i"}},
             {"specialite": {"$regex": q, "$options": "i"}},
         ]
+    if cmu_only:
+        query["accepte_cmu"] = True
+
+    # Si filtre par prestation/prix : on identifie d'abord les prestations matching
+    matching_pro_ids: Optional[set] = None
+    if prestation or (max_prix and max_prix > 0):
+        prest_query: dict = {"active": True}
+        if prestation:
+            prest_query["$or"] = [
+                {"nom": {"$regex": prestation, "$options": "i"}},
+                {"description": {"$regex": prestation, "$options": "i"}},
+            ]
+        if max_prix and max_prix > 0:
+            prest_query["prix_fcfa"] = {"$lte": int(max_prix)}
+        prestations = await db.prestations.find(prest_query, {"_id": 0, "pro_id": 1}).to_list(1000)
+        matching_pro_ids = {p["pro_id"] for p in prestations}
+        if not matching_pro_ids:
+            return []
+        query["id"] = {"$in": list(matching_pro_ids)}
+
     pros = await db.users.find(query, {"_id": 0, "password_hash": 0}).to_list(100)
+
+    # Enrichir chaque pro avec ses prestations matching (pour affichage)
+    if matching_pro_ids is not None:
+        for p in pros:
+            prest_q: dict = {"pro_id": p["id"], "active": True}
+            if prestation:
+                prest_q["$or"] = [
+                    {"nom": {"$regex": prestation, "$options": "i"}},
+                    {"description": {"$regex": prestation, "$options": "i"}},
+                ]
+            if max_prix and max_prix > 0:
+                prest_q["prix_fcfa"] = {"$lte": int(max_prix)}
+            mp = await db.prestations.find(prest_q, {"_id": 0}).sort("prix_fcfa", 1).to_list(5)
+            p["prestations_match"] = mp
     return pros
 
 
@@ -3171,6 +3220,50 @@ async def startup():
         ])
 
     logger.info("Startup complete")
+
+    # 🔔 Démarre le scheduler de rappels (push pour les reminders échus)
+    import asyncio
+    asyncio.create_task(_reminders_scheduler())
+
+
+async def _reminders_scheduler():
+    """
+    Boucle infinie en arrière-plan : toutes les 5 minutes, parcourt les reminders dont
+    `due_at <= now` et qui n'ont pas encore été poussés (`pushed_at` absent).
+    Pour chaque reminder, crée une notification in-app et envoie un push Expo (si token).
+    """
+    import asyncio
+    await asyncio.sleep(15)  # laisser l'app finir de démarrer
+    logger.info("📅 Reminders scheduler started (interval: 5 min)")
+    while True:
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            cursor = db.reminders.find({
+                "due_at": {"$lte": now_iso},
+                "done": {"$ne": True},
+                "pushed_at": {"$exists": False},
+            })
+            count = 0
+            async for r in cursor:
+                try:
+                    await push_notif(
+                        r["user_id"],
+                        r.get("title") or "Rappel",
+                        r.get("description") or r.get("note") or r.get("body") or "Vous avez un rappel programmé.",
+                        ntype=r.get("source") or r.get("kind") or "reminder",
+                    )
+                    await db.reminders.update_one(
+                        {"id": r["id"]},
+                        {"$set": {"pushed_at": datetime.now(timezone.utc).isoformat()}},
+                    )
+                    count += 1
+                except Exception as e:
+                    logger.warning(f"Push reminder {r.get('id')} failed: {e}")
+            if count:
+                logger.info(f"📲 Sent {count} reminder push(es)")
+        except Exception as e:
+            logger.warning(f"Reminders scheduler iteration failed: {e}")
+        await asyncio.sleep(300)  # 5 minutes
 
 
 @app.on_event("shutdown")

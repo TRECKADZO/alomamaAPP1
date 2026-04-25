@@ -1,13 +1,13 @@
 """
 Test: Famille Premium plan + Freemium quotas (enfants + rdv) + Quota error format + regressions.
-Target: https://health-prestation.preview.emergentagent.com/api
+Target: https://cycle-tracker-pro.preview.emergentagent.com/api
 """
 import os
 import sys
 import uuid
 import requests
 
-BASE = "https://health-prestation.preview.emergentagent.com/api"
+BASE = "https://cycle-tracker-pro.preview.emergentagent.com/api"
 
 results = []  # list of (name, ok, detail)
 

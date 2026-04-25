@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, Animated, TouchableOpacity, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useOnlineStatus, useQueueCount, flushQueue, useAutoSync } from "../lib/offline";
 
 export default function OfflineBanner() {
   const online = useOnlineStatus();
   const queueCount = useQueueCount();
+  const router = useRouter();
   const [justReconnected, setJustReconnected] = useState(false);
   const prevOnline = useRef(online);
   const slide = useRef(new Animated.Value(-60)).current;
@@ -60,10 +62,18 @@ export default function OfflineBanner() {
       style={[styles.wrap, { backgroundColor: bg, paddingTop: topPadding, transform: [{ translateY: slide }] }]}
       pointerEvents={visible ? "auto" : "none"}
     >
-      <Ionicons name={icon} size={16} color="#fff" />
-      <Text style={styles.text} numberOfLines={1}>{label}</Text>
+      <TouchableOpacity
+        style={styles.contentRow}
+        onPress={() => router.push("/sync")}
+        activeOpacity={0.8}
+        testID="offline-banner-tap"
+      >
+        <Ionicons name={icon} size={16} color="#fff" />
+        <Text style={styles.text} numberOfLines={1}>{label}</Text>
+        {queueCount > 0 && <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.8)" />}
+      </TouchableOpacity>
       {online && queueCount > 0 && (
-        <TouchableOpacity onPress={() => flushQueue()} style={styles.retryBtn}>
+        <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); flushQueue(); }} style={styles.retryBtn} testID="banner-sync-btn">
           <Text style={styles.retryText}>Synchroniser</Text>
         </TouchableOpacity>
       )}
@@ -80,6 +90,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     width: "100%",
   },
+  contentRow: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
   text: { flex: 1, color: "#fff", fontWeight: "700", fontSize: 12 },
   retryBtn: { backgroundColor: "rgba(255,255,255,0.25)", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
   retryText: { color: "#fff", fontWeight: "800", fontSize: 11 },

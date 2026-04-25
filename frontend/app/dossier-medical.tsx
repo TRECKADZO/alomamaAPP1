@@ -1,16 +1,19 @@
 import { useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform, Share } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { api } from "../lib/api";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
+import { api, formatError } from "../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../constants/theme";
 
 export default function DossierMedical() {
   const router = useRouter();
   const [data, setData] = useState<any>({});
   const [loading, setLoading] = useState(true);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   const load = async () => {
     try {
@@ -25,6 +28,100 @@ export default function DossierMedical() {
     } finally { setLoading(false); }
   };
   useFocusEffect(useCallback(() => { load(); }, []));
+
+  const generateHTML = () => {
+    const u = data?.user_name || "Utilisatrice";
+    const gObj = data?.grossesse;
+    const weeks = gObj?.date_debut ? Math.floor((Date.now() - new Date(gObj.date_debut).getTime()) / (7 * 86400000)) : 0;
+    const enfantsList = data?.enfants || [];
+    const rdvList = data?.rdv || [];
+    const remindersList = (data?.reminders || []).filter((r: any) => !r.done);
+
+    const enfantsHTML = enfantsList.map((e: any) => {
+      const vaccins = (e.vaccins || []).map((v: any) =>
+        `<li>${v.nom} — ${new Date(v.date).toLocaleDateString("fr-FR")}${v.prochain_rappel ? ` (rappel ${new Date(v.prochain_rappel).toLocaleDateString("fr-FR")})` : ""}</li>`
+      ).join("");
+      const mesures = (e.mesures || []).slice(-3).map((m: any) =>
+        `<li>${new Date(m.date).toLocaleDateString("fr-FR")} — ${m.poids_kg ?? "?"} kg · ${m.taille_cm ?? "?"} cm</li>`
+      ).join("");
+      return `<div style="border:1px solid #eee;border-radius:8px;padding:10px;margin-top:10px;">
+        <h3 style="margin:0 0 6px 0;color:#333;">${e.nom} (${e.sexe === "F" ? "♀" : "♂"}) — né(e) le ${new Date(e.date_naissance).toLocaleDateString("fr-FR")}</h3>
+        ${e.groupe_sanguin ? `<p style="margin:2px 0;"><b>Groupe sanguin :</b> ${e.groupe_sanguin}</p>` : ""}
+        ${(e.allergies || []).length ? `<p style="margin:2px 0;"><b>Allergies :</b> ${e.allergies.join(", ")}</p>` : ""}
+        ${vaccins ? `<p style="margin:8px 0 2px 0;"><b>Vaccins :</b></p><ul style="margin:4px 0;">${vaccins}</ul>` : ""}
+        ${mesures ? `<p style="margin:8px 0 2px 0;"><b>Mesures récentes :</b></p><ul style="margin:4px 0;">${mesures}</ul>` : ""}
+      </div>`;
+    }).join("");
+
+    const rdvHTML = rdvList.slice(0, 20).map((r: any) =>
+      `<li>${new Date(r.date).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}
+       — ${r.pro?.name || r.pro_nom || "Praticien"}${r.pro?.specialite ? ` (${r.pro.specialite})` : ""}
+       — <i>${r.motif || ""}</i>
+       — ${r.status}${r.mode === "teleconsultation" ? " · Téléconsultation" : " · Présentiel"}</li>`
+    ).join("");
+
+    const remindersHTML = remindersList.slice(0, 30).map((r: any) =>
+      `<li>${new Date(r.due_at).toLocaleDateString("fr-FR")} — <b>${r.title || ""}</b> ${r.description || r.note || ""}</li>`
+    ).join("");
+
+    const grossesseBlock = gObj ? `
+      <h2 style="color:#C97B63;border-bottom:2px solid #eee;padding-bottom:6px;margin-top:24px;">🤰 Grossesse en cours</h2>
+      <div style="line-height:1.6;color:#333;">
+        <b>${weeks} SA</b><br/>
+        Date des dernières règles : ${gObj.date_debut ? new Date(gObj.date_debut).toLocaleDateString("fr-FR") : "—"}<br/>
+        ${gObj.date_terme ? `DPA prévue : ${new Date(gObj.date_terme).toLocaleDateString("fr-FR")}<br/>` : ""}
+        ${gObj.groupe_sanguin ? `Groupe sanguin : ${gObj.groupe_sanguin}` : ""}
+      </div>` : "";
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+      <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin:30px; color:#333; }
+        h1 { color:#0F766E; }
+        .meta { color:#666; font-size:12px; margin-bottom:20px; }
+        .intro { background:#ECFDF5; padding:16px; border-radius:8px; }
+        ul { padding-left:22px; }
+      </style></head><body>
+      <h1>🌸 Dossier médical — ${u}</h1>
+      <div class="meta">Généré le ${new Date().toLocaleString("fr-FR")} · À lo Maman</div>
+      <div class="intro">
+        <p style="margin:0;">Ce document est confidentiel. Il contient un résumé de votre suivi médical sur l'application À lo Maman.</p>
+      </div>
+      ${grossesseBlock}
+      ${enfantsList.length ? `<h2 style="color:#C97B63;border-bottom:2px solid #eee;padding-bottom:6px;margin-top:24px;">👶 Enfants (${enfantsList.length})</h2>${enfantsHTML}` : ""}
+      ${rdvHTML ? `<h2 style="color:#C97B63;border-bottom:2px solid #eee;padding-bottom:6px;margin-top:24px;">📅 Historique des rendez-vous</h2><ul>${rdvHTML}</ul>` : ""}
+      ${remindersHTML ? `<h2 style="color:#C97B63;border-bottom:2px solid #eee;padding-bottom:6px;margin-top:24px;">⏰ Rappels actifs</h2><ul>${remindersHTML}</ul>` : ""}
+      <div class="meta" style="margin-top:30px;">Document confidentiel généré par l'application À lo Maman.</div>
+      </body></html>`;
+  };
+
+  const exportPDF = async () => {
+    setPdfLoading(true);
+    try {
+      const html = generateHTML();
+      if (Platform.OS === "web") {
+        const w = (window as any).open("", "_blank");
+        if (w) {
+          w.document.write(html);
+          w.document.close();
+          w.focus();
+          setTimeout(() => w.print(), 400);
+        } else {
+          Alert.alert("PDF", "Veuillez autoriser les pop-ups pour imprimer.");
+        }
+        return;
+      }
+      const { uri } = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Mon dossier médical" });
+      } else {
+        await Share.share({ url: uri, message: "Mon dossier médical (PDF)" });
+      }
+    } catch (e: any) {
+      Alert.alert("Erreur PDF", formatError(e));
+    } finally {
+      setPdfLoading(false);
+    }
+  };
 
   if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
 
@@ -99,6 +196,12 @@ export default function DossierMedical() {
 
         {/* Actions */}
         <Text style={styles.sectionTitle}>Actions rapides</Text>
+        <TouchableOpacity onPress={exportPDF} disabled={pdfLoading} testID="dossier-pdf-btn">
+          <LinearGradient colors={["#0F766E", "#14B8A6"]} style={styles.btnAction}>
+            {pdfLoading ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="document-text" size={18} color="#fff" />}
+            <Text style={styles.btnActionText}>{pdfLoading ? "Génération..." : "Télécharger mon dossier (PDF)"}</Text>
+          </LinearGradient>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => router.push("/documents")}>
           <LinearGradient colors={["#14B8A6", "#06B6D4"]} style={styles.btnAction}>
             <Ionicons name="folder" size={18} color="#fff" />
@@ -109,6 +212,12 @@ export default function DossierMedical() {
           <LinearGradient colors={["#0EA5E9", "#3B82F6"]} style={styles.btnAction}>
             <Ionicons name="cloud-download" size={18} color="#fff" />
             <Text style={styles.btnActionText}>Exporter mon dossier (FHIR)</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push("/sync")}>
+          <LinearGradient colors={["#A855F7", "#7C3AED"]} style={styles.btnAction}>
+            <Ionicons name="sync" size={18} color="#fff" />
+            <Text style={styles.btnActionText}>État de la synchronisation</Text>
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>

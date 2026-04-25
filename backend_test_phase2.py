@@ -25,7 +25,7 @@ import requests
 # -------------------------------------------------------------------
 # Config
 # -------------------------------------------------------------------
-BASE = "https://health-prestation.preview.emergentagent.com/api"
+BASE = "https://cycle-tracker-pro.preview.emergentagent.com/api"
 MAMAN = ("maman@test.com", "Maman123!")
 PRO = ("pro@test.com", "Pro123!")
 PRO2 = ("pediatre@test.com", "Pro123!")  # second pro for tele-echo 404 test

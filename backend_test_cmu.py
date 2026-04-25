@@ -10,7 +10,7 @@ import uuid
 import json
 import requests
 
-BASE = "https://health-prestation.preview.emergentagent.com/api"
+BASE = "https://cycle-tracker-pro.preview.emergentagent.com/api"
 
 MAMAN = {"email": "maman@test.com", "password": "Maman123!"}
 PRO = {"email": "pro@test.com", "password": "Pro123!"}

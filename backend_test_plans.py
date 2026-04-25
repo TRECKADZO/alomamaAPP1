@@ -2,7 +2,7 @@
 import requests
 import sys
 
-BASE = "https://health-prestation.preview.emergentagent.com/api"
+BASE = "https://cycle-tracker-pro.preview.emergentagent.com/api"
 
 CREDS = {
     "maman": ("maman@test.com", "Maman123!"),

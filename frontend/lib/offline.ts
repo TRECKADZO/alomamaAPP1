@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Platform } from "react-native";
+import { Platform, AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { api } from "./api";
@@ -31,6 +31,15 @@ NetInfo.addEventListener((state: NetInfoState) => {
 if (Platform.OS === "web" && typeof window !== "undefined") {
   window.addEventListener("online", () => updateOnline(true));
   window.addEventListener("offline", () => updateOnline(false));
+}
+
+// Re-flush queue when app comes back to foreground (mobile)
+if (Platform.OS !== "web") {
+  AppState.addEventListener("change", (nextState) => {
+    if (nextState === "active" && currentOnline) {
+      void flushQueue();
+    }
+  });
 }
 
 export function isOnline(): boolean {
@@ -235,6 +244,39 @@ export function useAutoSync() {
     }, 30000);
     return () => clearInterval(id);
   }, [online]);
+}
+
+// ---------------------------------------------------------------------------
+// Public utilities for queue inspection / management
+// ---------------------------------------------------------------------------
+export async function getQueue(): Promise<QueueItem[]> {
+  return readQueue();
+}
+
+export async function removeQueueItem(id: string): Promise<void> {
+  const q = await readQueue();
+  const next = q.filter((it) => it.id !== id);
+  await writeQueue(next);
+}
+
+export async function clearQueue(): Promise<void> {
+  await writeQueue([]);
+}
+
+// Hook qui donne la liste live + count
+export function useQueue() {
+  const [items, setItems] = useState<QueueItem[]>([]);
+  const refresh = useCallback(async () => {
+    const q = await readQueue();
+    setItems(q);
+  }, []);
+  useEffect(() => {
+    void refresh();
+    const l = (_c: number) => { void refresh(); };
+    queueListeners.add(l);
+    return () => { queueListeners.delete(l); };
+  }, [refresh]);
+  return { items, refresh };
 }
 
 // Utility for screens: returns data + loading + refetch

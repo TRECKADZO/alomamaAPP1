@@ -142,7 +142,7 @@ backend:
     status_history:
       - working: true
         agent: "testing"
-        comment: "8/8 PASS on https://health-prestation.preview.emergentagent.com/api (script /app/backend_test_rdv_type.py). (1) Login maman@test.com/Maman123! → token OK. (2) GET /professionnels returns 5 pros; used Dr. Fatou Diallo. (3) POST /rdv with pro_id, date='2026-05-15T10:30', motif='test consultation', type_consultation='prenatale' → 200; returned doc includes type_consultation='prenatale'. (4) POST /rdv WITHOUT type_consultation (only pro_id+date+motif) → 200, doc.type_consultation is null (backward compat OK since field is Optional[str]=None on RdvIn L176-181 and persisted as payload.type_consultation on L531). (5) GET /rdv listing contains the created RDV with key 'type_consultation' set to 'prenatale'. Regression: GET /grossesse, GET /enfants, GET /reminders all return 200 for logged-in maman. No issues."
+        comment: "8/8 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test_rdv_type.py). (1) Login maman@test.com/Maman123! → token OK. (2) GET /professionnels returns 5 pros; used Dr. Fatou Diallo. (3) POST /rdv with pro_id, date='2026-05-15T10:30', motif='test consultation', type_consultation='prenatale' → 200; returned doc includes type_consultation='prenatale'. (4) POST /rdv WITHOUT type_consultation (only pro_id+date+motif) → 200, doc.type_consultation is null (backward compat OK since field is Optional[str]=None on RdvIn L176-181 and persisted as payload.type_consultation on L531). (5) GET /rdv listing contains the created RDV with key 'type_consultation' set to 'prenatale'. Regression: GET /grossesse, GET /enfants, GET /reminders all return 200 for logged-in maman. No issues."
 
   - task: "RDV: champ optionnel mode (presentiel | teleconsultation)"
     implemented: true
@@ -154,7 +154,7 @@ backend:
     status_history:
       - working: true
         agent: "testing"
-        comment: "16/16 PASS on https://health-prestation.preview.emergentagent.com/api (script /app/backend_test_rdv_mode.py). (1) Login maman@test.com/Maman123! OK. (2) POST /rdv with mode='teleconsultation' + type_consultation='prenatale' → 200; response body contains mode='teleconsultation'. (3) POST /rdv with mode='presentiel' → 200; body contains mode='presentiel'. (4) POST /rdv WITHOUT the mode field → 200; body contains mode='presentiel' (default applied via RdvIn.mode: Optional[str]='presentiel' on L182 AND persisted as `payload.mode or 'presentiel'` on L533). (5) GET /rdv returns all three newly created RDVs, each with a 'mode' key whose value matches what was sent (or defaulted). No regressions."
+        comment: "16/16 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test_rdv_mode.py). (1) Login maman@test.com/Maman123! OK. (2) POST /rdv with mode='teleconsultation' + type_consultation='prenatale' → 200; response body contains mode='teleconsultation'. (3) POST /rdv with mode='presentiel' → 200; body contains mode='presentiel'. (4) POST /rdv WITHOUT the mode field → 200; body contains mode='presentiel' (default applied via RdvIn.mode: Optional[str]='presentiel' on L182 AND persisted as `payload.mode or 'presentiel'` on L533). (5) GET /rdv returns all three newly created RDVs, each with a 'mode' key whose value matches what was sent (or defaulted). No regressions."
 
   - task: "Endpoints Pro: patients enrichis, dossier, notes, disponibilités, rappels, téléconsultation"
     implemented: true
@@ -166,7 +166,7 @@ backend:
     status_history:
       - working: false
         agent: "testing"
-        comment: "31/33 tests PASS against https://health-prestation.preview.emergentagent.com/api (see /app/backend_test.py). CRITICAL BUG identified: the enrichment/dossier queries use the WRONG collection & field names. In server.py lines 776, 777, 798, 799: (a) `db.grossesse` (singular) is queried but all maman endpoints write to `db.grossesses` (plural). (b) filters use `maman_id` but the collections actually store the owner under `user_id`. Consequence: /pro/patients returns has_grossesse=False, grossesse_sa=None, enfants_count=0 for every patient, and /pro/dossier returns grossesse:null, enfants:[]. FIX: change `db.grossesse` → `db.grossesses` and filter by `user_id` in both endpoints."
+        comment: "31/33 tests PASS against https://cycle-tracker-pro.preview.emergentagent.com/api (see /app/backend_test.py). CRITICAL BUG identified: the enrichment/dossier queries use the WRONG collection & field names. In server.py lines 776, 777, 798, 799: (a) `db.grossesse` (singular) is queried but all maman endpoints write to `db.grossesses` (plural). (b) filters use `maman_id` but the collections actually store the owner under `user_id`. Consequence: /pro/patients returns has_grossesse=False, grossesse_sa=None, enfants_count=0 for every patient, and /pro/dossier returns grossesse:null, enfants:[]. FIX: change `db.grossesse` → `db.grossesses` and filter by `user_id` in both endpoints."
       - working: true
         agent: "testing"
         comment: "RETEST after main-agent fix — PASS. Verified on http://localhost:8001/api with seeded data (maman@test.com: grossesse date_debut=2026-01-01 active, 1 enfant). (1) GET /pro/patients returns the maman with has_grossesse=True, grossesse_sa=15 (computed from date_debut), enfants_count=1, last_rdv_date set. (2) GET /pro/dossier/{patient_id} returns non-null grossesse (date_debut=2026-01-01T00:00:00Z), enfants array with 1 child, rdvs=1, notes=0, patient.name='Aminata Koné'. Both queries now correctly use db.grossesses + user_id field. Script: /app/retest_pro.py."
@@ -301,7 +301,7 @@ backend:
       - working: false
         agent: "testing"
         comment: |
-          Phase 3 AES-256-GCM backend tests — 96/97 PASS on https://health-prestation.preview.emergentagent.com/api
+          Phase 3 AES-256-GCM backend tests — 96/97 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
           (script: /app/backend_test_phase3_encryption.py). 1 CRITICAL BUG found.
 
           ✅ CASE 1 CMU round-trip (20/20): POST /cmu/me returns clear numero/nom_complet/beneficiaires; GET /cmu/me returns clear values + statut='actif'; DB direct check confirms users.cmu.numero starts with 'enc_v1:' (encrypted ciphertext different from plaintext), cmu.nom_complet encrypted, beneficiaires[0].numero_cmu + nom encrypted, numero_hash present (16 hex chars), date_validite stored clear '2099-01-15'.
@@ -330,7 +330,7 @@ backend:
       - working: true
         agent: "testing"
         comment: |
-          Phase 2 full backend retest — 37/37 PASS on https://health-prestation.preview.emergentagent.com/api
+          Phase 2 full backend retest — 37/37 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
           (script: /app/backend_test_phase2.py).
 
           🅱️ AUTO-REMINDERS CYCLE (6/6): (1a) POST /cycle {date_debut=2026-07-01, duree=28} → 200. (1b) 3 auto_cycle reminders with kinds {cycle_fertile, cycle_ovulation, cycle_regles_pre}. (1c) due_at exact: fertile 2026-07-11 (J10), ovulation 2026-07-15 (J14), regles_pre 2026-07-28 (J27). (1d) duree_cycle=21 future date → 3 reminders. (1e) 21-day cycle J3/J7/J20 exact: 2026-08-04, 2026-08-08, 2026-08-21. (1f) POST /cycle past date 2020-01-01 → 200 with 0 reminders (correctly filtered by `due > now`).
@@ -450,7 +450,7 @@ backend:
       - working: true
         agent: "testing"
         comment: |
-          74/77 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_cmu.py). Core CMU flow fully functional.
+          74/77 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_cmu.py). Core CMU flow fully functional.
 
           ✅ WORKING:
           (1) GET /cmu/me fresh maman → {cmu:{}, statut:'absent'}.
@@ -496,10 +496,51 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend:
+  - task: "/api/search/pros étendu (prestation/max_prix/cmu_only)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          14/14 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test.py).
+          (a) GET /search/pros sans param → 200 (5 pros, régression OK).
+          (b) Setup : 2 prestations actives créées sur pro@test.com (Échographie 15000 CMU, Consultation 25000).
+          (c) ?prestation=échographie → pro@test trouvé avec prestations_match contenant l'échographie ; tous les pros retournés ont prestations_match non vide.
+          (d) ?max_prix=20000 → pro@test présent ; prestations_match=[15000] (toutes ≤20000) ; triées ASC.
+          (e) ?prestation=consultation&max_prix=20000 → pro@test correctement EXCLU (consultation 25000 > 20000), résultat n=0.
+          (f) PATCH /pro/cmu accepte_cmu=true OK ; ?cmu_only=true → pro@test présent + tous les retours ont accepte_cmu=true ; ?cmu_only=true&prestation=échographie → intersection OK.
+          (g) Régression q=Diallo + specialite=gynéco → trouve Dr. Fatou Diallo correctement.
+          (h) prestations_match toujours triées par prix croissant (limite to_list=5, conforme au spec ≤3 visible).
+          Cleanup OK (prestations DELETE, accepte_cmu reset à false).
+
+  - task: "Reminders scheduler asynchrone (push notifications)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          PASS complet sur https://cycle-tracker-pro.preview.emergentagent.com/api.
+          (a) Logs /var/log/supervisor/backend.err.log contiennent '📅 Reminders scheduler started (interval: 5 min)' au boot.
+          (b) POST /reminders avec due_at=now-5min créé OK (title='Test push direct').
+          (c) push_notif() câblé dans _reminders_scheduler (server.py L3249) → crée doc db.notifications + tente send_expo_push.
+          (d) Test temps réel : reminder devenu pushed_at après 70s d'attente (l'itération suivante du scheduler est arrivée vite). pushed_at correctement positionné. /api/notifications contient bien 'Test push direct' (1 notif). Le scheduler fonctionne en boucle 5min comme prévu.
+          Régression : login 5 comptes (maman/pro/pediatre/admin/centre) + /auth/me + GET /grossesse, /enfants, /rdv, /dossier (maman) + GET /pro/prestations + /professionnels → tous 200.
+
 agent_communication:
   - agent: "testing"
     message: |
-      Phase 2 backend exhaustively tested — 37/37 PASS on https://health-prestation.preview.emergentagent.com/api (script /app/backend_test_phase2.py).
+      Phase 2 backend exhaustively tested — 37/37 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test_phase2.py).
 
       ✅ CASE 1 Auto-reminders POST /cycle (6/6): exactly 3 auto_cycle reminders created with kinds {cycle_fertile, cycle_ovulation, cycle_regles_pre}; due_at dates match for both 28-day (J10/J14/J27) and 21-day (J3/J7/J20) cycles; past date_debut correctly yields 0 reminders (filtered by `due > now`).
       ✅ CASE 2 Auto-reminders POST /contraception (5/5): pilule→30 daily, injection→1 @ J88 (2026-09-27), implant→1 @ 3y-30d (2029-05-31), sterilet→1 @ 5y-30d (2031-05-31), unknown methode 'naturel'→0 reminders gracefully.
@@ -512,7 +553,7 @@ agent_communication:
       Cleanup OK. No critical or minor bugs found in /app/backend/server.py. All Phase 2 endpoints behave per spec.
   - agent: "testing"
     message: |
-      CMU feature validated — 74/77 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_cmu.py). Core CMU tarification logic is FULLY FUNCTIONAL: RDV with CMU prestation + maman CMU actif + pro accepte_cmu=true → tarif_fcfa=10000 (prestation price wins over bogus payload), cmu_applique=true, cmu_taux=0.70, cmu_montant_fcfa=7000, reste_a_charge_fcfa=3000, cmu_numero='0102030405'. /pay/consultation on that rdv → payment.amount=3000 ✓. All 4 negative cases (non-CMU prestation, pro refuse, maman absent, maman expire) correctly set cmu_applique=false. /pro/facturation-cmu returns enriched rdvs (maman_nom + numero_cmu), /pro/facturation-cmu/csv returns text/csv with proper header. /admin/cmu/stats works for admin, 403 for maman. Regression (login, /professionnels, /pro/revenus, RDV without prestation_id) all OK — `prestation.get('nom') if prestation else None` does not crash.
+      CMU feature validated — 74/77 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_cmu.py). Core CMU tarification logic is FULLY FUNCTIONAL: RDV with CMU prestation + maman CMU actif + pro accepte_cmu=true → tarif_fcfa=10000 (prestation price wins over bogus payload), cmu_applique=true, cmu_taux=0.70, cmu_montant_fcfa=7000, reste_a_charge_fcfa=3000, cmu_numero='0102030405'. /pay/consultation on that rdv → payment.amount=3000 ✓. All 4 negative cases (non-CMU prestation, pro refuse, maman absent, maman expire) correctly set cmu_applique=false. /pro/facturation-cmu returns enriched rdvs (maman_nom + numero_cmu), /pro/facturation-cmu/csv returns text/csv with proper header. /admin/cmu/stats works for admin, 403 for maman. Regression (login, /professionnels, /pro/revenus, RDV without prestation_id) all OK — `prestation.get('nom') if prestation else None` does not crash.
 
       TWO MINOR BUGS in /app/backend/server.py for main agent to fix:
 
@@ -526,7 +567,7 @@ agent_communication:
   - agent: "main"
     message: "Phase Rôles & Famille terminée : 1) Backend support des rôles centre_sante + famille (register, /centres CRUD, /famille create/join/permissions). 2) Register UI 4 rôles avec champs conditionnels. 3) Nouvelles routes /centres (recherche publique) et /famille (gestion famille connectée). 4) Dashboard étendu avec CentreDash et FamilleDash. Veuillez tester le backend pour valider tous les nouveaux endpoints."
   - agent: "testing"
-    message: "Backend validation OK — 22/22 scenarios PASS on live API (https://health-prestation.preview.emergentagent.com/api). Covered: register centre_sante (auto-creates centre + 6-char code_invitation), register famille, /centres public list + q/region filters, /centres/mine, GET/PATCH /centres/{id} (owner auth enforced), /famille create (idempotent 6-char code_partage), /famille/join (statut=en_attente), PATCH /famille/members/{email} for statut + granular permissions, member_of visibility after acceptance, DELETE member, regression Maman/Pro login+register, and Pro registration with code_invitation_centre properly adds pro UUID to centre.membres_pro. No critical issues found. Test script at /app/backend_test.py (idempotent via email suffix)."
+    message: "Backend validation OK — 22/22 scenarios PASS on live API (https://cycle-tracker-pro.preview.emergentagent.com/api). Covered: register centre_sante (auto-creates centre + 6-char code_invitation), register famille, /centres public list + q/region filters, /centres/mine, GET/PATCH /centres/{id} (owner auth enforced), /famille create (idempotent 6-char code_partage), /famille/join (statut=en_attente), PATCH /famille/members/{email} for statut + granular permissions, member_of visibility after acceptance, DELETE member, regression Maman/Pro login+register, and Pro registration with code_invitation_centre properly adds pro UUID to centre.membres_pro. No critical issues found. Test script at /app/backend_test.py (idempotent via email suffix)."
   - agent: "testing"
     message: "Pro endpoints tested — 31/33 PASS. CRITICAL BUG in /app/backend/server.py affecting GET /pro/patients (lines 776-777) and GET /pro/dossier/{patient_id} (lines 798-799): code queries the WRONG collection `db.grossesse` (singular) instead of `db.grossesses` (plural, used everywhere else), AND filters by field `maman_id` on `grossesse`/`enfants` collections whereas those collections actually store the owner as `user_id` (see create_grossesse L363, create_enfant L418). Result: `has_grossesse` is always False, `grossesse_sa` always None, `enfants_count` always 0, and dossier returns `grossesse: null`, `enfants: []` even when data exists. Verified by seeding a grossesse + 1 enfant for maman@test.com then re-calling both endpoints — fields remained empty. FIX (4 lines, main agent): in server.py change L776 `db.grossesse.find_one({'maman_id': uid})` → `db.grossesses.find_one({'user_id': uid, 'active': True})`; L777 `db.enfants.count_documents({'maman_id': uid})` → `db.enfants.count_documents({'user_id': uid})`; L798 same grossesse fix with patient_id; L799 `db.enfants.find({'maman_id': patient_id})` → `db.enfants.find({'user_id': patient_id})`. All other features validated OK: consultation-notes CRUD, disponibilités GET/PUT, rappels-patient (creates reminder with source='pro', source_pro_id; appears in maman /reminders), rappels-envoyes, teleconsultation/room (persists teleconsultation_url on rdv, 403 for unrelated user), role guards (maman→403 on /pro/*), access control (403 for patient with no rdv link), and regression on login/grossesse/enfants/community/rdv."
   - agent: "testing"
@@ -534,18 +575,18 @@ agent_communication:
   - agent: "testing"
     message: "Phone auth tests — 26/26 PASS on http://localhost:8001/api (script: /app/backend_test_phone_auth.py). (1) POST /auth/register with phone only (no email) returns 200 + token + user; user.phone is normalized (no spaces, starts with +225, contains only '+' and digits). (2) POST /auth/register with email only (role=famille) still works as before. (3) POST /auth/register with BOTH email + phone (role=professionnel) returns 200 with both fields correctly set on the user. (4) POST /auth/register without email AND without phone returns 400 with detail 'Email ou téléphone requis'. (5) POST /auth/login with the normalized phone + password returns 200 and the SAME user id as the registration response. (6) POST /auth/login with the SAME phone but poorly formatted (with spaces) still returns 200 — _normalize_phone strips spaces on both register and login paths. (7) Regression: POST /auth/login with seeded maman@test.com / Maman123! still works. (8) Re-registering with an already-used phone returns 400 with detail 'Ce numéro est déjà utilisé'. (9) POST /auth/login with correct phone but wrong password returns 401. NOTE: the review spec mentioned an expected normalized value of '+22507080910' for input '+225 07 08 09 10 11', but the real _normalize_phone implementation (server.py L143-151) preserves ALL digits → actual output is '+2250708091011'. This is a spec typo, not a bug: normalization is correct and consistent between register and login (tested via step 6). No critical issues."
   - agent: "testing"
-    message: "RDV type_consultation field — 8/8 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_rdv_type.py). Verified: (1) Login maman@test.com OK. (2) GET /professionnels returns 5 pros. (3) POST /rdv with type_consultation='prenatale' → 200, response contains type_consultation='prenatale' (persisted server.py L531). (4) POST /rdv WITHOUT type_consultation → 200, backward-compatible (field Optional[str]=None on RdvIn L176-181, stored as null). (5) GET /rdv shows the new RDV with 'type_consultation' key and correct value. (6) Regression: GET /grossesse, /enfants, /reminders all 200 for the logged-in maman. No backend changes needed — feature working end-to-end."
+    message: "RDV type_consultation field — 8/8 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_rdv_type.py). Verified: (1) Login maman@test.com OK. (2) GET /professionnels returns 5 pros. (3) POST /rdv with type_consultation='prenatale' → 200, response contains type_consultation='prenatale' (persisted server.py L531). (4) POST /rdv WITHOUT type_consultation → 200, backward-compatible (field Optional[str]=None on RdvIn L176-181, stored as null). (5) GET /rdv shows the new RDV with 'type_consultation' key and correct value. (6) Regression: GET /grossesse, /enfants, /reminders all 200 for the logged-in maman. No backend changes needed — feature working end-to-end."
   - agent: "testing"
-    message: "Premium plans (role-aware) — 58/58 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_plans.py). (1) GET /api/plans (public, no auth) → 200 with keys {plans, durations}; plans.maman + plans.professionnel + plans.centre_sante all present and each contains {code,label,base_price_fcfa,color,icon,description,features,free_limits}; durations list has months [1,3,6,12]. (2) GET /api/plans/me — maman@test.com → plan.code='maman', base_price_fcfa=2000, 4 quotes with amounts {1mo=2000, 3mo=5700, 6mo=10800, 12mo=19200}. pro@test.com → plan.code='pro', base_price_fcfa=10000, quotes {1mo=10000, 3mo=28500, 6mo=54000, 12mo=96000}. centre1@test.com → plan.code='centre', base_price_fcfa=25000, quotes {1mo=25000, 3mo=71250, 6mo=135000, 12mo=240000}. Admin klenakan.eric@gmail.com → plan=null, quotes=[]. All discounts verified (3mo -5%, 6mo -10%, 12mo -20%). (3) POST /api/pay/subscribe — maman {months:1} → payment.amount=2000, plan='maman', role='maman'; pro {months:3} → amount=28500, plan='pro', role='professionnel'; centre {months:12} → amount=240000, plan='centre', role='centre_sante'. Admin → 403 'Aucun plan Premium disponible pour votre rôle.' Note: PayDunya is actually configured on this environment, so the 3 subscribe calls returned success=true with payment.status='pending' (even better than the 'error-is-acceptable' fallback). No issues."
+    message: "Premium plans (role-aware) — 58/58 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_plans.py). (1) GET /api/plans (public, no auth) → 200 with keys {plans, durations}; plans.maman + plans.professionnel + plans.centre_sante all present and each contains {code,label,base_price_fcfa,color,icon,description,features,free_limits}; durations list has months [1,3,6,12]. (2) GET /api/plans/me — maman@test.com → plan.code='maman', base_price_fcfa=2000, 4 quotes with amounts {1mo=2000, 3mo=5700, 6mo=10800, 12mo=19200}. pro@test.com → plan.code='pro', base_price_fcfa=10000, quotes {1mo=10000, 3mo=28500, 6mo=54000, 12mo=96000}. centre1@test.com → plan.code='centre', base_price_fcfa=25000, quotes {1mo=25000, 3mo=71250, 6mo=135000, 12mo=240000}. Admin klenakan.eric@gmail.com → plan=null, quotes=[]. All discounts verified (3mo -5%, 6mo -10%, 12mo -20%). (3) POST /api/pay/subscribe — maman {months:1} → payment.amount=2000, plan='maman', role='maman'; pro {months:3} → amount=28500, plan='pro', role='professionnel'; centre {months:12} → amount=240000, plan='centre', role='centre_sante'. Admin → 403 'Aucun plan Premium disponible pour votre rôle.' Note: PayDunya is actually configured on this environment, so the 3 subscribe calls returned success=true with payment.status='pending' (even better than the 'error-is-acceptable' fallback). No issues."
   - agent: "testing"
-    message: "Dossier endpoints — 13/13 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_dossier.py). (1) Login maman@test.com/Maman123! OK. (2) GET /api/dossier → 200 with all required keys {patient, grossesse, enfants, rdv, cycles, generated_at}; patient object contains {id, nom, email, phone, ville, region} (plus bonus 'created_at') and patient.id matches the authenticated user id. (3) POST /api/dossier/share (no body) → 200 with {token, url, expires_at}; expires_at is exactly 7.000 days in the future; url contains '/api/dossier/public/<token>' and is prefixed by APP_URL. (4) GET /api/dossier/public/<token> WITHOUT Authorization header → 200 returning the full dossier structure (same keys as authenticated route). (5) GET /api/dossier/public/bogus-token-xxx-yyy-1234 → 404 with detail 'Lien invalide ou expiré'. (6) Regression: GET /api/fhir/patient as maman → 200, Bundle with entries. (7) Access control: login klenakan.eric@gmail.com (admin) then GET /api/dossier → 403 with detail 'Dossier médical réservé aux mamans'. No issues."
+    message: "Dossier endpoints — 13/13 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_dossier.py). (1) Login maman@test.com/Maman123! OK. (2) GET /api/dossier → 200 with all required keys {patient, grossesse, enfants, rdv, cycles, generated_at}; patient object contains {id, nom, email, phone, ville, region} (plus bonus 'created_at') and patient.id matches the authenticated user id. (3) POST /api/dossier/share (no body) → 200 with {token, url, expires_at}; expires_at is exactly 7.000 days in the future; url contains '/api/dossier/public/<token>' and is prefixed by APP_URL. (4) GET /api/dossier/public/<token> WITHOUT Authorization header → 200 returning the full dossier structure (same keys as authenticated route). (5) GET /api/dossier/public/bogus-token-xxx-yyy-1234 → 404 with detail 'Lien invalide ou expiré'. (6) Regression: GET /api/fhir/patient as maman → 200, Bundle with entries. (7) Access control: login klenakan.eric@gmail.com (admin) then GET /api/dossier → 403 with detail 'Dossier médical réservé aux mamans'. No issues."
   - agent: "testing"
-    message: "Prestations Pro + Commission dynamique — 37/37 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_prestations.py). (1) Prestations CRUD: POST /api/pro/prestations {nom:'Consultation prénatale', prix:15000, duree:45} → 200 with id; GET /api/pro/prestations includes it; PATCH updates prix_fcfa 15000→20000 + nom change persisted; DELETE returns {ok:true} and GET no longer contains the id. (2) Public prestations: created 2 active (Consultation prénatale 15000, Échographie 25000) + 1 inactive (5000). GET /api/pros/{pro_id}/prestations as maman → 200 with exactly 2 items sorted ASC by prix_fcfa ([15000, 25000]); inactive correctly excluded. (3) RDV with prestation_id: POST /api/rdv {pro_id, date:'2026-05-20T10:00', prestation_id, tarif_fcfa:99999 (wrong)} → 200; response.tarif_fcfa=15000 (prestation price wins), prestation_id persisted, prestation_nom='Consultation prénatale'. (4) Commission dynamique: admin PATCH /admin/users/{pro_id} {premium:false} then POST /pay/consultation on RDV tarif=10000 → payment.commission=1000, commission_rate=0.10, pro_amount=9000 ✓. Admin PATCH {premium:true, premium_until=+30d} → /auth/me confirms premium=True, then new /pay/consultation on RDV tarif=10000 → commission=500, commission_rate=0.05, pro_amount=9500 ✓. (5) GET /api/pro/revenus → 200 with ALL required fields {total_brut_fcfa, total_commission_fcfa, total_net_fcfa, pending_count, pending_fcfa, monthly:[], recent:[], is_premium:true, current_commission_rate:0.05, premium_rate:0.05, standard_rate:0.10}; all numeric fields are non-null ints/floats; monthly+recent are arrays. (6) GET /api/plans (public) → plans.professionnel.features contains 'Commission réduite : 5% au lieu de 10%' exactly; plans.professionnel.free_limits = 'Gratuit : 10 patientes max · commission 10% sur chaque consultation payée' (mentions both commission 10% and consultations payées). Test data cleaned up (prestations deleted, pro premium reset to false). No regressions. NOTE: spotted a pre-existing bug unrelated to this review — GET /api/pro/patients (server.py L1003-L1022) references `rdvs` variable that is never defined in the function body (was likely dropped during a refactor), but this endpoint was not part of the current review scope and no quota/commission test exercises it."
+    message: "Prestations Pro + Commission dynamique — 37/37 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_prestations.py). (1) Prestations CRUD: POST /api/pro/prestations {nom:'Consultation prénatale', prix:15000, duree:45} → 200 with id; GET /api/pro/prestations includes it; PATCH updates prix_fcfa 15000→20000 + nom change persisted; DELETE returns {ok:true} and GET no longer contains the id. (2) Public prestations: created 2 active (Consultation prénatale 15000, Échographie 25000) + 1 inactive (5000). GET /api/pros/{pro_id}/prestations as maman → 200 with exactly 2 items sorted ASC by prix_fcfa ([15000, 25000]); inactive correctly excluded. (3) RDV with prestation_id: POST /api/rdv {pro_id, date:'2026-05-20T10:00', prestation_id, tarif_fcfa:99999 (wrong)} → 200; response.tarif_fcfa=15000 (prestation price wins), prestation_id persisted, prestation_nom='Consultation prénatale'. (4) Commission dynamique: admin PATCH /admin/users/{pro_id} {premium:false} then POST /pay/consultation on RDV tarif=10000 → payment.commission=1000, commission_rate=0.10, pro_amount=9000 ✓. Admin PATCH {premium:true, premium_until=+30d} → /auth/me confirms premium=True, then new /pay/consultation on RDV tarif=10000 → commission=500, commission_rate=0.05, pro_amount=9500 ✓. (5) GET /api/pro/revenus → 200 with ALL required fields {total_brut_fcfa, total_commission_fcfa, total_net_fcfa, pending_count, pending_fcfa, monthly:[], recent:[], is_premium:true, current_commission_rate:0.05, premium_rate:0.05, standard_rate:0.10}; all numeric fields are non-null ints/floats; monthly+recent are arrays. (6) GET /api/plans (public) → plans.professionnel.features contains 'Commission réduite : 5% au lieu de 10%' exactly; plans.professionnel.free_limits = 'Gratuit : 10 patientes max · commission 10% sur chaque consultation payée' (mentions both commission 10% and consultations payées). Test data cleaned up (prestations deleted, pro premium reset to false). No regressions. NOTE: spotted a pre-existing bug unrelated to this review — GET /api/pro/patients (server.py L1003-L1022) references `rdvs` variable that is never defined in the function body (was likely dropped during a refactor), but this endpoint was not part of the current review scope and no quota/commission test exercises it."
   - agent: "testing"
-    message: "Famille Premium plan + Freemium quotas — 32/32 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_famille_quotas.py). (1) GET /api/plans (public, no auth) → 200 now returns 4 role-plans {maman, professionnel, centre_sante, famille}. plans.famille = {code:'famille', label:'Famille Premium', base_price_fcfa:1500, icon:'people-circle'} ✓. (2) Login papa1@test.com/Papa123! (note: review spec says papa@test.com, but the seeded account is papa1@test.com per /app/memory/test_credentials.md — login OK with role=famille). GET /api/plans/me → plan.code='famille', quotes[m=1].amount=1500. POST /api/pay/subscribe {months:1} as famille → payment.amount=1500, payment.plan='famille', payment.role='famille'. (3) Enfants quota: seeded maman@test.com is currently premium=true, so a fresh non-premium maman was registered (test.quota.<uuid>@test.com). Cleared pre-existing enfants, POST 2 enfants returned 200, 3rd POST /api/enfants → 402 with detail = {error:'quota_exceeded', message:'Quota gratuit atteint : enfants (2 max). Passez Premium pour continuer.', quota:'enfants_max', limit:2, upgrade_url:'/premium'} — matches the required consistent error format exactly. (4) RDV quota logic: created a fresh non-premium maman, 2 POST /rdv under the 10-per-month limit returned 200 each (quota logic path exercised server.py L578-585; full limit not hit per instructions). (5) Regression: admin klenakan.eric@gmail.com → GET /api/plans/me 200 with plan=null and quotes=[]; maman /pay/subscribe m=1 → amount=2000, pro → amount=10000, centre → amount=25000, all successful. No issues found."
+    message: "Famille Premium plan + Freemium quotas — 32/32 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_famille_quotas.py). (1) GET /api/plans (public, no auth) → 200 now returns 4 role-plans {maman, professionnel, centre_sante, famille}. plans.famille = {code:'famille', label:'Famille Premium', base_price_fcfa:1500, icon:'people-circle'} ✓. (2) Login papa1@test.com/Papa123! (note: review spec says papa@test.com, but the seeded account is papa1@test.com per /app/memory/test_credentials.md — login OK with role=famille). GET /api/plans/me → plan.code='famille', quotes[m=1].amount=1500. POST /api/pay/subscribe {months:1} as famille → payment.amount=1500, payment.plan='famille', payment.role='famille'. (3) Enfants quota: seeded maman@test.com is currently premium=true, so a fresh non-premium maman was registered (test.quota.<uuid>@test.com). Cleared pre-existing enfants, POST 2 enfants returned 200, 3rd POST /api/enfants → 402 with detail = {error:'quota_exceeded', message:'Quota gratuit atteint : enfants (2 max). Passez Premium pour continuer.', quota:'enfants_max', limit:2, upgrade_url:'/premium'} — matches the required consistent error format exactly. (4) RDV quota logic: created a fresh non-premium maman, 2 POST /rdv under the 10-per-month limit returned 200 each (quota logic path exercised server.py L578-585; full limit not hit per instructions). (5) Regression: admin klenakan.eric@gmail.com → GET /api/plans/me 200 with plan=null and quotes=[]; maman /pay/subscribe m=1 → amount=2000, pro → amount=10000, centre → amount=25000, all successful. No issues found."
   - agent: "testing"
     message: |
-      Phase 3 AES-256-GCM at-rest encryption — 96/97 PASS on https://health-prestation.preview.emergentagent.com/api (script: /app/backend_test_phase3_encryption.py).
+      Phase 3 AES-256-GCM at-rest encryption — 96/97 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_phase3_encryption.py).
 
       ✅ CASE 1 CMU round-trip (20/20): API returns clear numero/nom_complet/beneficiaires; DB stores all as 'enc_v1:…' ciphertext (different from plaintext); numero_hash present (16 hex chars); date_validite stored clear.
       ✅ CASE 2 Enfant (13/13): numero_cmu + allergies encrypted in DB, groupe_sanguin clear; POST/GET/PATCH/croissance-oms all return clear values.
@@ -563,4 +604,56 @@ agent_communication:
 
       Side note (not a regression): PATCH /enfants/{id} uses EnfantIn (required: nom/date_naissance/sexe) so partial PATCH with only {numero_cmu} fails 422. Encryption logic in PATCH verified OK when all required fields are sent. Consider an EnfantPatchIn with all-optional fields for future cleanup.
 
-      Cleanup: enfants, tele_echo, consultation_notes, prestations, rdv removed; maman CMU deleted; pro.accepte_cmu reset to false. Script idempotent.
+  - agent: "testing"
+    message: |
+      Test review (search/pros + scheduler) — ALL PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test.py, 35/35 tests).
+
+      ✅ /api/search/pros étendu (14/14):
+      - (a) Sans param → 200, n=5 pros (régression OK).
+      - (b) 2 prestations créées sur pro@test (Échographie 15000 CMU=true ; Consultation 25000).
+      - (c) ?prestation=échographie → pro@test trouvé avec prestations_match contenant l'échographie ; pros sans matching exclus.
+      - (d) ?max_prix=20000 → pro@test présent avec prestations_match=[15000] (toutes ≤20000), triées ASC.
+      - (e) ?prestation=consultation&max_prix=20000 → pro@test EXCLU (sa consultation est 25000, donc >20000) ; résultat n=0 ✅.
+      - (f) PATCH /pro/cmu accepte_cmu=true OK ; ?cmu_only=true → pro@test présent + tous accepte_cmu=true ; intersection cmu_only+prestation OK.
+      - (g) Régression q=Diallo + specialite=gynéco → trouve Dr. Fatou Diallo.
+      - (h) prestations_match toujours triées par prix croissant.
+      Cleanup OK (DELETE des 2 prestations + reset accepte_cmu=false).
+
+      ✅ Reminders scheduler (4/4):
+      - (a) Logs backend.err.log contiennent '📅 Reminders scheduler started (interval: 5 min)' au boot (vérifié à 2 occurrences post-reload).
+      - (b) POST /reminders avec due_at=now-5min OK.
+      - (c) push_notif() câblé dans _reminders_scheduler L3249 → crée notif + tente send_expo_push.
+      - (d) Test temps réel (WAIT_SCHEDULER=1) : reminder pushed_at après 70s ; logs backend confirment '📲 Sent 1 reminder push(es)' ; /api/notifications retourne la notif 'Test push direct' ✓.
+
+      ✅ Régression (16/16) : login 5 comptes (maman/pro/pediatre/admin/centre) + /auth/me + GET /grossesse, /enfants, /rdv, /dossier (maman) + GET /pro/prestations + /professionnels — tous 200.
+
+      Aucun bug critique ou mineur trouvé. Les deux nouvelles fonctionnalités backend sont fonctionnelles et conformes au spec.
+
+  - agent: "main"
+    message: |
+      Implémentation de 4 nouvelles fonctionnalités demandées par l'utilisateur :
+
+      🟡 P1 — File d'attente offline améliorée :
+      • lib/offline.ts : ajout d'AppState listener (re-flush au retour foreground), `getQueue()`, `removeQueueItem()`, `clearQueue()`, hook `useQueue()`
+      • app/sync.tsx (NOUVEAU) : écran complet de gestion de la file (visualisation, retry manuel, suppression item-par-item, vidage complet, statut online/offline, dernier résultat de sync)
+      • components/OfflineBanner.tsx : bannière maintenant cliquable → ouvre /sync
+      • app/dossier-medical.tsx : ajout d'un bouton "État de la synchronisation" dans les actions rapides
+
+      🟡 P1 — PDF du Dossier Médical :
+      • app/dossier-medical.tsx : nouveau bouton "Télécharger mon dossier (PDF)" en action principale (au-dessus des autres). Génère un HTML structuré (grossesse, enfants/vaccins/mesures, RDV, rappels actifs) puis utilise expo-print + expo-sharing pour exporter sur mobile et window.print() sur web.
+
+      🟡 P2 — Push Notifications pour cycle/contraception :
+      • backend/server.py : nouveau scheduler asynchrone `_reminders_scheduler()` lancé en startup (toutes les 5 min). Parcourt les reminders dont `due_at <= now` et qui ne sont pas encore poussés (`pushed_at` absent), appelle `push_notif()` (qui crée une notification in-app + envoie un push Expo réel via `send_expo_push()`), puis marque le reminder avec `pushed_at`. Compatible avec les reminders auto-créés par cycle (kind=cycle_*) et contraception (kind=contra_*) qui utilisent le champ `description`.
+
+      🔵 P2 — Filtre par prestation pour les Mamans :
+      • backend/server.py : `/search/pros` étendu avec query params `prestation` (regex sur nom+description), `max_prix` (FCFA) et `cmu_only` (bool). Retourne les pros qui ont au moins une prestation active matchant les critères, et enrichit chaque pro avec `prestations_match` (top 3 prestations triées par prix).
+      • app/search.tsx : refonte de l'UI avec chips rapides (Échographie / Consultation / Accouchement / Suivi prénatal / Vaccination / Pédiatrie), section "Filtres avancés" repliable contenant : Spécialité, Type de prestation, Prix max FCFA, toggle "Seulement les pros qui acceptent la CMU", bouton "Effacer les filtres". Affichage des cartes pro enrichi avec badge CMU + liste des prestations matching avec leurs prix.
+
+      Demande de test backend ciblé sur :
+      1) GET /search/pros sans paramètres → fonctionne comme avant (régression)
+      2) GET /search/pros?prestation=... → ne retourne que les pros qui ont une prestation matching, avec `prestations_match`
+      3) GET /search/pros?max_prix=20000 → ne retourne que les pros ayant au moins 1 prestation ≤20000 FCFA
+      4) GET /search/pros?prestation=...&max_prix=... combiné
+      5) GET /search/pros?cmu_only=true → ne retourne que les pros avec accepte_cmu=true
+      6) Vérifier que le scheduler de rappels démarre bien au startup (log "📅 Reminders scheduler started")
+      7) Régression : tous les autres endpoints existants (auth, grossesse, enfants, rdv, cmu, dossier, fhir, prestations CRUD) fonctionnent toujours.
