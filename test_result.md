@@ -529,6 +529,54 @@ backend:
 
           Cleanup OK: anonymized payment removed; super admin intact. No critical or minor bugs found.
 
+  - task: "Forgot password DUAL identifier (email OR phone) + backward compat"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          36/36 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_forgot_password_dual.py).
+
+          Setup: registered 4 fresh users (A: email+phone, B: phone-only, C: phone-only for back-compat, D: email-only for back-compat) all role=maman, full RGPD consents.
+
+          [2] EMAIL identifier (user A) — 12/12 PASS
+          (2a) POST /auth/forgot-password/request {identifier:'<email>', name:'Marie Dupont …'} → 200 with verified=true, code=6 digits, identifier_kind='email'.
+          (2b) Same identifier, wrong name → 200 with verified=false (no leak).
+          (2c) Unknown email → 200 with verified=false.
+          (2d) POST /verify {identifier:'<email>', code:<correct>} → 200 with reset_token (UUID).
+          (2e) POST /reset {reset_token, new_password:'NewEmailPwd!'} → 200.
+          (2f) Login with email + new password → 200 (token returned).
+
+          [3] PHONE identifier (user B) — 8/8 PASS
+          (3a) POST /request {identifier:'+22507888…', name} → 200 with verified=true, code=6 digits, identifier_kind='phone'.
+          (3b) POST /verify {identifier:phone, code:correct} → 200 with reset_token.
+          (3c) POST /reset → 200.
+          (3d) Login (phone + new password) → 200.
+
+          [4] Backward compatibility — 6/6 PASS
+          (4a) POST /request OLD format {phone:'+225…', name} (no `identifier`) → 200 with verified=true, identifier_kind='phone' (resolved correctly via _resolve_identifier reading payload.phone).
+          (4b) POST /request OLD format {email:'<email>', name} → 200 with verified=true, identifier_kind='email' (auto-detected as email since contains '@').
+
+          [5] Validation — 2/2 PASS
+          (5a) POST /request {name:'X Y'} (NO identifier/email/phone) → 400 detail='Email ou numéro de téléphone requis'.
+          (5b) POST /verify {code:'123456'} (NO identifier) → 400 detail='Email ou téléphone requis'.
+
+          Cleanup OK: all 4 test users deleted via DELETE /auth/me.
+
+          IMPLEMENTATION REVIEW (server.py L584-731):
+          • _resolve_identifier (L603-610): reads payload.identifier, falls back to payload.email, then payload.phone. Detects email if '@' in raw, else normalises as phone. Returns (kind, value).
+          • forgot_password_request (L613-685): looks up user by email or phone field, returns generic {verified:false} if not found OR if name doesn't match (no info leak). On success returns the 6-digit code in plaintext + identifier_kind.
+          • forgot_password_verify (L688-731): looks up record by `identifier` field first, then falls back to phone/email for back-compat with codes created BEFORE the migration.
+          • password_reset_codes records persist both `identifier` and `identifier_kind`, plus legacy `phone`/`email` fields for full back-compat.
+
+          NO CRITICAL OR MINOR BUGS DETECTED. All review scenarios pass on the deployed backend.
+
   - task: "Password change + Forgot password (SMS code)"
     implemented: true
     working: true
@@ -1190,3 +1238,17 @@ agent_communication:
       When PayDunya availability is restored, the same code returns success:true with status=completed without any change.
 
       No critical or minor bugs in /app/backend/server.py L2982-3329. Main agent can summarize and finish.
+
+
+  - agent: "testing"
+    message: |
+      Forgot-Password DUAL identifier (email OR phone) — 36/36 PASS on /app/backend_test_forgot_password_dual.py against https://cycle-tracker-pro.preview.emergentagent.com/api.
+
+      ✅ EMAIL flow: request{identifier=email,name}→200 verified=true, code, identifier_kind='email'; wrong name→200 verified=false; unknown email→200 verified=false; verify→reset_token; reset→200; login(email+new pwd)→200.
+      ✅ PHONE flow: request{identifier=phone,name}→200 verified=true, code, identifier_kind='phone'; verify→reset_token; reset→200; login(phone+new pwd)→200.
+      ✅ Backward compat: OLD {phone,name} still works (identifier_kind='phone'); OLD {email,name} still works (auto-detected, identifier_kind='email').
+      ✅ Validation: /request without identifier→400; /verify without identifier→400.
+
+      _resolve_identifier (server.py L603-610) correctly reads payload.identifier with fallback to payload.email then payload.phone, and detects kind by '@' presence. password_reset_codes records persist `identifier`+`identifier_kind` AND legacy `phone`/`email` for back-compat.
+
+      Cleanup: all 4 test users deleted. No bugs found. Main agent can summarize and finish.

@@ -19,7 +19,12 @@ import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 export default function VerifierCode() {
   const router = useRouter();
-  const { phone, prefill } = useLocalSearchParams<{ phone: string; prefill?: string }>();
+  const { phone, identifier: identifierParam, prefill } = useLocalSearchParams<{
+    phone?: string;
+    identifier?: string;
+    prefill?: string;
+  }>();
+  const identifier = (identifierParam || phone || "") as string;
   const initialCode = (() => {
     const clean = (prefill || "").replace(/\D/g, "").slice(0, 6);
     const arr = ["", "", "", "", "", ""];
@@ -69,14 +74,14 @@ export default function VerifierCode() {
       Alert.alert("Code incomplet", "Entrez les 6 chiffres reçus par SMS");
       return;
     }
-    if (!phone) {
-      Alert.alert("Erreur", "Numéro de téléphone manquant. Recommencez.");
+    if (!identifier) {
+      Alert.alert("Erreur", "Identifiant manquant. Recommencez.");
       router.replace("/(auth)/mot-de-passe-oublie");
       return;
     }
     setLoading(true);
     try {
-      const r = await api.post("/auth/forgot-password/verify", { phone, code: c });
+      const r = await api.post("/auth/forgot-password/verify", { identifier, code: c });
       router.replace({ pathname: "/(auth)/nouveau-mot-de-passe", params: { token: r.data.reset_token } });
     } catch (e) {
       Alert.alert("Code invalide", formatError(e));
@@ -116,7 +121,7 @@ export default function VerifierCode() {
           </View>
           <Text style={styles.title}>Code de vérification</Text>
           <Text style={styles.subtitle}>
-            Entrez le code à 6 chiffres généré pour votre compte ({phone || "..."}).
+            Entrez le code à 6 chiffres généré pour votre compte ({identifier || "..."}).
           </Text>
 
           <View style={styles.codeRow}>

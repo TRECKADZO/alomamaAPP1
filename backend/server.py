@@ -582,12 +582,16 @@ async def send_sms(to_phone: str, message: str) -> dict:
 
 
 class ForgotPasswordRequestIn(BaseModel):
-    phone: str = Field(min_length=6)
-    name: str = Field(min_length=2)  # nom complet ou prénom+nom (libre)
+    identifier: Optional[str] = None  # email OU téléphone
+    phone: Optional[str] = None  # rétro-compat
+    email: Optional[str] = None  # rétro-compat
+    name: str = Field(min_length=2)
 
 
 class ForgotPasswordVerifyIn(BaseModel):
-    phone: str
+    identifier: Optional[str] = None
+    phone: Optional[str] = None  # rétro-compat
+    email: Optional[str] = None
     code: str = Field(min_length=4, max_length=8)
 
 
@@ -596,21 +600,36 @@ class ForgotPasswordResetIn(BaseModel):
     new_password: str = Field(min_length=6)
 
 
+def _resolve_identifier(payload) -> tuple[str, str]:
+    """Retourne (kind, normalized_value) où kind ∈ {'email', 'phone'}."""
+    raw = (getattr(payload, "identifier", None) or getattr(payload, "email", None) or getattr(payload, "phone", None) or "").strip()
+    if not raw:
+        return ("", "")
+    if "@" in raw:
+        return ("email", raw.lower())
+    return ("phone", _normalize_phone(raw))
+
+
 @api.post("/auth/forgot-password/request")
 async def forgot_password_request(payload: ForgotPasswordRequestIn):
     """
-    Étape 1 : l'utilisateur saisit son téléphone + son nom (ou prénom+nom).
+    Étape 1 : l'utilisateur saisit son email OU son téléphone + son nom.
     Si le compte existe ET que le nom correspond, un code à 6 chiffres est généré
-    et retourné directement dans la réponse (affiché en clair dans l'app — PAS de SMS).
-    Réponse identique en cas d'échec (sécurité — ne révèle pas l'existence du compte).
+    et retourné directement dans la réponse (affiché en clair dans l'app — PAS de SMS/Email).
     """
-    phone = _normalize_phone(payload.phone)
-    user = await db.users.find_one({"phone": phone})
+    kind, value = _resolve_identifier(payload)
+    if not value:
+        raise HTTPException(400, "Email ou numéro de téléphone requis")
+
+    if kind == "email":
+        user = await db.users.find_one({"email": value})
+    else:
+        user = await db.users.find_one({"phone": value})
 
     generic_response = {
         "success": False,
         "verified": False,
-        "message": "Vérification impossible. Vérifiez votre numéro et votre nom, puis réessayez.",
+        "message": "Vérification impossible. Vérifiez vos informations, puis réessayez.",
     }
 
     if not user:
@@ -628,10 +647,10 @@ async def forgot_password_request(payload: ForgotPasswordRequestIn):
     if not name_ok:
         return generic_response
 
-    # Anti-bruteforce : max 5 demandes par téléphone par heure
+    # Anti-bruteforce : max 5 demandes par identifier par heure
     one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     recent_count = await db.password_reset_codes.count_documents(
-        {"phone": phone, "created_at": {"$gte": one_hour_ago}}
+        {"identifier": value, "created_at": {"$gte": one_hour_ago}}
     )
     if recent_count >= 5:
         raise HTTPException(429, "Trop de demandes. Réessayez dans une heure.")
@@ -644,59 +663,66 @@ async def forgot_password_request(payload: ForgotPasswordRequestIn):
     await db.password_reset_codes.insert_one({
         "id": code_id,
         "user_id": user["id"],
-        "phone": phone,
-        "code_hash": hash_password(code),  # on stocke seulement le hash
+        "identifier": value,
+        "identifier_kind": kind,
+        # rétro-compat
+        "phone": value if kind == "phone" else None,
+        "email": value if kind == "email" else None,
+        "code_hash": hash_password(code),
         "created_at": now.isoformat(),
         "expires_at": expires_at.isoformat(),
         "used": False,
         "attempts": 0,
     })
 
-    # Code retourné directement dans la réponse (mode in-app, pas de SMS)
     return {
         "success": True,
         "verified": True,
         "code": code,
         "expires_in_minutes": 10,
+        "identifier_kind": kind,
         "message": "Identité vérifiée. Voici votre code à usage unique.",
     }
 
 
 @api.post("/auth/forgot-password/verify")
 async def forgot_password_verify(payload: ForgotPasswordVerifyIn):
-    """Étape 2 : vérifier le code SMS reçu. Retourne un reset_token à usage unique (15 min)."""
-    phone = _normalize_phone(payload.phone)
+    """Étape 2 : vérifier le code. Retourne un reset_token à usage unique (15 min)."""
+    kind, value = _resolve_identifier(payload)
+    if not value:
+        raise HTTPException(400, "Email ou téléphone requis")
     code = (payload.code or "").strip()
-    # Récupérer le code le plus récent non utilisé pour ce téléphone
     record = await db.password_reset_codes.find_one(
-        {"phone": phone, "used": False},
+        {"identifier": value, "used": False},
         sort=[("created_at", -1)],
     )
     if not record:
-        raise HTTPException(400, "Aucune demande en cours pour ce numéro")
-    # Expiré ?
+        # Rétro-compat : chercher aussi par phone/email pour les anciens codes
+        record = await db.password_reset_codes.find_one(
+            {"$or": [{"phone": value}, {"email": value}], "used": False},
+            sort=[("created_at", -1)],
+        )
+    if not record:
+        raise HTTPException(400, "Aucune demande en cours pour ce compte")
     try:
         expires = datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00"))
     except Exception:
         expires = datetime.now(timezone.utc) - timedelta(seconds=1)
     if datetime.now(timezone.utc) > expires:
         raise HTTPException(400, "Code expiré, demandez un nouveau code")
-    # Trop d'essais ?
     if (record.get("attempts") or 0) >= 5:
         await db.password_reset_codes.update_one({"id": record["id"]}, {"$set": {"used": True}})
         raise HTTPException(400, "Trop d'essais incorrects, demandez un nouveau code")
-    # Vérifier le code
     if not verify_password(code, record["code_hash"]):
         await db.password_reset_codes.update_one({"id": record["id"]}, {"$inc": {"attempts": 1}})
         raise HTTPException(400, "Code incorrect")
 
-    # Code valide — générer un reset_token et marquer le code comme utilisé
     reset_token = str(uuid.uuid4())
     token_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
     await db.password_reset_tokens.insert_one({
         "token": reset_token,
         "user_id": record["user_id"],
-        "phone": phone,
+        "identifier": record.get("identifier") or value,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": token_expires.isoformat(),
         "used": False,

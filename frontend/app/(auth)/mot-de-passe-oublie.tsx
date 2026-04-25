@@ -20,15 +20,19 @@ import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 export default function MotDePasseOublie() {
   const router = useRouter();
-  const [phone, setPhone] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [code, setCode] = useState<string | null>(null);
   const [expiresIn, setExpiresIn] = useState<number>(10);
+  const [identifierKind, setIdentifierKind] = useState<"email" | "phone">("phone");
+
+  const isEmail = identifier.includes("@");
+  const detectedKind: "email" | "phone" = isEmail ? "email" : "phone";
 
   const submit = async () => {
-    if (!phone.trim() || !name.trim()) {
-      Alert.alert("Champs requis", "Renseignez votre numéro de téléphone ET votre nom.");
+    if (!identifier.trim() || !name.trim()) {
+      Alert.alert("Champs requis", "Renseignez votre email ou téléphone ET votre nom.");
       return;
     }
     if (name.trim().length < 2) {
@@ -38,17 +42,18 @@ export default function MotDePasseOublie() {
     setLoading(true);
     try {
       const r = await api.post("/auth/forgot-password/request", {
-        phone: phone.trim(),
+        identifier: identifier.trim(),
         name: name.trim(),
       });
       if (r.data?.verified && r.data?.code) {
         setCode(r.data.code);
         setExpiresIn(r.data.expires_in_minutes || 10);
+        setIdentifierKind(r.data.identifier_kind || detectedKind);
       } else {
         Alert.alert(
           "Vérification échouée",
           r.data?.message ||
-            "Le numéro de téléphone et le nom ne correspondent à aucun compte. Vérifiez vos informations.",
+            "L'email/téléphone et le nom ne correspondent à aucun compte. Vérifiez vos informations.",
         );
       }
     } catch (e: any) {
@@ -70,13 +75,13 @@ export default function MotDePasseOublie() {
     if (!code) return;
     router.push({
       pathname: "/(auth)/verifier-code",
-      params: { phone: phone.trim(), prefill: code },
+      params: { identifier: identifier.trim(), prefill: code },
     });
   };
 
   const restart = () => {
     setCode(null);
-    setPhone("");
+    setIdentifier("");
     setName("");
   };
 
@@ -99,18 +104,23 @@ export default function MotDePasseOublie() {
           {!code && (
             <>
               <View style={styles.field}>
-                <Text style={styles.label}>Numéro de téléphone du compte</Text>
+                <Text style={styles.label}>Email ou numéro de téléphone</Text>
                 <View style={styles.inputWrap}>
-                  <Ionicons name="call-outline" size={18} color={COLORS.textMuted} />
+                  <Ionicons
+                    name={isEmail ? "mail-outline" : "call-outline"}
+                    size={18}
+                    color={COLORS.textMuted}
+                  />
                   <TextInput
                     style={styles.input}
-                    value={phone}
-                    onChangeText={setPhone}
-                    placeholder="+225 XX XX XX XX"
-                    keyboardType="phone-pad"
+                    value={identifier}
+                    onChangeText={setIdentifier}
+                    placeholder="exemple@mail.com  ou  +225 XX XX XX XX"
+                    keyboardType={isEmail ? "email-address" : "phone-pad"}
                     placeholderTextColor={COLORS.textMuted}
                     autoCorrect={false}
-                    testID="forgot-phone"
+                    autoCapitalize="none"
+                    testID="forgot-identifier"
                   />
                 </View>
               </View>
