@@ -600,18 +600,18 @@ class ForgotPasswordResetIn(BaseModel):
 async def forgot_password_request(payload: ForgotPasswordRequestIn):
     """
     Étape 1 : l'utilisateur saisit son téléphone + son nom (ou prénom+nom).
-    Si le compte existe ET que le nom correspond, un code à 6 chiffres est envoyé par SMS.
-    Réponse identique en cas de succès et d'échec (sécurité — ne révèle pas l'existence du compte).
+    Si le compte existe ET que le nom correspond, un code à 6 chiffres est généré
+    et retourné directement dans la réponse (affiché en clair dans l'app — PAS de SMS).
+    Réponse identique en cas d'échec (sécurité — ne révèle pas l'existence du compte).
     """
     phone = _normalize_phone(payload.phone)
     user = await db.users.find_one({"phone": phone})
 
     generic_response = {
-        "success": True,
-        "message": "Si le compte existe, un code a été envoyé par SMS.",
-        "expires_in_minutes": 10,
+        "success": False,
+        "verified": False,
+        "message": "Vérification impossible. Vérifiez votre numéro et votre nom, puis réessayez.",
     }
-    dev_mode = os.environ.get("SMS_DEV_MODE", "true").lower() == "true"
 
     if not user:
         return generic_response
@@ -652,15 +652,14 @@ async def forgot_password_request(payload: ForgotPasswordRequestIn):
         "attempts": 0,
     })
 
-    sms_text = f"À lo Maman : votre code de réinitialisation est {code}. Valable 10 minutes. Ne le partagez avec personne."
-    sms_res = await send_sms(phone, sms_text)
-
-    response = dict(generic_response)
-    if dev_mode and (not sms_res.get("sent")):
-        # En mode développement / SMS non configuré, on retourne le code pour permettre les tests
-        response["dev_code"] = code
-        response["dev_warning"] = "Mode développement actif — passez SMS_DEV_MODE=false en production."
-    return response
+    # Code retourné directement dans la réponse (mode in-app, pas de SMS)
+    return {
+        "success": True,
+        "verified": True,
+        "code": code,
+        "expires_in_minutes": 10,
+        "message": "Identité vérifiée. Voici votre code à usage unique.",
+    }
 
 
 @api.post("/auth/forgot-password/verify")

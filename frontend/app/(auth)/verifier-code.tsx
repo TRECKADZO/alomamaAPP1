@@ -19,12 +19,26 @@ import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 export default function VerifierCode() {
   const router = useRouter();
-  const { phone } = useLocalSearchParams<{ phone: string }>();
-  const [code, setCode] = useState(["", "", "", "", "", ""]);
+  const { phone, prefill } = useLocalSearchParams<{ phone: string; prefill?: string }>();
+  const initialCode = (() => {
+    const clean = (prefill || "").replace(/\D/g, "").slice(0, 6);
+    const arr = ["", "", "", "", "", ""];
+    for (let i = 0; i < clean.length; i++) arr[i] = clean[i];
+    return arr;
+  })();
+  const [code, setCode] = useState(initialCode);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(60);
   const inputs = useRef<Array<TextInput | null>>([]);
+
+  // Auto-submit si prefill complet
+  useEffect(() => {
+    if (initialCode.every((d) => d.length === 1)) {
+      setTimeout(() => submit(initialCode.join("")), 300);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (secondsLeft <= 0) return;
@@ -78,8 +92,8 @@ export default function VerifierCode() {
     setResending(true);
     try {
       Alert.alert(
-        "Renvoyer un code",
-        "Pour renvoyer un code, vous devez recommencer avec votre nom et téléphone (sécurité).",
+        "Générer un nouveau code",
+        "Pour générer un nouveau code, vous devez recommencer la vérification d'identité (téléphone + nom).",
         [
           { text: "OK", onPress: () => router.replace("/(auth)/mot-de-passe-oublie") },
         ],
@@ -102,7 +116,7 @@ export default function VerifierCode() {
           </View>
           <Text style={styles.title}>Code de vérification</Text>
           <Text style={styles.subtitle}>
-            Entrez le code à 6 chiffres envoyé par SMS au numéro {phone || "..."}
+            Entrez le code à 6 chiffres généré pour votre compte ({phone || "..."}).
           </Text>
 
           <View style={styles.codeRow}>
@@ -142,7 +156,7 @@ export default function VerifierCode() {
           <View style={styles.help}>
             <Ionicons name="information-circle" size={14} color={COLORS.textSecondary} />
             <Text style={styles.helpText}>
-              Vous n'avez pas reçu le SMS ? Vérifiez le numéro saisi et le réseau, puis renvoyez un code.
+              Le code expire dans 10 minutes. Si vous l'avez perdu, recommencez la vérification d'identité.
             </Text>
           </View>
         </ScrollView>

@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
@@ -22,6 +23,8 @@ export default function MotDePasseOublie() {
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [code, setCode] = useState<string | null>(null);
+  const [expiresIn, setExpiresIn] = useState<number>(10);
 
   const submit = async () => {
     if (!phone.trim() || !name.trim()) {
@@ -38,28 +41,43 @@ export default function MotDePasseOublie() {
         phone: phone.trim(),
         name: name.trim(),
       });
-      const devCode = r.data?.dev_code as string | undefined;
-      Alert.alert(
-        "Code envoyé",
-        devCode
-          ? `Mode développement : votre code est ${devCode}\n\n(En production, il sera envoyé par SMS)`
-          : "Si le compte existe, un code à 6 chiffres a été envoyé par SMS au numéro indiqué. Le code est valable 10 minutes.",
-        [
-          {
-            text: "Continuer",
-            onPress: () =>
-              router.push({
-                pathname: "/(auth)/verifier-code",
-                params: { phone: phone.trim() },
-              }),
-          },
-        ],
-      );
-    } catch (e) {
+      if (r.data?.verified && r.data?.code) {
+        setCode(r.data.code);
+        setExpiresIn(r.data.expires_in_minutes || 10);
+      } else {
+        Alert.alert(
+          "Vérification échouée",
+          r.data?.message ||
+            "Le numéro de téléphone et le nom ne correspondent à aucun compte. Vérifiez vos informations.",
+        );
+      }
+    } catch (e: any) {
       Alert.alert("Erreur", formatError(e));
     } finally {
       setLoading(false);
     }
+  };
+
+  const copyCode = async () => {
+    if (!code) return;
+    try {
+      await Clipboard.setStringAsync(code);
+      Alert.alert("Copié ✅", "Le code a été copié dans le presse-papier.");
+    } catch {}
+  };
+
+  const goNext = () => {
+    if (!code) return;
+    router.push({
+      pathname: "/(auth)/verifier-code",
+      params: { phone: phone.trim(), prefill: code },
+    });
+  };
+
+  const restart = () => {
+    setCode(null);
+    setPhone("");
+    setName("");
   };
 
   return (
@@ -75,60 +93,103 @@ export default function MotDePasseOublie() {
           </View>
           <Text style={styles.title}>Mot de passe oublié</Text>
           <Text style={styles.subtitle}>
-            Pour des raisons de sécurité, nous allons vérifier votre identité avant d'envoyer un code par SMS.
+            Pour des raisons de sécurité, nous allons vérifier votre identité avant de générer votre code à usage unique.
           </Text>
 
-          <View style={styles.field}>
-            <Text style={styles.label}>Numéro de téléphone du compte</Text>
-            <View style={styles.inputWrap}>
-              <Ionicons name="call-outline" size={18} color={COLORS.textMuted} />
-              <TextInput
-                style={styles.input}
-                value={phone}
-                onChangeText={setPhone}
-                placeholder="+225 XX XX XX XX"
-                keyboardType="phone-pad"
-                placeholderTextColor={COLORS.textMuted}
-                autoCorrect={false}
-                testID="forgot-phone"
-              />
+          {!code && (
+            <>
+              <View style={styles.field}>
+                <Text style={styles.label}>Numéro de téléphone du compte</Text>
+                <View style={styles.inputWrap}>
+                  <Ionicons name="call-outline" size={18} color={COLORS.textMuted} />
+                  <TextInput
+                    style={styles.input}
+                    value={phone}
+                    onChangeText={setPhone}
+                    placeholder="+225 XX XX XX XX"
+                    keyboardType="phone-pad"
+                    placeholderTextColor={COLORS.textMuted}
+                    autoCorrect={false}
+                    testID="forgot-phone"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Votre nom complet (prénom + nom)</Text>
+                <View style={styles.inputWrap}>
+                  <Ionicons name="person-outline" size={18} color={COLORS.textMuted} />
+                  <TextInput
+                    style={styles.input}
+                    value={name}
+                    onChangeText={setName}
+                    placeholder="Tel qu'enregistré sur votre compte"
+                    placeholderTextColor={COLORS.textMuted}
+                    autoCorrect={false}
+                    autoCapitalize="words"
+                    testID="forgot-name"
+                  />
+                </View>
+                <Text style={styles.hint}>
+                  Saisissez exactement le nom utilisé lors de l'inscription. Les accents et la casse sont ignorés.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.btnPrimary}
+                onPress={submit}
+                disabled={loading}
+                testID="forgot-submit"
+              >
+                {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Vérifier mon identité</Text>}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => router.replace("/(auth)/login")}
+                style={{ marginTop: 12, alignItems: "center" }}
+              >
+                <Text style={{ color: COLORS.textSecondary, fontSize: 13 }}>
+                  Vous vous souvenez ? <Text style={{ color: COLORS.primary, fontWeight: "700" }}>Se connecter</Text>
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {code && (
+            <View>
+              <View style={styles.successBanner}>
+                <Ionicons name="checkmark-circle" size={22} color="#fff" />
+                <Text style={styles.successText}>Identité vérifiée</Text>
+              </View>
+
+              <View style={styles.codeCard}>
+                <Text style={styles.codeLabel}>Votre code à usage unique</Text>
+                <View style={styles.codeRow}>
+                  {code.split("").map((d, i) => (
+                    <View key={i} style={styles.codeBox}>
+                      <Text style={styles.codeDigit}>{d}</Text>
+                    </View>
+                  ))}
+                </View>
+                <TouchableOpacity style={styles.copyBtn} onPress={copyCode} testID="copy-code-btn">
+                  <Ionicons name="copy-outline" size={16} color={COLORS.primary} />
+                  <Text style={styles.copyBtnText}>Copier le code</Text>
+                </TouchableOpacity>
+                <Text style={styles.expiresText}>⏱️ Valable {expiresIn} minutes — ne le partagez avec personne.</Text>
+              </View>
+
+              <TouchableOpacity style={styles.btnPrimary} onPress={goNext} testID="continue-with-code-btn">
+                <Text style={styles.btnPrimaryText}>Continuer</Text>
+                <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 6 }} />
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={restart} style={{ marginTop: 12, alignItems: "center" }}>
+                <Text style={{ color: COLORS.textSecondary, fontSize: 13, textDecorationLine: "underline" }}>
+                  Changer de compte
+                </Text>
+              </TouchableOpacity>
             </View>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Votre nom complet (prénom + nom)</Text>
-            <View style={styles.inputWrap}>
-              <Ionicons name="person-outline" size={18} color={COLORS.textMuted} />
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="Tel qu'enregistré sur votre compte"
-                placeholderTextColor={COLORS.textMuted}
-                autoCorrect={false}
-                autoCapitalize="words"
-                testID="forgot-name"
-              />
-            </View>
-            <Text style={styles.hint}>
-              Saisissez exactement le nom utilisé lors de l'inscription. Les accents et la casse sont ignorés.
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            style={styles.btnPrimary}
-            onPress={submit}
-            disabled={loading}
-            testID="forgot-submit"
-          >
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Envoyer le code par SMS</Text>}
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => router.replace("/(auth)/login")} style={{ marginTop: 12, alignItems: "center" }}>
-            <Text style={{ color: COLORS.textSecondary, fontSize: 13 }}>
-              Vous vous souvenez ? <Text style={{ color: COLORS.primary, fontWeight: "700" }}>Se connecter</Text>
-            </Text>
-          </TouchableOpacity>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -166,6 +227,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: 15, color: COLORS.textPrimary },
   hint: { fontSize: 11, color: COLORS.textMuted, marginTop: 6, fontStyle: "italic" },
   btnPrimary: {
+    flexDirection: "row",
     backgroundColor: COLORS.primary,
     borderRadius: RADIUS.pill,
     height: 52,
@@ -174,4 +236,59 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   btnPrimaryText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+
+  successBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#059669",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: RADIUS.md,
+    alignSelf: "flex-start",
+    marginBottom: 16,
+  },
+  successText: { color: "#fff", fontWeight: "800", fontSize: 13 },
+
+  codeCard: {
+    backgroundColor: COLORS.primaryLight,
+    borderRadius: RADIUS.lg,
+    padding: 18,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    marginBottom: 16,
+  },
+  codeLabel: {
+    fontSize: 12,
+    color: COLORS.primary,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  codeRow: { flexDirection: "row", gap: 6, justifyContent: "center", marginBottom: 14 },
+  codeBox: {
+    width: 44,
+    height: 56,
+    borderRadius: 10,
+    backgroundColor: "#fff",
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  codeDigit: { fontSize: 24, fontWeight: "800", color: COLORS.primary },
+  copyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    backgroundColor: "#fff",
+    borderRadius: RADIUS.pill,
+    marginBottom: 8,
+  },
+  copyBtnText: { color: COLORS.primary, fontWeight: "700", fontSize: 13 },
+  expiresText: { fontSize: 11, color: COLORS.primary, textAlign: "center", fontWeight: "600", marginTop: 4 },
 });
