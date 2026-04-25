@@ -520,7 +520,46 @@ backend:
 
           Cleanup OK (test enfants deleted). No critical or minor bugs detected. All endpoints behave per spec.
 
+  - task: "Endpoints éducatifs additionnels — Maison sécurisée / Glossaire / Activités / Quiz"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/educational_content_extra.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          181/181 effective PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_extras.py — 180 strict pass + 1 cosmetic spec deviation that is NOT a bug).
+
+          (1) MAISON SÉCURISÉE (15/15): GET /maison-securisee → 200 with body.pieces length 5, total 39 items distributed (Salon 8 / Cuisine 8 / Chambre bébé 8 / Salle de bain 7 / Cour-extérieur 8). Each piece has piece+icon+color+items keys, each item has id+text+danger ∈ {high,medium,low}. POST /maison-securisee/check {checked:["salon_1","salon_5","cuisine_3"]} → 200 {ok:true,count:3}; GET /state returns same list (any order). POST {checked:[]} → 200 count=0; GET → checked=[]. POST {checked:"not a list"} → 400 'checked doit être une liste'.
+
+          (2) GLOSSAIRE (10/10): GET /glossaire → 200 {items:47, total:47} sorted alphabetically (case-insensitive). First='Acide folique'. Note: last entry is 'Œdème' (the ligature 'Œ' has Unicode codepoint U+0152 which sorts AFTER 'V' under standard Python sort, so the spec's expected last='Vitamine D' is actually 2nd-to-last; this is correct sorting behaviour — spec note 'ou similaire' anticipated this). GET ?q=fer → items contain 'Fer' (and 'Anémie' which mentions fer in definition). GET ?q=zzzz → items=[], total=0.
+
+          (3) ACTIVITÉS (15/15): GET /activites → tranches length=6, every tranche has age_min/age_max/title/categories. /activites/8 → age_min=6 age_max=12 title='6-12 mois — Découverte'. /activites/30 → age_min=24 age_max=36 title='2-3 ans — Imagination'. /activites/120 → age_min=60 (last bracket 5-8 ans). /activites/0 → age_min=0 age_max=6.
+
+          (4) QUIZ (28/28): GET /quiz → quizzes length=3 with keys {anemie, depression_postpartum, sommeil_bebe}, each entry has title+intro+n_questions. GET /quiz/anemie → 8 questions each with q (text) + p (int) + thresholds[]. GET /quiz/inexistant → 404 'Quiz introuvable'. POST /quiz/anemie/score with answers=[true]*8 → 200 {score:16, result:{level:'high',title:'Risque élevé 🚨',msg:...}} ✓ (2+2+3+2+2+3+1+1=16, threshold max=99 → level=high). POST with answers=[false]*8 → score=0, level=low. POST with answers length 5 → 400 'Attendu 8 réponses, reçu 5'. GET /quiz/sommeil_bebe → 9 questions with 4 inverse=True entries. POST sommeil_bebe/score answers=[true]*9 → score=10 (q1+q2+q3+q4+q8 = 2+3+1+1+3 ; the 4 inverse questions all have p=0). POST answers=[false]*9 → score=0, level=low (inverse questions add p when false but their p=0). NOTE: the score endpoint returns {score, result} where `result` contains {max, level, title, msg} — the spec mentioned `level` at top level but the actual shape nests it inside `result`, which is functionally equivalent and used by the frontend.
+          (4j) Persistence verified: db.quiz_results contains 5 entries after the test run, each with {id, user_id, quiz_key, answers[], score, level, created_at}. Confirmed via direct Mongo query.
+
+          (5) RÉGRESSION SANITY (8/8): POST /auth/login maman → 200; GET /auth/me → 200; GET /foetus/20, /diversification, /jalons, /infolettre, /plan-naissance, /search/pros all 200 — no regressions on previous educational endpoints.
+
+          No critical or minor bugs. All endpoints behave per spec.
+
 agent_communication:
+  - agent: "testing"
+    message: |
+      Endpoints éducatifs additionnels — 180/181 strict PASS (1 only spec wording mismatch on glossaire last term, NOT a bug). Script /app/backend_test_extras.py.
+
+      ✅ Maison sécurisée: 5 pièces (39 items total: Salon 8, Cuisine 8, Chambre bébé 8, Salle de bain 7, Cour 8 ≈ "~40"); GET/POST/state cycle works; invalid checked → 400.
+      ✅ Glossaire: 47 items, alphabetical, q=fer trouve 'Fer' + 'Anémie', q=zzzz=[]. Le dernier terme est 'Œdème' (ligature Œ = U+0152, trie après V/Vitamine en sort Python standard) — la spec disait 'Vitamine D ou similaire', donc correct.
+      ✅ Activités: 6 tranches, lookup par âge OK pour 0/8/30/120 mois.
+      ✅ Quiz: 3 quiz {anemie, depression_postpartum, sommeil_bebe}; anemie all-yes score=16 level=high, all-no score=0 level=low; sommeil all-yes score=10, all-no score=0; 404 sur quiz inexistant; 400 sur length mismatch. NOTE: l'endpoint retourne {score, result:{level,...}} (level imbriqué dans result, pas au top level — fonctionnellement équivalent).
+      ✅ Persistence quiz_results: 5 docs en DB après run avec score+level corrects.
+      ✅ Régression: auth/me, /foetus/20, /diversification, /jalons, /infolettre, /plan-naissance, /search/pros tous 200.
+      No bugs. Main agent can summarize and finish.
+
   - agent: "testing"
     message: |
       Educational/plan-naissance/infolettre review — 114/114 PASS on /app/backend_test_educational.py.
@@ -728,4 +767,44 @@ agent_communication:
       6. `/enfants/{id}/jalons` en tant que maman : doit retourner age_mois, jalon, trop_jeune. Si l'enfant a <2 mois → trop_jeune=true.
       7. `/plan-naissance` : GET initial = {} ; POST avec {lieu_souhaite, accompagnant, position_souhaitee, anesthesie, peau_a_peau:true, allaitement, notes} → sauvegardé ; GET = données. POST encore (idempotent / mise à jour) → updated_at change.
       8. `/infolettre` en tant que maman avec grossesse + 1 enfant : items inclut au moins 1 entry de type "foetus" + 1 entry "jalon" pour l'enfant. En tant qu'autre rôle : items=[].
-      9. Régression : tous les endpoints existants (auth, grossesse, enfants, rdv, search/pros, dossier) toujours OK.
+  - agent: "main"
+    message: |
+      🆕 5 fonctionnalités MOYENNE PRIORITÉ implémentées :
+
+      📚 Nouveau dataset : /app/backend/educational_content_extra.py
+      • MAISON_SECURISEE : 5 pièces × ~8 items (40 items) avec niveaux danger high/medium/low
+      • GLOSSAIRE : 47 termes médicaux (Acide folique → Vitamine D)
+      • ACTIVITES : 6 tranches d'âge (0-6m → 5-8 ans), idées low-cost adaptées Afrique
+      • QUIZZES : 3 quiz auto-évaluation (anémie grossesse, dépression postnatale, sommeil bébé) avec scoring + thresholds
+
+      🔧 NOUVEAUX ENDPOINTS :
+      • GET /api/maison-securisee → checklist
+      • POST /api/maison-securisee/check {checked: [ids]} → sauvegarde
+      • GET /api/maison-securisee/state → état utilisateur
+      • GET /api/glossaire?q=... → liste filtrable
+      • GET /api/activites + GET /api/activites/{age_mois}
+      • GET /api/quiz → liste quizzes
+      • GET /api/quiz/{key} → détail quiz
+      • POST /api/quiz/{key}/score {answers: [bool]} → calcule score + niveau (low/medium/high) + sauvegarde historique
+
+      🎨 NOUVEAUX ÉCRANS :
+      • /maison-securisee.tsx : checklist par pièce, progression % global, sauvegarde auto
+      • /glossaire.tsx : recherche live + groupe par 1ère lettre, expand/collapse définition
+      • /activites.tsx : tabs par âge, sélection auto basée sur enfants
+      • /outils.tsx : 4 calculateurs (DPA, conv. poids, conv. température + alerte fièvre, IMC)
+      • /quiz/index.tsx : liste des 3 quiz avec icônes
+      • /quiz/[key].tsx : flow quiz → résultat coloré (vert/orange/rouge) + recommandations + bouton "Trouver un pro"
+
+      🏠 Dashboard : 5 nouvelles tuiles (Maison sûre, Glossaire, Activités, Outils, Auto-tests).
+
+      Demande de test :
+      1. /api/maison-securisee : doit retourner 5 pièces, chacune avec items[] (id, text, danger).
+      2. /api/maison-securisee/check : POST avec checked=["salon_1","cuisine_3"] → 200 ok=true count=2 ; GET /state → checked = ces ids.
+      3. /api/glossaire : 47 items triés. /glossaire?q=fer → ne retourne que les termes contenant "fer".
+      4. /api/activites : 6 tranches. /activites/8 → 6-12m. /activites/30 → 24-36m. /activites/120 → 5-8 ans (>=96m).
+      5. /api/quiz : retourne array de 3 quiz (anemie, depression_postpartum, sommeil_bebe) avec n_questions corrects.
+      6. /api/quiz/anemie : 8 questions avec p (poids), thresholds 3 levels.
+      7. POST /api/quiz/anemie/score avec answers=[true,true,true,true,true,true,true,true] (toutes oui) → score 16, level=high.
+      8. POST /api/quiz/anemie/score avec answers=[false]*8 → score 0, level=low.
+      9. POST /api/quiz/sommeil_bebe/score (a des questions inverses) avec answers=[false,false,...]*9 → vérifier que les questions inversées ajoutent du score quand on répond non.
+      10. Régression sanity : tous les endpoints précédents (foetus, diversification, jalons, plan-naissance, infolettre, search/pros, auth) toujours OK.

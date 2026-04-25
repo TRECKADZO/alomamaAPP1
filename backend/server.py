@@ -1828,6 +1828,122 @@ from educational_content import (
     FOETUS_SEMAINE, DIVERSIFICATION, JALONS,
     get_foetus_week, get_diversification_step, get_jalons_for_age,
 )
+from educational_content_extra import (
+    MAISON_SECURISEE, GLOSSAIRE, ACTIVITES, QUIZZES, get_activities_for_age,
+)
+
+
+# ----------------------------------------------------------------------
+# 🏠 Maison sécurisée — checklist par pièce
+# ----------------------------------------------------------------------
+@api.get("/maison-securisee")
+async def maison_securisee(user=Depends(get_current_user)):
+    """Retourne la checklist complète de sécurité de la maison."""
+    return {"pieces": MAISON_SECURISEE}
+
+
+@api.post("/maison-securisee/check")
+async def save_check_state(payload: dict, user=Depends(get_current_user)):
+    """Enregistre les items cochés par l'utilisateur. Body: {checked: ['salon_1', 'cuisine_3', ...]}"""
+    checked = payload.get("checked", [])
+    if not isinstance(checked, list):
+        raise HTTPException(400, "checked doit être une liste")
+    await db.maison_securisee_state.update_one(
+        {"user_id": user["id"]},
+        {"$set": {"checked": checked, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"ok": True, "count": len(checked)}
+
+
+@api.get("/maison-securisee/state")
+async def get_check_state(user=Depends(get_current_user)):
+    s = await db.maison_securisee_state.find_one({"user_id": user["id"]}, {"_id": 0})
+    return s or {"checked": []}
+
+
+# ----------------------------------------------------------------------
+# 📖 Glossaire médical
+# ----------------------------------------------------------------------
+@api.get("/glossaire")
+async def glossaire(q: str = "", user=Depends(get_current_user)):
+    """Retourne le glossaire trié alphabétiquement, filtrable par query."""
+    items = sorted(GLOSSAIRE, key=lambda x: x["terme"].lower())
+    if q:
+        ql = q.lower()
+        items = [i for i in items if ql in i["terme"].lower() or ql in i["definition"].lower()]
+    return {"items": items, "total": len(items)}
+
+
+# ----------------------------------------------------------------------
+# 🎮 Activités/jeux par âge
+# ----------------------------------------------------------------------
+@api.get("/activites")
+async def activites_all(user=Depends(get_current_user)):
+    return {"tranches": ACTIVITES}
+
+
+@api.get("/activites/{age_mois}")
+async def activites_for_age(age_mois: int, user=Depends(get_current_user)):
+    return get_activities_for_age(age_mois)
+
+
+# ----------------------------------------------------------------------
+# 🩺 Quiz auto-évaluation
+# ----------------------------------------------------------------------
+@api.get("/quiz")
+async def list_quizzes(user=Depends(get_current_user)):
+    """Retourne la liste des quiz disponibles (sans les questions, juste meta)."""
+    return {"quizzes": [
+        {"key": k, "title": v["title"], "intro": v["intro"], "n_questions": len(v["questions"])}
+        for k, v in QUIZZES.items()
+    ]}
+
+
+@api.get("/quiz/{quiz_key}")
+async def get_quiz(quiz_key: str, user=Depends(get_current_user)):
+    if quiz_key not in QUIZZES:
+        raise HTTPException(404, "Quiz introuvable")
+    return QUIZZES[quiz_key]
+
+
+@api.post("/quiz/{quiz_key}/score")
+async def score_quiz(quiz_key: str, payload: dict, user=Depends(get_current_user)):
+    """Calcule le score à partir des réponses. Body: {answers: [true, false, true, ...]}"""
+    if quiz_key not in QUIZZES:
+        raise HTTPException(404, "Quiz introuvable")
+    quiz = QUIZZES[quiz_key]
+    answers = payload.get("answers", [])
+    if len(answers) != len(quiz["questions"]):
+        raise HTTPException(400, f"Attendu {len(quiz['questions'])} réponses, reçu {len(answers)}")
+    score = 0
+    for q, a in zip(quiz["questions"], answers):
+        is_yes = bool(a)
+        if q.get("inverse"):
+            # question inversée : un "non" indique un problème
+            score += q["p"] if not is_yes else 0
+        else:
+            score += q["p"] if is_yes else 0
+    # Trouver le seuil
+    result = quiz["thresholds"][-1]
+    for t in quiz["thresholds"]:
+        if score <= t["max"]:
+            result = t
+            break
+    # Sauvegarder l'historique
+    try:
+        await db.quiz_results.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "quiz_key": quiz_key,
+            "answers": answers,
+            "score": score,
+            "level": result["level"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+    return {"score": score, "result": result}
 
 
 @api.get("/foetus/{sa}")

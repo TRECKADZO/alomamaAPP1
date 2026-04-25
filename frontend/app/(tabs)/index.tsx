@@ -393,6 +393,11 @@ function MamanDash({ user, data, router }: any) {
           <QuickAction icon="checkmark-done" label="Étapes dévelop." onPress={() => router.push("/jalons")} testID="qa-jalons" color="#10B981" />
           <QuickAction icon="clipboard" label="Plan naissance" onPress={() => router.push("/plan-naissance")} testID="qa-plan-naissance" color="#EC4899" />
           <QuickAction icon="mail" label="Infolettre" onPress={() => router.push("/infolettre")} testID="qa-infolettre" color="#7C3AED" />
+          <QuickAction icon="home" label="Maison sûre" onPress={() => router.push("/maison-securisee")} testID="qa-maison" color="#0EA5E9" />
+          <QuickAction icon="book" label="Glossaire" onPress={() => router.push("/glossaire")} testID="qa-glossaire" color="#6366F1" />
+          <QuickAction icon="game-controller" label="Activités" onPress={() => router.push("/activites")} testID="qa-activites" color="#10B981" />
+          <QuickAction icon="calculator" label="Outils" onPress={() => router.push("/outils")} testID="qa-outils" color="#3B82F6" />
+          <QuickAction icon="pulse" label="Auto-tests" onPress={() => router.push("/quiz")} testID="qa-quiz" color="#0EA5E9" />
           <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} testID="qa-premium" color="#F59E0B" />
         </View>
       </View>
