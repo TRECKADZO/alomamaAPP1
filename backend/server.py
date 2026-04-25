@@ -2920,10 +2920,10 @@ PREMIUM_PLANS = {
     "maman": {
         "code": "maman",
         "label": "Maman Premium",
-        "base_price_fcfa": 2000,
+        "base_price_fcfa": 500,
         "color": "#EC4899",
         "icon": "heart",
-        "description": "Accompagnement complet de la grossesse aux premiers pas de bébé.",
+        "description": "Accompagnement complet de la grossesse aux premiers pas de bébé, à un prix accessible.",
         "features": [
             "Assistant IA (Claude Sonnet) illimité",
             "Téléconsultations prioritaires",
@@ -3233,22 +3233,24 @@ async def startup():
     await db.messages.create_index("to_id")
     await db.messages.create_index("from_id")
 
-    # Seed admin
-    admin_email = os.environ["ADMIN_EMAIL"].lower()
-    admin_pw = os.environ["ADMIN_PASSWORD"]
-    if not await db.users.find_one({"email": admin_email}):
-        await db.users.insert_one({
-            "id": str(uuid.uuid4()),
-            "email": admin_email,
-            "password_hash": hash_password(admin_pw),
-            "name": "Admin À lo Maman",
-            "role": "admin",
-            "avatar": None,
-            "phone": None,
-            "specialite": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-        logger.info(f"Seeded admin {admin_email}")
+    # ⚠️ Seed admin@alomaman.com désactivé (suppression des comptes demo demandée).
+    # Le super admin (klenakan.eric@gmail.com) est conservé via le bloc ci-dessous.
+    # Pour réactiver : décommenter le bloc.
+    # admin_email = os.environ["ADMIN_EMAIL"].lower()
+    # admin_pw = os.environ["ADMIN_PASSWORD"]
+    # if not await db.users.find_one({"email": admin_email}):
+    #     await db.users.insert_one({
+    #         "id": str(uuid.uuid4()),
+    #         "email": admin_email,
+    #         "password_hash": hash_password(admin_pw),
+    #         "name": "Admin À lo Maman",
+    #         "role": "admin",
+    #         "avatar": None,
+    #         "phone": None,
+    #         "specialite": None,
+    #         "created_at": datetime.now(timezone.utc).isoformat(),
+    #     })
+    #     logger.info(f"Seeded admin {admin_email}")
 
     # Seed / Upsert SUPER ADMIN (project owner)
     super_email = os.environ.get("SUPER_ADMIN_EMAIL", "").lower().strip()

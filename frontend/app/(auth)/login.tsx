@@ -37,12 +37,6 @@ export default function Login() {
       await login(
         { [mode]: mode === "email" ? identifier.trim().toLowerCase() : identifier.trim(), password } as any
       );
-  const handleLogin = async () => {
-    setLoading(true);
-    try {
-      const id = identifier.trim();
-      if (!id) throw new Error("Veuillez saisir votre email ou téléphone");
-      await login(id, password);
       router.replace("/(tabs)");
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
