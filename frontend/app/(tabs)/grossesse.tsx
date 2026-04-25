@@ -109,18 +109,18 @@ export default function Grossesse() {
   const trimBg = info ? (info.trimestre === 1 ? "#FCE7F3" : info.trimestre === 2 ? "#F3E8FF" : "#DBEAFE") : COLORS.primaryLight;
 
   const sections = [
-    { id: "developpement", label: "Développement", icon: "egg", color: "#EC4899" },
-    { id: "trimestres", label: "Par Trimestre", icon: "calendar", color: "#A855F7" },
-    { id: "evolution", label: "Évolution Bébé", icon: "pulse", color: "#F97316" },
-    { id: "symptomes", label: "Symptômes", icon: "clipboard", color: "#8B5CF6" },
-    { id: "nutrition", label: "Nutrition", icon: "nutrition", color: "#10B981" },
-    { id: "poids", label: "Suivi Poids", icon: "fitness", color: "#F59E0B" },
-    { id: "tension", label: "Tension", icon: "heart", color: "#E11D48" },
+    { id: "developpement", label: "Développement", icon: "egg", color: "#EC4899", nav: "/foetus" },
+    { id: "trimestres", label: "Par Trimestre", icon: "calendar", color: "#A855F7", nav: "/grossesse/trimestres" },
+    { id: "evolution", label: "Évolution Bébé", icon: "pulse", color: "#F97316", nav: "/foetus" },
+    { id: "symptomes", label: "Symptômes", icon: "clipboard", color: "#8B5CF6", nav: "/grossesse/tracker/symptome" },
+    { id: "nutrition", label: "Nutrition", icon: "nutrition", color: "#10B981", nav: "/grossesse/nutrition" },
+    { id: "poids", label: "Suivi Poids", icon: "fitness", color: "#F59E0B", nav: "/grossesse/tracker/poids" },
+    { id: "tension", label: "Tension", icon: "heart", color: "#E11D48", nav: "/grossesse/tracker/tension" },
     { id: "echographies", label: "Échographies", icon: "scan", color: "#06B6D4", nav: "/tele-echo" },
     { id: "consultations", label: "Consultations", icon: "medkit", color: "#14B8A6", nav: "/(tabs)/rdv" },
-    { id: "vaccins", label: "Vaccins", icon: "shield-checkmark", color: "#22C55E" },
-    { id: "journal", label: "Journal", icon: "document-text", color: "#6B7280" },
-    { id: "rappels", label: "Rappels", icon: "notifications", color: "#EF4444" },
+    { id: "vaccins", label: "Vaccins", icon: "shield-checkmark", color: "#22C55E", nav: "/grossesse/tracker/vaccin" },
+    { id: "journal", label: "Journal", icon: "document-text", color: "#6B7280", nav: "/grossesse/tracker/journal" },
+    { id: "rappels", label: "Rappels", icon: "notifications", color: "#EF4444", nav: "/grossesse/rappels" },
   ];
 
   return (

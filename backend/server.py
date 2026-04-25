@@ -2023,6 +2023,78 @@ async def jalons_for_enfant(eid: str, user=Depends(require_roles("maman"))):
 # 📋 Plan de naissance
 # ----------------------------------------------------------------------
 class PlanNaissanceIn(BaseModel):
+    lieu_souhaite: Optional[str] = None
+    centre_id: Optional[str] = None
+    accompagnant: Optional[str] = None
+    accompagnant_relation: Optional[str] = None
+    position_souhaitee: Optional[str] = None
+    anesthesie: Optional[str] = None
+    musique: Optional[str] = None
+    ambiance: Optional[str] = None
+    peau_a_peau: bool = True
+    coupe_cordon: Optional[str] = None
+    allaitement: Optional[str] = None
+    placenta: Optional[str] = None
+    photos_video: bool = False
+    visiteurs_apres: Optional[str] = None
+    notes: Optional[str] = None
+    en_cas_cesarienne: Optional[str] = None
+    en_cas_complications: Optional[str] = None
+
+
+# ----------------------------------------------------------------------
+# 🤰 Tracking grossesse (poids / tension / symptomes / journal / vaccins)
+# ----------------------------------------------------------------------
+class TrackingEntryIn(BaseModel):
+    type: str  # poids|tension|symptome|journal|vaccin
+    date: str  # ISO
+    value: Optional[float] = None  # poids en kg
+    value2: Optional[float] = None  # tension diastolique
+    text: Optional[str] = None  # symptôme/journal/nom vaccin
+    notes: Optional[str] = None
+    sa: Optional[int] = None  # semaine d'aménorrhée
+
+
+@api.get("/grossesse/tracking")
+async def get_tracking(type: str = "", user=Depends(require_roles("maman"))):
+    q: dict = {"user_id": user["id"]}
+    if type:
+        q["type"] = type
+    entries = await db.grossesse_tracking.find(q, {"_id": 0}).sort("date", -1).to_list(500)
+    return {"entries": entries, "total": len(entries)}
+
+
+@api.post("/grossesse/tracking")
+async def add_tracking(payload: TrackingEntryIn, user=Depends(require_roles("maman"))):
+    valid_types = {"poids", "tension", "symptome", "journal", "vaccin"}
+    if payload.type not in valid_types:
+        raise HTTPException(400, f"Type invalide. Doit être : {valid_types}")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": payload.type,
+        "date": payload.date,
+        "value": payload.value,
+        "value2": payload.value2,
+        "text": payload.text,
+        "notes": payload.notes,
+        "sa": payload.sa,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.grossesse_tracking.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/grossesse/tracking/{entry_id}")
+async def delete_tracking(entry_id: str, user=Depends(require_roles("maman"))):
+    r = await db.grossesse_tracking.delete_one({"id": entry_id, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Entrée introuvable")
+    return {"ok": True}
+
+
+
     lieu_souhaite: Optional[str] = None  # "Domicile" / "Centre" / etc.
     centre_id: Optional[str] = None
     accompagnant: Optional[str] = None  # nom de l'accompagnant

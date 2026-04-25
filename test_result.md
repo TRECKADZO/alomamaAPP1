@@ -836,3 +836,61 @@ agent_communication:
       8. POST /api/quiz/anemie/score avec answers=[false]*8 → score 0, level=low.
       9. POST /api/quiz/sommeil_bebe/score (a des questions inverses) avec answers=[false,false,...]*9 → vérifier que les questions inversées ajoutent du score quand on répond non.
       10. Régression sanity : tous les endpoints précédents (foetus, diversification, jalons, plan-naissance, infolettre, search/pros, auth) toujours OK.
+
+
+backend:
+  - task: "Endpoint CRUD /api/grossesse/tracking (poids, tension, symptome, journal, vaccin)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          36/36 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test_tracking.py).
+
+          Préparation : compte test_grossesse@test.com créé via POST /auth/register (avec accepte_cgu/accepte_politique_confidentialite/accepte_donnees_sante=true — note : les champs sont préfixés `accepte_` dans RegisterIn, pas `consent_`). POST /grossesse {date_debut:"2026-01-01"} → 200 OK.
+
+          TRACKING (POST):
+          (1) POST /grossesse/tracking {type:"poids", date:"2026-04-25", value:65.5} → 200 ; doc retourné contient bien id, user_id, type='poids', date='2026-04-25', value=65.5, created_at.
+          (2) POST {type:"tension", date:"2026-04-25", value:12.5, value2:8.0} → 200 avec value=12.5 et value2=8.0 persistés.
+          (3) POST {type:"symptome", date:"2026-04-25", text:"Nausées matinales"} → 200 avec text persisté.
+          (4) POST {type:"journal", date:"2026-04-25", text:"Journée fatigante"} → 200.
+          (5) POST {type:"vaccin", date:"2026-04-25", text:"Vaccin coqueluche"} → 200.
+          (6) POST {type:"invalid", date:"2026-04-25"} → 400 ; le `detail` mentionne bien les types valides (poids/tension/symptome/journal/vaccin).
+
+          TRACKING (GET):
+          (7) GET /grossesse/tracking → 200 ; body {entries:[…], total:N≥5} ; entries triées par date desc (vérifié sur les 5 premières entrées).
+          (8) GET /grossesse/tracking?type=poids → 200 ; toutes les entrées retournées sont type='poids' ; entries[0].type='poids'.
+          (9) GET /grossesse/tracking?type=tension → 200 ; entries[0] a bien value=12.5 et value2=8.0.
+
+          TRACKING (DELETE):
+          (10) DELETE /grossesse/tracking/{id_de_la_1ère_créée} → 200 {ok:true}.
+          (11) GET après DELETE → l'id supprimé n'est plus présent dans la liste.
+          (12) DELETE /grossesse/tracking/non-existent-id → 404 'Entrée introuvable'.
+
+          SÉCURITÉ:
+          (13) Login admin (klenakan.eric@gmail.com / 474Treckadzo$1986) puis GET /grossesse/tracking → 403 (le require_roles("maman") bloque correctement les autres rôles).
+          (14) POST sans token → 403 (HTTPException "Non authentifié" — code 401 si Authorization absent dans le header, mais ici le test renvoie 403 ce qui reste dans la fourchette acceptée 401/403).
+
+          Cleanup : les 4 entrées tracking restantes (créées dans ce run) supprimées via DELETE.
+          Aucun bug critique ni mineur détecté. L'endpoint /api/grossesse/tracking fonctionne conformément au spec.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Endpoint /api/grossesse/tracking validé — 36/36 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test_tracking.py).
+
+      ✅ Tous les types acceptés (poids avec value, tension avec value+value2, symptome/journal/vaccin avec text) ; champ created_at + id + user_id retournés.
+      ✅ Type invalide → 400 avec mention des types valides.
+      ✅ GET sans filtre retourne {entries[], total} triées par date desc.
+      ✅ Filtre ?type=poids et ?type=tension fonctionnent ; les valeurs (value/value2) sont conservées.
+      ✅ DELETE existant → {ok:true} ; DELETE inexistant → 404.
+      ✅ Sécurité : admin → 403 (require_roles "maman") ; sans token → 401/403.
+
+      NOTE pour main agent : la spec de la review request mentionnait des champs `consent_cgu` et `consent_donnees_sante` au register, mais le modèle RegisterIn (server.py L186-190) utilise `accepte_cgu`, `accepte_politique_confidentialite`, `accepte_donnees_sante`. Le test a utilisé les noms réels du modèle. Aucun bug, juste une discordance dans la review request.
+
+      Aucun bug détecté. Main agent peut clôturer cette tâche.
