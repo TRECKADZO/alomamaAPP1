@@ -3283,72 +3283,10 @@ async def startup():
             )
             logger.info(f"Updated super admin {super_email}")
 
-    # Seed test maman
-    if not await db.users.find_one({"email": "maman@test.com"}):
-        await db.users.insert_one({
-            "id": str(uuid.uuid4()),
-            "email": "maman@test.com",
-            "password_hash": hash_password("Maman123!"),
-            "name": "Aminata Koné",
-            "role": "maman",
-            "avatar": None,
-            "phone": "+228 90 00 00 01",
-            "specialite": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-
-    # Seed test professionnels
-    pros_seed = [
-        ("pro@test.com", "Pro123!", "Dr. Fatou Diallo", "Gynécologue-Obstétricienne"),
-        ("pediatre@test.com", "Pro123!", "Dr. Kofi Mensah", "Pédiatre"),
-        ("sagefemme@test.com", "Pro123!", "Mme. Aïsha Traoré", "Sage-femme"),
-    ]
-    for email, pw, name, spec in pros_seed:
-        if not await db.users.find_one({"email": email}):
-            await db.users.insert_one({
-                "id": str(uuid.uuid4()),
-                "email": email,
-                "password_hash": hash_password(pw),
-                "name": name,
-                "role": "professionnel",
-                "avatar": None,
-                "phone": None,
-                "specialite": spec,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-
-    # Seed a couple of community posts
-    if await db.posts.count_documents({}) == 0:
-        maman = await db.users.find_one({"email": "maman@test.com"})
-        pro = await db.users.find_one({"email": "pro@test.com"})
-        if maman and pro:
-            now = datetime.now(timezone.utc).isoformat()
-            await db.posts.insert_many([
-                {
-                    "id": str(uuid.uuid4()),
-                    "user_id": maman["id"],
-                    "user_name": maman["name"],
-                    "user_role": "maman",
-                    "title": "Nausées du 1er trimestre 🤰",
-                    "content": "Bonjour les mamans ! Comment avez-vous géré les nausées matinales ? Je cherche des astuces naturelles.",
-                    "category": "grossesse",
-                    "likes": [],
-                    "comments": [],
-                    "created_at": now,
-                },
-                {
-                    "id": str(uuid.uuid4()),
-                    "user_id": pro["id"],
-                    "user_name": pro["name"],
-                    "user_role": "professionnel",
-                    "title": "Conseils allaitement 🤱",
-                    "content": "N'hésitez pas à poser vos questions sur l'allaitement maternel. L'OMS recommande l'allaitement exclusif jusqu'à 6 mois.",
-                    "category": "allaitement",
-                    "likes": [],
-                    "comments": [],
-                    "created_at": now,
-                },
-            ])
+    # ⚠️ Seeds de comptes de démo désactivés (suppression demandée par utilisateur)
+    # Auparavant : maman@test.com, pro@test.com, pediatre@test.com, sagefemme@test.com
+    # + posts de démo associés. Le super admin ci-dessus est conservé et géré séparément.
+    # Pour réactiver pour les tests : restaurer les blocs depuis l'historique git.
 
     # Seed educational resources (OMS/UNICEF validated baseline)
     if await db.resources.count_documents({}) == 0:

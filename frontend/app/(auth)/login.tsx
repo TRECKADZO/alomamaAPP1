@@ -37,25 +37,17 @@ export default function Login() {
       await login(
         { [mode]: mode === "email" ? identifier.trim().toLowerCase() : identifier.trim(), password } as any
       );
+  const handleLogin = async () => {
+    setLoading(true);
+    try {
+      const id = identifier.trim();
+      if (!id) throw new Error("Veuillez saisir votre email ou téléphone");
+      await login(id, password);
       router.replace("/(tabs)");
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fillDemo = (type: string) => {
-    setMode("email");
-    if (type === "maman") {
-      setIdentifier("maman@test.com");
-      setPassword("Maman123!");
-    } else if (type === "pro") {
-      setIdentifier("pro@test.com");
-      setPassword("Pro123!");
-    } else {
-      setIdentifier("admin@alomaman.com");
-      setPassword("Admin123!");
     }
   };
 
@@ -149,21 +141,6 @@ export default function Login() {
               <Text style={styles.btnPrimaryText}>Se connecter</Text>
             )}
           </TouchableOpacity>
-
-          <View style={styles.demoBox}>
-            <Text style={styles.demoTitle}>Comptes de démo</Text>
-            <View style={styles.demoRow}>
-              <TouchableOpacity style={styles.demoBtn} onPress={() => fillDemo("maman")} testID="demo-maman-btn">
-                <Text style={styles.demoBtnText}>👩 Maman</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.demoBtn} onPress={() => fillDemo("pro")} testID="demo-pro-btn">
-                <Text style={styles.demoBtnText}>🩺 Pro</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.demoBtn} onPress={() => fillDemo("admin")} testID="demo-admin-btn">
-                <Text style={styles.demoBtnText}>⚙️ Admin</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
 
           <View style={styles.footerRow}>
             <Text style={styles.footerText}>Pas encore de compte ? </Text>
