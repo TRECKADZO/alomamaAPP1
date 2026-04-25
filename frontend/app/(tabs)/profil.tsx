@@ -6,11 +6,15 @@ import {
   TouchableOpacity,
   Alert,
   Image,
+  Modal,
+  Pressable,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import { useState } from "react";
 import { useAuth } from "../../lib/auth";
 import { api, formatError } from "../../lib/api";
 import { pickImageBase64 } from "../../lib/imagePicker";
@@ -41,6 +45,8 @@ const ROLE_GRADIENTS: Record<string, [string, string]> = {
 export default function Profil() {
   const { user, logout, refresh } = useAuth();
   const router = useRouter();
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const uploadPhoto = async () => {
     const b64 = await pickImageBase64();
@@ -54,17 +60,27 @@ export default function Profil() {
   };
 
   const handleLogout = () => {
-    Alert.alert("Se déconnecter", "Voulez-vous vraiment vous déconnecter ?", [
-      { text: "Annuler", style: "cancel" },
-      {
-        text: "Déconnexion",
-        style: "destructive",
-        onPress: async () => {
-          await logout();
-          router.replace("/");
-        },
-      },
-    ]);
+    setShowLogoutModal(true);
+  };
+
+  const confirmLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      // Navigation immédiate AVANT clear pour éviter d'attendre AsyncStorage
+      router.replace("/");
+    } catch (e) {
+      console.warn("router.replace error", e);
+    }
+    // Puis nettoyage du token/user en arrière-plan
+    try {
+      await logout();
+    } catch (e) {
+      console.warn("logout error", e);
+    } finally {
+      setShowLogoutModal(false);
+      setLoggingOut(false);
+    }
   };
 
   const role = (user?.role || "maman") as keyof typeof ROLE_GRADIENTS;
@@ -154,6 +170,49 @@ export default function Profil() {
           <Text style={styles.appVersion}>À lo Maman · v1.0.0</Text>
         </View>
       </ScrollView>
+
+      {/* Modal de confirmation de déconnexion (remplace Alert.alert qui peut être capricieux sur Android edge-to-edge) */}
+      <Modal
+        visible={showLogoutModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !loggingOut && setShowLogoutModal(false)}
+        statusBarTranslucent
+      >
+        <Pressable style={styles.modalBg} onPress={() => !loggingOut && setShowLogoutModal(false)}>
+          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalIconWrap}>
+              <Ionicons name="log-out-outline" size={32} color={COLORS.error} />
+            </View>
+            <Text style={styles.modalTitle}>Se déconnecter ?</Text>
+            <Text style={styles.modalSubtitle}>
+              Vous devrez vous reconnecter pour accéder à votre compte.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalCancel]}
+                onPress={() => setShowLogoutModal(false)}
+                disabled={loggingOut}
+                testID="cancel-logout-btn"
+              >
+                <Text style={styles.modalCancelText}>Annuler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalConfirm]}
+                onPress={confirmLogout}
+                disabled={loggingOut}
+                testID="confirm-logout-btn"
+              >
+                {loggingOut ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.modalConfirmText}>Déconnexion</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -276,4 +335,74 @@ const styles = StyleSheet.create({
   },
   logoutText: { color: COLORS.error, fontWeight: "700" },
   appVersion: { textAlign: "center", color: COLORS.textMuted, marginTop: 14, fontSize: 12 },
+
+  // Logout confirmation modal
+  modalBg: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 24,
+    width: "100%",
+    maxWidth: 360,
+    alignItems: "center",
+  },
+  modalIconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#FEF2F2",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    textAlign: "center",
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    textAlign: "center",
+    marginTop: 6,
+    marginBottom: 18,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    width: "100%",
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  modalCancel: {
+    backgroundColor: COLORS.bgSecondary,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalCancelText: {
+    color: COLORS.textPrimary,
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  modalConfirm: {
+    backgroundColor: COLORS.error,
+  },
+  modalConfirmText: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 14,
+  },
 });

@@ -78,8 +78,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    await clearAuth();
-    await clearCache();
+    // Sécurise chaque étape pour ne jamais bloquer la déconnexion
+    try { await clearAuth(); } catch (e) { console.warn("clearAuth error", e); }
+    try { await clearCache(); } catch (e) { console.warn("clearCache error", e); }
+    try {
+      // Supprime aussi tout ce qui pourrait rester (queue offline, push token cache, etc.)
+      const all = await AsyncStorage.getAllKeys();
+      const toRemove = all.filter((k) =>
+        k === "auth_token" ||
+        k === "auth_user" ||
+        k === "expo_push_token" ||
+        k.startsWith("cache:") ||
+        k.startsWith("offline_queue") ||
+        k.startsWith("notif_")
+      );
+      if (toRemove.length) await AsyncStorage.multiRemove(toRemove);
+    } catch (e) { console.warn("multiRemove error", e); }
     setUser(null);
   };
 
