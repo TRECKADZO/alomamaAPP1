@@ -575,13 +575,35 @@ async def login(payload: LoginIn):
         raise HTTPException(status_code=400, detail="Email ou téléphone requis")
     user = None
     if payload.email:
-        email = payload.email.lower().strip()
-        user = await db.users.find_one({"email": email})
+        # Si l'utilisateur a saisi un téléphone dans le champ email, on bascule
+        em = payload.email.lower().strip()
+        if "@" not in em and any(c.isdigit() for c in em) and len(em.replace("+","").replace(" ","")) >= 7:
+            payload.phone = em
+            payload.email = None
+        else:
+            user = await db.users.find_one({"email": em})
     if not user and payload.phone:
-        phone = _normalize_phone(payload.phone)
-        user = await db.users.find_one({"phone": phone})
+        # Recherche multi-format pour gérer les comptes mal normalisés (legacy/seeds)
+        raw = (payload.phone or "").strip()
+        digits_only = "".join(c for c in raw if c.isdigit())
+        candidates = list({
+            _normalize_phone(raw),                            # +225709005300
+            raw,                                              # tel quel
+            digits_only,                                      # 0709005300 ou 2250709005300
+            digits_only.lstrip("0"),                          # 709005300
+            f"+{digits_only}",                                # +0709005300
+            f"+225{digits_only}" if not digits_only.startswith("225") else f"+{digits_only}",
+            digits_only[3:] if digits_only.startswith("225") else digits_only,  # sans préfixe pays
+        })
+        user = await db.users.find_one({"phone": {"$in": candidates}})
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Identifiants incorrects")
+    # Auto-correction : si le numéro stocké n'est pas au format normalisé, on le corrige
+    if user.get("phone"):
+        canon = _normalize_phone(user["phone"])
+        if canon != user["phone"]:
+            await db.users.update_one({"id": user["id"]}, {"$set": {"phone": canon}})
+            user["phone"] = canon
     token = create_token(user["id"], user["email"], user["role"])
     return {"token": token, "user": serialize_user(user)}
 
