@@ -55,7 +55,17 @@
           "backgroundColor": "#000000"
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "extraProguardRules": "-keep class com.alomaman.** { *; }\n-keepattributes SourceFile,LineNumberTable\n-renamesourcefileattribute SourceFile"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
