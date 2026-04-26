@@ -19,6 +19,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import PhoneInput, { extractLocalDigits } from "../../components/PhoneInput";
 
 type Provider = { key: string; label: string; mode: string; country: string };
 type Account = {
@@ -232,13 +233,10 @@ export default function Retraits() {
               </TouchableOpacity>
 
               <Text style={styles.formLabel}>Numéro de téléphone</Text>
-              <TextInput
+              <PhoneInput
                 value={editAlias}
                 onChangeText={setEditAlias}
-                placeholder="Ex: 0707070707"
-                keyboardType="phone-pad"
-                style={[styles.input, { paddingVertical: 12 }]}
-                placeholderTextColor={COLORS.textMuted}
+                testID="retrait-phone-input"
               />
 
               <Text style={styles.formLabel}>Nom du titulaire (optionnel)</Text>

@@ -17,9 +17,11 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import PhoneInput, { extractLocalDigits } from "../../components/PhoneInput";
 
 export default function MotDePasseOublie() {
   const router = useRouter();
+  const [mode, setMode] = useState<"email" | "phone">("phone");
   const [identifier, setIdentifier] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -27,13 +29,18 @@ export default function MotDePasseOublie() {
   const [expiresIn, setExpiresIn] = useState<number>(10);
   const [identifierKind, setIdentifierKind] = useState<"email" | "phone">("phone");
 
-  const isEmail = identifier.includes("@");
-  const detectedKind: "email" | "phone" = isEmail ? "email" : "phone";
-
   const submit = async () => {
-    if (!identifier.trim() || !name.trim()) {
+    const idValue = identifier.trim();
+    if (!idValue || !name.trim()) {
       Alert.alert("Champs requis", "Renseignez votre email ou téléphone ET votre nom.");
       return;
+    }
+    if (mode === "phone") {
+      const digits = extractLocalDigits(idValue);
+      if (digits.length !== 10) {
+        Alert.alert("Téléphone invalide", "Saisissez vos 10 chiffres après l'indicatif +225");
+        return;
+      }
     }
     if (name.trim().length < 2) {
       Alert.alert("Nom invalide", "Entrez votre nom complet (prénom + nom).");
@@ -42,13 +49,13 @@ export default function MotDePasseOublie() {
     setLoading(true);
     try {
       const r = await api.post("/auth/forgot-password/request", {
-        identifier: identifier.trim(),
+        identifier: idValue,
         name: name.trim(),
       });
       if (r.data?.verified && r.data?.code) {
         setCode(r.data.code);
         setExpiresIn(r.data.expires_in_minutes || 10);
-        setIdentifierKind(r.data.identifier_kind || detectedKind);
+        setIdentifierKind(r.data.identifier_kind || mode);
       } else {
         Alert.alert(
           "Vérification échouée",
@@ -103,26 +110,49 @@ export default function MotDePasseOublie() {
 
           {!code && (
             <>
+              <View style={styles.modeToggle}>
+                <TouchableOpacity
+                  style={[styles.modeBtn, mode === "phone" && styles.modeBtnActive]}
+                  onPress={() => { setMode("phone"); setIdentifier(""); }}
+                  testID="forgot-mode-phone"
+                >
+                  <Ionicons name="call" size={14} color={mode === "phone" ? "#fff" : COLORS.textPrimary} />
+                  <Text style={[styles.modeBtnText, mode === "phone" && { color: "#fff" }]}>Téléphone</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modeBtn, mode === "email" && styles.modeBtnActive]}
+                  onPress={() => { setMode("email"); setIdentifier(""); }}
+                  testID="forgot-mode-email"
+                >
+                  <Ionicons name="mail" size={14} color={mode === "email" ? "#fff" : COLORS.textPrimary} />
+                  <Text style={[styles.modeBtnText, mode === "email" && { color: "#fff" }]}>Email</Text>
+                </TouchableOpacity>
+              </View>
+
               <View style={styles.field}>
-                <Text style={styles.label}>Email ou numéro de téléphone</Text>
-                <View style={styles.inputWrap}>
-                  <Ionicons
-                    name={isEmail ? "mail-outline" : "call-outline"}
-                    size={18}
-                    color={COLORS.textMuted}
-                  />
-                  <TextInput
-                    style={styles.input}
+                <Text style={styles.label}>{mode === "email" ? "Email" : "Numéro de téléphone"}</Text>
+                {mode === "phone" ? (
+                  <PhoneInput
                     value={identifier}
                     onChangeText={setIdentifier}
-                    placeholder="exemple@mail.com  ou  +225 XX XX XX XX"
-                    keyboardType={isEmail ? "email-address" : "phone-pad"}
-                    placeholderTextColor={COLORS.textMuted}
-                    autoCorrect={false}
-                    autoCapitalize="none"
                     testID="forgot-identifier"
                   />
-                </View>
+                ) : (
+                  <View style={styles.inputWrap}>
+                    <Ionicons name="mail-outline" size={18} color={COLORS.textMuted} />
+                    <TextInput
+                      style={styles.input}
+                      value={identifier}
+                      onChangeText={setIdentifier}
+                      placeholder="exemple@mail.com"
+                      keyboardType="email-address"
+                      placeholderTextColor={COLORS.textMuted}
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                      testID="forgot-identifier"
+                    />
+                  </View>
+                )}
               </View>
 
               <View style={styles.field}>
@@ -301,4 +331,8 @@ const styles = StyleSheet.create({
   },
   copyBtnText: { color: COLORS.primary, fontWeight: "700", fontSize: 13 },
   expiresText: { fontSize: 11, color: COLORS.primary, textAlign: "center", fontWeight: "600", marginTop: 4 },
+  modeToggle: { flexDirection: "row", gap: 6, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.pill, padding: 4, marginBottom: 16 },
+  modeBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: RADIUS.pill },
+  modeBtnActive: { backgroundColor: COLORS.primary },
+  modeBtnText: { color: COLORS.textPrimary, fontWeight: "700", fontSize: 13 },
 });

@@ -9,6 +9,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../lib/auth";
 import { formatError } from "../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW, IMAGES } from "../constants/theme";
+import PhoneInput, { extractLocalDigits } from "../components/PhoneInput";
 
 export default function PortailPro() {
   const router = useRouter();
@@ -22,6 +23,12 @@ export default function PortailPro() {
   const handleLogin = async () => {
     if ((mode === "email" && !email) || (mode === "phone" && !phone) || !password) {
       return Alert.alert("Champs requis", "Merci de remplir tous les champs.");
+    }
+    if (mode === "phone") {
+      const digits = extractLocalDigits(phone);
+      if (digits.length !== 10) {
+        return Alert.alert("Téléphone invalide", "Saisissez vos 10 chiffres après l'indicatif +225");
+      }
     }
     setLoading(true);
     try {
@@ -144,13 +151,9 @@ export default function PortailPro() {
                 ) : (
                   <>
                     <Text style={styles.label}>Numéro de téléphone</Text>
-                    <TextInput
-                      style={styles.input}
+                    <PhoneInput
                       value={phone}
                       onChangeText={setPhone}
-                      placeholder="+225 XX XX XX XX XX"
-                      placeholderTextColor={COLORS.textMuted}
-                      keyboardType="phone-pad"
                       testID="portail-phone"
                     />
                   </>

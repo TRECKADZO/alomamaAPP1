@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api, formatError } from "../lib/api";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
+import PhoneInput, { extractLocalDigits } from "../components/PhoneInput";
 
 /**
  * Page PUBLIQUE de demande de suppression de compte (sans authentification requise).
@@ -30,6 +31,7 @@ import { COLORS, RADIUS, SPACING } from "../constants/theme";
  */
 export default function SuppressionComptePublic() {
   const router = useRouter();
+  const [mode, setMode] = useState<"phone" | "email">("phone");
   const [identifier, setIdentifier] = useState("");
   const [name, setName] = useState("");
   const [reason, setReason] = useState("");
@@ -40,6 +42,13 @@ export default function SuppressionComptePublic() {
     if (!identifier.trim() || !name.trim()) {
       Alert.alert("Champs requis", "Indiquez votre email/téléphone et votre nom complet.");
       return;
+    }
+    if (mode === "phone") {
+      const digits = extractLocalDigits(identifier);
+      if (digits.length !== 10) {
+        Alert.alert("Téléphone invalide", "Saisissez vos 10 chiffres après l'indicatif +225");
+        return;
+      }
     }
     setLoading(true);
     try {
@@ -114,18 +123,42 @@ export default function SuppressionComptePublic() {
                 confirmera la suppression par email/SMS.
               </Text>
 
-              <Text style={styles.label}>Email ou numéro de téléphone du compte *</Text>
-              <TextInput
-                style={styles.input}
-                value={identifier}
-                onChangeText={setIdentifier}
-                placeholder="exemple@mail.com  ou  +225 XX XX XX XX"
-                placeholderTextColor={COLORS.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType={identifier.includes("@") ? "email-address" : "default"}
-                editable={!loading}
-              />
+              <Text style={styles.label}>Identifiant du compte *</Text>
+              <View style={styles.modeToggle}>
+                <TouchableOpacity
+                  style={[styles.modeBtn, mode === "phone" && styles.modeBtnActive]}
+                  onPress={() => { setMode("phone"); setIdentifier(""); }}
+                >
+                  <Ionicons name="call" size={14} color={mode === "phone" ? "#fff" : COLORS.textPrimary} />
+                  <Text style={[styles.modeBtnText, mode === "phone" && { color: "#fff" }]}>Téléphone</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modeBtn, mode === "email" && styles.modeBtnActive]}
+                  onPress={() => { setMode("email"); setIdentifier(""); }}
+                >
+                  <Ionicons name="mail" size={14} color={mode === "email" ? "#fff" : COLORS.textPrimary} />
+                  <Text style={[styles.modeBtnText, mode === "email" && { color: "#fff" }]}>Email</Text>
+                </TouchableOpacity>
+              </View>
+              {mode === "phone" ? (
+                <PhoneInput
+                  value={identifier}
+                  onChangeText={setIdentifier}
+                  editable={!loading}
+                />
+              ) : (
+                <TextInput
+                  style={styles.input}
+                  value={identifier}
+                  onChangeText={setIdentifier}
+                  placeholder="exemple@mail.com"
+                  placeholderTextColor={COLORS.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  editable={!loading}
+                />
+              )}
 
               <Text style={styles.label}>Nom complet *</Text>
               <TextInput
@@ -266,6 +299,11 @@ const styles = StyleSheet.create({
   methodSub: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
   methodSteps: { fontSize: 13, color: COLORS.textPrimary, lineHeight: 20, marginTop: 4 },
   bold: { fontWeight: "800" },
+
+  modeToggle: { flexDirection: "row", gap: 6, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.pill, padding: 4, marginBottom: 8 },
+  modeBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 8, borderRadius: RADIUS.pill },
+  modeBtnActive: { backgroundColor: COLORS.primary },
+  modeBtnText: { color: COLORS.textPrimary, fontWeight: "700", fontSize: 12 },
 
   label: { fontSize: 12, fontWeight: "700", color: COLORS.textSecondary, marginTop: 12, marginBottom: 6 },
   input: {

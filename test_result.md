@@ -1252,3 +1252,27 @@ agent_communication:
       _resolve_identifier (server.py L603-610) correctly reads payload.identifier with fallback to payload.email then payload.phone, and detects kind by '@' presence. password_reset_codes records persist `identifier`+`identifier_kind` AND legacy `phone`/`email` for back-compat.
 
       Cleanup: all 4 test users deleted. No bugs found. Main agent can summarize and finish.
+
+
+  - agent: "main"
+    message: |
+      [Front-end UI] Harmonisation des numéros de téléphone entre mobile et web.
+      
+      Nouveau composant `/app/frontend/components/PhoneInput.tsx` :
+      - Indicatif `+225` figé en préfixe non éditable (badge avec drapeau 🇨🇮)
+      - L'utilisateur ne saisit QUE les 10 chiffres locaux
+      - Affichage groupé pour la lisibilité (XX XX XX XX XX)
+      - onChangeText renvoie la valeur canonique `+225XXXXXXXXXX` au parent
+      - extractLocalDigits / buildCanonicalPhone exportés pour validation par les écrans appelants
+      
+      Intégré dans :
+      - `(auth)/register.tsx` (mode téléphone + champ optionnel)
+      - `(auth)/login.tsx` (mode téléphone)
+      - `(auth)/mot-de-passe-oublie.tsx` (toggle email/phone ajouté)
+      - `suppression-compte.tsx` (toggle email/phone ajouté)
+      - `pro/retraits.tsx` (Mobile Money number)
+      - `portail-pro.tsx` (mode téléphone)
+      
+      Compatible avec le backend `_normalize_phone` existant et avec la version web (le canonical `+225XXXXXXXXXX` est universel).
+      
+      Pas de modification backend. Aucun test backend nécessaire.

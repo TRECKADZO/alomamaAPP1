@@ -19,6 +19,7 @@ import { useAuth } from "../../lib/auth";
 import { formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 import PickerField from "../../components/PickerField";
+import PhoneInput, { extractLocalDigits } from "../../components/PhoneInput";
 import { REGIONS_CI, SPECIALITES } from "../../lib/data";
 
 type Role = "maman" | "professionnel" | "centre_sante" | "famille";
@@ -68,9 +69,20 @@ export default function Register() {
       Alert.alert("Email requis", "Saisissez votre email");
       return;
     }
-    if (mode === "phone" && !form.phone) {
-      Alert.alert("Téléphone requis", "Saisissez votre numéro");
-      return;
+    if (mode === "phone") {
+      const digits = extractLocalDigits(form.phone);
+      if (digits.length !== 10) {
+        Alert.alert("Téléphone invalide", "Saisissez vos 10 chiffres après l'indicatif +225");
+        return;
+      }
+    }
+    // Si email mais téléphone optionnel renseigné, valider qu'il est complet
+    if (mode === "email" && form.phone) {
+      const digits = extractLocalDigits(form.phone);
+      if (digits.length !== 10) {
+        Alert.alert("Téléphone invalide", "Le numéro optionnel doit contenir 10 chiffres après +225, ou laissez le champ vide.");
+        return;
+      }
     }
     if (form.password.length < 6) {
       Alert.alert("Mot de passe", "Minimum 6 caractères");
@@ -181,9 +193,15 @@ export default function Register() {
               <TextInput style={styles.input} value={form.email} onChangeText={(v) => update("email", v)} autoCapitalize="none" keyboardType="email-address" placeholder="vous@exemple.com" placeholderTextColor={COLORS.textMuted} testID="reg-email-input" />
             </Field>
           ) : (
-            <Field label="Numéro de téléphone *" icon="call-outline">
-              <TextInput style={styles.input} value={form.phone} onChangeText={(v) => update("phone", v)} keyboardType="phone-pad" placeholder="+225 XX XX XX XX" placeholderTextColor={COLORS.textMuted} testID="reg-phone-input" />
-            </Field>
+            <View style={styles.field}>
+              <Text style={styles.label}>Numéro de téléphone *</Text>
+              <PhoneInput
+                value={form.phone}
+                onChangeText={(canonical) => update("phone", canonical)}
+                testID="reg-phone-input"
+              />
+              <Text style={styles.hint}>Indicatif Côte d'Ivoire fixé. Saisissez vos 10 chiffres uniquement.</Text>
+            </View>
           )}
 
           <Field label="Mot de passe *" icon="lock-closed-outline">
@@ -191,9 +209,14 @@ export default function Register() {
           </Field>
 
           {mode === "email" && (
-            <Field label="Téléphone (optionnel)" icon="call-outline">
-              <TextInput style={styles.input} value={form.phone} onChangeText={(v) => update("phone", v)} keyboardType="phone-pad" placeholder="+225 ..." placeholderTextColor={COLORS.textMuted} testID="reg-phone-optional-input" />
-            </Field>
+            <View style={styles.field}>
+              <Text style={styles.label}>Téléphone (optionnel)</Text>
+              <PhoneInput
+                value={form.phone}
+                onChangeText={(canonical) => update("phone", canonical)}
+                testID="reg-phone-optional-input"
+              />
+            </View>
           )}
 
           {role === "professionnel" && (
@@ -415,4 +438,5 @@ const styles = StyleSheet.create({
   consentText: { flex: 1, fontSize: 12, color: COLORS.textSecondary, lineHeight: 18 },
   consentOptional: { color: COLORS.textMuted, fontSize: 11, fontStyle: "italic" },
   consentLink: { color: COLORS.primary, fontWeight: "700", textDecorationLine: "underline" },
+  hint: { fontSize: 11, color: COLORS.textMuted, marginTop: 6, fontStyle: "italic" },
 });

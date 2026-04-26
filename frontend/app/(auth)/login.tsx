@@ -32,6 +32,13 @@ export default function Login() {
       Alert.alert("Champs requis", `Veuillez renseigner ${mode === "email" ? "email" : "téléphone"} et mot de passe`);
       return;
     }
+    if (mode === "phone") {
+      const digits = extractLocalDigits(identifier);
+      if (digits.length !== 10) {
+        Alert.alert("Téléphone invalide", "Saisissez vos 10 chiffres après l'indicatif +225");
+        return;
+      }
+    }
     setLoading(true);
     try {
       await login(
@@ -85,19 +92,27 @@ export default function Login() {
 
           <View style={styles.field}>
             <Text style={styles.label}>{mode === "email" ? "Email" : "Numéro de téléphone"}</Text>
-            <View style={styles.inputWrap}>
-              <Ionicons name={mode === "email" ? "mail-outline" : "call-outline"} size={18} color={COLORS.textMuted} />
-              <TextInput
-                style={styles.input}
+            {mode === "phone" ? (
+              <PhoneInput
                 value={identifier}
                 onChangeText={setIdentifier}
-                autoCapitalize="none"
-                keyboardType={mode === "email" ? "email-address" : "phone-pad"}
-                placeholder={mode === "email" ? "vous@exemple.com" : "+225 XX XX XX XX"}
-                placeholderTextColor={COLORS.textMuted}
                 testID="login-identifier-input"
               />
-            </View>
+            ) : (
+              <View style={styles.inputWrap}>
+                <Ionicons name="mail-outline" size={18} color={COLORS.textMuted} />
+                <TextInput
+                  style={styles.input}
+                  value={identifier}
+                  onChangeText={setIdentifier}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  placeholder="vous@exemple.com"
+                  placeholderTextColor={COLORS.textMuted}
+                  testID="login-identifier-input"
+                />
+              </View>
+            )}
           </View>
 
           <View style={styles.field}>
