@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -12,20 +12,35 @@ export default function FamilleSharedView() {
   const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
-    try {
-      const { data } = await api.get(`/famille/shared/${encodeURIComponent(email!)}`);
-      setData(data);
-    } catch (e) {
-      Alert.alert("Accès refusé", formatError(e));
-      router.back();
-    } finally { setLoading(false); }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!email) { setLoading(false); return; }
+      try {
+        const { data } = await api.get(`/famille/shared/${encodeURIComponent(email)}`);
+        if (!cancelled) { setData(data); setError(null); }
+      } catch (e) {
+        if (!cancelled) setError(formatError(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [email]);
 
-  useCallback(() => { load(); }, [email]);
-  if (loading && !data) load();
-  if (loading || !data) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
+  if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
+  if (error || !data) return (
+    <SafeAreaView style={styles.loading}>
+      <Text style={{ color: COLORS.error, marginBottom: 12, textAlign: "center", paddingHorizontal: 20 }}>
+        {error || "Accès refusé"}
+      </Text>
+      <TouchableOpacity style={{ backgroundColor: COLORS.primary, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20 }} onPress={() => router.back()}>
+        <Text style={{ color: "#fff", fontWeight: "700" }}>Retour</Text>
+      </TouchableOpacity>
+    </SafeAreaView>
+  );
 
   const { owner, permissions, grossesse, enfants, rdvs } = data;
   const weeksSA = grossesse?.date_debut ? Math.floor((Date.now() - new Date(grossesse.date_debut).getTime()) / (7 * 86400000)) : 0;
