@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../lib/auth";
 import { formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import PhoneInput, { extractLocalDigits } from "../../components/PhoneInput";
 
 export default function Login() {
   const router = useRouter();
