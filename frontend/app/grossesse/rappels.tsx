@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../lib/api";
+import { smartPost, smartPatch, smartDelete } from "../../lib/offline";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
 import DateField from "../../components/DateField";
 

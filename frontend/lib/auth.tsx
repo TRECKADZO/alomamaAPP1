@@ -50,6 +50,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try {
             const { data } = await api.get("/auth/me");
             setUser(data);
+            // Enregistre/rafraîchit le push token au démarrage si l'utilisateur est déjà connecté
+            registerExpoPushToken().catch(() => {});
           } catch {
             await clearAuth();
             setUser(null);

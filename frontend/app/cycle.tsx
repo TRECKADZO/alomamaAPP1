@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../lib/api";
+import { smartPost } from "../lib/offline";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
 import DateField from "../components/DateField";
 
@@ -35,12 +36,13 @@ export default function Cycle() {
   const create = async () => {
     if (!form.date_debut_regles) return Alert.alert("Date requise");
     try {
-      await api.post("/cycle", {
+      const r = await smartPost("/cycle", {
         date_debut_regles: form.date_debut_regles,
         duree_regles: parseInt(form.duree_regles) || 5,
         duree_cycle: parseInt(form.duree_cycle) || 28,
         notes: form.notes,
       });
+      if (r.queued) Alert.alert("Hors ligne", "Cycle enregistré localement, sera synchronisé dès le retour de la connexion.");
       setForm({ date_debut_regles: "", duree_regles: "5", duree_cycle: "28", notes: "" });
       setModal(false);
       load();

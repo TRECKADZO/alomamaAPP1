@@ -1276,3 +1276,24 @@ agent_communication:
       Compatible avec le backend `_normalize_phone` existant et avec la version web (le canonical `+225XXXXXXXXXX` est universel).
       
       Pas de modification backend. Aucun test backend nécessaire.
+
+
+  - agent: "main"
+    message: |
+      [Offline + Push] Three improvements bundled together:
+      
+      1) **Migration smartPost vers les écrans santé critiques** (offline write queue):
+         - `cycle.tsx` (POST /cycle)
+         - `post-partum.tsx` (POST /humeur, POST /allaitement)
+         - `grossesse/tracker/[type].tsx` (POST + DELETE /grossesse/tracking)
+         - `grossesse/rappels.tsx` (POST + PATCH + DELETE /reminders)
+         - `plan-naissance.tsx` (POST /plan-naissance)
+         Toutes les écritures sont désormais mises en file d'attente locale en cas de coupure réseau et synchronisées automatiquement au retour de la connexion (via `useAutoSync` déjà en place dans OfflineBanner).
+      
+      2) **Notifications push activées** :
+         - Le scheduler backend `_reminders_scheduler` (boucle 5 min) était déjà en place et envoie les pushes Expo pour tous les `reminders` (cycle, contraception, grossesse) avec deduplication via `pushed_at`.
+         - **Fix critique** : `registerExpoPushToken()` n'était PAS appelé au démarrage de l'app si l'utilisateur était déjà connecté. Ajouté dans `lib/auth.tsx` useEffect après hydratation. Désormais, dès qu'un utilisateur ouvre l'app (avec session valide), son token est rafraîchi côté serveur.
+      
+      3) **Filtre prestation** : déjà implémenté dans `/search.tsx` (chips Échographie/Consultation + filtre prix max + CMU). Aucune action nécessaire.
+      
+      Pas de changement backend, donc retest backend non requis. À tester côté frontend mobile uniquement (mode avion → enregistrer un cycle → reconnecter → vérifier sync).

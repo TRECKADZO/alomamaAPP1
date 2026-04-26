@@ -7,6 +7,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { api, formatError } from "../lib/api";
+import { smartPost } from "../lib/offline";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../constants/theme";
 
 const POSITIONS = ["Allongée sur le dos", "Allongée sur le côté", "Assise", "Accroupie", "Debout", "Dans l'eau", "À discuter avec mon médecin"];
@@ -58,8 +59,12 @@ export default function PlanNaissanceScreen() {
   const onSave = async () => {
     setSaving(true);
     try {
-      await api.post("/plan-naissance", form);
-      Alert.alert("✅ Plan enregistré", "Votre plan de naissance a été sauvegardé. Vous pouvez le télécharger en PDF pour le présenter à votre équipe médicale.");
+      const r = await smartPost("/plan-naissance", form);
+      if (r.queued) {
+        Alert.alert("Hors ligne", "Plan enregistré localement, sera synchronisé au retour de la connexion.");
+      } else {
+        Alert.alert("✅ Plan enregistré", "Votre plan de naissance a été sauvegardé. Vous pouvez le télécharger en PDF pour le présenter à votre équipe médicale.");
+      }
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
     } finally {

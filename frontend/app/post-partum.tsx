@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../lib/api";
+import { smartPost } from "../lib/offline";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
 import DateField from "../components/DateField";
 
@@ -37,7 +38,8 @@ export default function PostPartum() {
   const createHumeur = async () => {
     if (!humForm.date) return Alert.alert("Date requise");
     try {
-      await api.post("/humeur", humForm);
+      const r = await smartPost("/humeur", humForm);
+      if (r.queued) Alert.alert("Hors ligne", "Humeur enregistrée localement, sera synchronisée au retour de la connexion.");
       setHumForm({ date: "", score: 5, notes: "", symptomes: [] });
       setModalH(false); load();
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
@@ -46,13 +48,14 @@ export default function PostPartum() {
   const createAllaitement = async () => {
     if (!allForm.enfant_id || !allForm.date) return Alert.alert("Enfant et date requis");
     try {
-      await api.post("/allaitement", {
+      const r = await smartPost("/allaitement", {
         enfant_id: allForm.enfant_id,
         date: allForm.date,
         duree_minutes: parseInt(allForm.duree_minutes) || 10,
         cote: allForm.cote,
         notes: allForm.notes,
       });
+      if (r.queued) Alert.alert("Hors ligne", "Allaitement enregistré localement, sera synchronisé au retour de la connexion.");
       setAllForm({ enfant_id: "", date: "", duree_minutes: "10", cote: "gauche", notes: "" });
       setModalA(false); load();
     } catch (e) { Alert.alert("Erreur", formatError(e)); }

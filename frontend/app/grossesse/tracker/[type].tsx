@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../../lib/api";
+import { smartPost, smartDelete } from "../../../lib/offline";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
 import DateField from "../../../components/DateField";
 
@@ -68,7 +69,8 @@ export default function TrackerScreen() {
     }
     if (notes.trim()) payload.notes = notes.trim();
     try {
-      await api.post("/grossesse/tracking", payload);
+      const r = await smartPost("/grossesse/tracking", payload);
+      if (r.queued) Alert.alert("Hors ligne", "Donnée enregistrée localement, sera synchronisée au retour de la connexion.");
       setShowAdd(false);
       setVal1(""); setVal2(""); setText(""); setNotes("");
       load();
@@ -81,7 +83,7 @@ export default function TrackerScreen() {
     Alert.alert("Supprimer ?", "Cette entrée sera supprimée.", [
       { text: "Annuler", style: "cancel" },
       { text: "Supprimer", style: "destructive", onPress: async () => {
-          try { await api.delete(`/grossesse/tracking/${id}`); load(); }
+          try { await smartDelete(`/grossesse/tracking/${id}`); load(); }
           catch (e) { Alert.alert("Erreur", formatError(e)); }
       } }
     ]);
