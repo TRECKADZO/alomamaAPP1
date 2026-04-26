@@ -50,8 +50,9 @@ export default function DashboardHome() {
         ]);
         setData({ membres: membres.data, rdv: rdv.data, centre: centre.data });
       } else if (user?.role === "admin") {
-        const stats = await cachedGet("/admin/stats").catch(() => ({ data: {} }));
-        setData({ stats: stats.data });
+        // Pour le super admin, on redirige vers le nouveau dashboard riche (onglet Admin)
+        router.replace("/(tabs)/admin");
+        return;
       }
     } finally {
       setLoading(false);
