@@ -76,12 +76,14 @@ def serialize_user(u: dict) -> dict:
     email = u.get("email", "")
     # Si email est un synthétique (xxx@phone.alomaman.local), on ne l'expose pas
     email_public = u.get("email_public") or (email if not email.endswith("@phone.alomaman.local") else None)
+    role_raw = u["role"]
     return {
         "id": u["id"],
         "email": email_public or "",  # email affichable
         "internal_email": email,
         "name": u.get("name", ""),
-        "role": u["role"],
+        "role": role_raw,                                      # ancien nom (rétro-compat mobile)
+        "userType": ROLE_ALIASES.get(role_raw, role_raw),       # nouveau nom (web)
         "avatar": u.get("avatar"),
         "phone": u.get("phone"),
         "specialite": u.get("specialite"),
@@ -93,6 +95,9 @@ def serialize_user(u: dict) -> dict:
         "cmu": u.get("cmu"),
         "is_super_admin": bool(u.get("is_super_admin", False)),
         "created_at": u.get("created_at"),
+        # RBAC enrichment
+        "permissions": get_permissions_for_role(role_raw),
+        "dashboard": get_dashboard_for_role(role_raw),
     }
 
 
@@ -113,15 +118,110 @@ async def get_current_user(request: Request) -> dict:
     return user
 
 
+# ----------------------------------------------------------------------
+# RBAC — Alias de rôles (compatibilité ancien/nouveau nommage)
+# ----------------------------------------------------------------------
+# Anciens noms (en DB) → Nouveaux noms (exposés à la nouvelle web app)
+ROLE_ALIASES = {
+    "maman": "patient",
+    "professionnel": "pro",
+    "admin": "super_admin",
+}
+# Inverse pour normaliser les inputs (la nouvelle web envoie patient → on stocke maman)
+ROLE_REVERSE_ALIASES = {
+    "patient": "maman",
+    "pro": "professionnel",
+    "super_admin": "admin",
+}
+ALLOWED_ROLES = {"maman", "professionnel", "centre_sante", "famille", "admin",
+                 "patient", "pro", "super_admin"}
+
+
+def normalize_role_input(role: str) -> str:
+    """Normalise un rôle reçu en entrée vers la valeur stockée en DB (ancien nom)."""
+    if not role:
+        return role
+    return ROLE_REVERSE_ALIASES.get(role, role)
+
+
+def role_with_aliases(role: str) -> dict:
+    """Retourne {role, userType} pour les réponses API (les deux noms)."""
+    if not role:
+        return {"role": None, "userType": None}
+    return {
+        "role": role,                                 # ancien nom (rétro-compat mobile)
+        "userType": ROLE_ALIASES.get(role, role),     # nouveau nom (web)
+    }
+
+
+def get_dashboard_for_role(role: str) -> dict:
+    """Indique au client où rediriger après login + plateforme privilégiée."""
+    role_alias = ROLE_ALIASES.get(role, role)
+    mapping = {
+        "patient":      {"platform": "mobile", "path": "/(tabs)",        "label": "Espace Maman"},
+        "pro":          {"platform": "web",    "path": "/dashboard/pro", "label": "Portail Professionnel"},
+        "centre_sante": {"platform": "web",    "path": "/dashboard/centre", "label": "Portail Centre de Santé"},
+        "super_admin":  {"platform": "web",    "path": "/admin",         "label": "Console Super Admin"},
+        "famille":      {"platform": "mobile", "path": "/(tabs)",        "label": "Espace Famille"},
+    }
+    return mapping.get(role_alias, {"platform": "mobile", "path": "/(tabs)", "label": "Accueil"})
+
+
+def get_permissions_for_role(role: str) -> list:
+    """Liste lisible des permissions pour debug / UI conditionnelle côté client."""
+    role_alias = ROLE_ALIASES.get(role, role)
+    perms_map = {
+        "patient": [
+            "read:self", "write:self",
+            "read:own_grossesses", "write:own_grossesses",
+            "read:own_enfants", "write:own_enfants",
+            "create:rdv", "read:own_rdv",
+            "create:messages", "read:own_messages",
+        ],
+        "pro": [
+            "read:patients_assigned", "write:consultation_notes",
+            "read:own_rdv", "write:own_rdv",
+            "create:teleconsultation", "read:own_revenue",
+            "create:prestations", "manage:disponibilites",
+            "request:withdraw",
+        ],
+        "centre_sante": [
+            "read:pros_assigned", "write:pros_assigned",
+            "read:patients_centre", "create:rdv_centre",
+            "read:revenue_centre",
+        ],
+        "super_admin": [
+            "read:*", "write:*", "delete:*",
+            "manage:users", "manage:roles",
+            "read:metrics", "export:metrics",
+            "read:directory", "manage:payouts",
+        ],
+        "famille": [
+            "read:shared_data", "create:messages_to_owner",
+        ],
+    }
+    return perms_map.get(role_alias, [])
+
+
 def require_roles(*roles):
+    """RBAC dependency. Accepte aliases : patient↔maman, pro↔professionnel, super_admin↔admin."""
+    expanded = set()
+    for r in roles:
+        expanded.add(r)
+        expanded.add(ROLE_ALIASES.get(r, r))
+        expanded.add(ROLE_REVERSE_ALIASES.get(r, r))
+
     async def _dep(user=Depends(get_current_user)):
-        if user["role"] not in roles:
+        user_role = user["role"]
+        if user_role not in expanded and ROLE_ALIASES.get(user_role, user_role) not in expanded and ROLE_REVERSE_ALIASES.get(user_role, user_role) not in expanded:
             raise HTTPException(status_code=403, detail="Accès refusé")
         return user
     return _dep
 
 
-def is_premium_active(user: dict) -> bool:
+# ----------------------------------------------------------------------
+# (anciens helpers RBAC supprimés — remplacés ci-dessus)
+# ----------------------------------------------------------------------def is_premium_active(user: dict) -> bool:
     if not user.get("premium"):
         return False
     pu = user.get("premium_until")
@@ -364,6 +464,11 @@ async def register(payload: RegisterIn):
     if not payload.email and not payload.phone:
         raise HTTPException(status_code=400, detail="Email ou téléphone requis")
 
+    # Normalisation du rôle (accepte 'patient' → stocke 'maman', etc.)
+    payload.role = normalize_role_input(payload.role)
+    if payload.role not in ALLOWED_ROLES:
+        raise HTTPException(status_code=400, detail=f"Rôle invalide. Valides: maman/patient, professionnel/pro, centre_sante, famille, admin/super_admin")
+
     # Consentement obligatoire
     if not payload.accepte_cgu:
         raise HTTPException(status_code=400, detail="Vous devez accepter les Conditions Générales d'Utilisation")
@@ -484,6 +589,24 @@ async def login(payload: LoginIn):
 @api.get("/auth/me")
 async def me(user=Depends(get_current_user)):
     return serialize_user(user)
+
+
+@api.get("/auth/roles-info")
+async def roles_info():
+    """Endpoint PUBLIC pour la nouvelle web app : description de tous les rôles, alias et permissions.
+    Utile pour synchroniser les UI sans hardcoder."""
+    info = {}
+    for new_name in ["patient", "pro", "centre_sante", "super_admin", "famille"]:
+        info[new_name] = {
+            "alias": ROLE_REVERSE_ALIASES.get(new_name, new_name),
+            "permissions": get_permissions_for_role(new_name),
+            "dashboard": get_dashboard_for_role(new_name),
+        }
+    return {
+        "roles": info,
+        "aliases_legacy_to_new": ROLE_ALIASES,
+        "aliases_new_to_legacy": ROLE_REVERSE_ALIASES,
+    }
 
 
 # ----------------------------------------------------------------------
