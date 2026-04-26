@@ -768,6 +768,52 @@ class DeleteAccountIn(BaseModel):
     confirmation: str  # doit valoir "SUPPRIMER" pour confirmer
 
 
+class PublicDeletionRequestIn(BaseModel):
+    identifier: str  # email ou téléphone
+    name: str
+    reason: Optional[str] = None
+
+
+@api.post("/public/account-deletion-request")
+async def public_account_deletion_request(payload: PublicDeletionRequestIn):
+    """
+    Endpoint PUBLIC (sans auth) — demande de suppression de compte à distance.
+    Utilisé par la page web /suppression-compte (lien obligatoire Google Play / Apple App Store).
+    L'admin reçoit la demande dans `account_deletion_requests` et traite manuellement sous 30 jours.
+    """
+    ident = (payload.identifier or "").strip()
+    name = (payload.name or "").strip()
+    if not ident or len(name) < 2:
+        raise HTTPException(400, "Email/téléphone et nom complet sont requis")
+    # Anti-spam : max 3 demandes / heure / identifier
+    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    recent = await db.account_deletion_requests.count_documents(
+        {"identifier": ident.lower(), "created_at": {"$gte": one_hour_ago}}
+    )
+    if recent >= 3:
+        raise HTTPException(429, "Trop de demandes. Réessayez dans une heure.")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "identifier": ident.lower(),
+        "name": name,
+        "reason": (payload.reason or "").strip()[:500] or None,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "processed_at": None,
+        "processed_by": None,
+    }
+    await db.account_deletion_requests.insert_one(doc)
+    logging.info(f"📝 Account deletion request received: {ident} ({name})")
+    return {"success": True, "message": "Votre demande a été enregistrée. Traitement sous 30 jours."}
+
+
+@api.get("/admin/deletion-requests")
+async def admin_list_deletion_requests(user=Depends(require_roles("admin"))):
+    """Liste des demandes de suppression à traiter par l'admin."""
+    items = await db.account_deletion_requests.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+
 @api.delete("/auth/me")
 async def delete_my_account(payload: DeleteAccountIn, user=Depends(get_current_user)):
     """
