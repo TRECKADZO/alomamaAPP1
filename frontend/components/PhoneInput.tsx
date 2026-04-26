@@ -5,10 +5,12 @@
  * - L'utilisateur saisit uniquement les 10 chiffres locaux
  * - Renvoie via onChangeText la valeur canonique : "+225XXXXXXXXXX"
  *   (compatible avec _normalize_phone du backend et avec la version web)
+ *   Quand l'utilisateur n'a pas encore saisi 10 chiffres, onChangeText reçoit
+ *   les chiffres bruts (ex: "070900530"). À la soumission, le parent doit valider via
+ *   extractLocalDigits().length === 10
  * - Affiche les 10 chiffres groupés (XX XX XX XX XX) pour la lisibilité
- * - Valide : exactement 10 chiffres requis
  */
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, TextInput, StyleSheet, ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS, RADIUS } from "../constants/theme";
@@ -20,7 +22,7 @@ export function extractLocalDigits(value: string | undefined | null): string {
   if (!value) return "";
   let digits = value.replace(/\D/g, "");
   if (digits.startsWith("225")) digits = digits.slice(3);
-  // Retirer un éventuel 0 initial (anciens formats), on conserve 10 chiffres
+  // Retirer un éventuel 0 initial supplémentaire si on dépasse 10 chiffres
   if (digits.length > 10 && digits.startsWith("0")) digits = digits.slice(1);
   return digits.slice(0, 10);
 }
@@ -39,10 +41,13 @@ function formatForDisplay(d: string): string {
 interface Props {
   /** Valeur du parent (peut être canonique "+22507...", brute "07..." ou vide) */
   value: string;
-  /** Reçoit la valeur canonique "+225XXXXXXXXXX" si 10 chiffres, sinon "" */
-  onChangeText: (canonical: string) => void;
-  /** Reçoit aussi les 10 chiffres bruts si le parent en a besoin */
-  onChangeLocal?: (localDigits: string) => void;
+  /**
+   * Reçoit à chaque frappe :
+   * - La valeur canonique "+225XXXXXXXXXX" si 10 chiffres saisis
+   * - Sinon les chiffres bruts saisis (ex: "070900") pour permettre au parent de stocker l'état partiel
+   * Le parent doit valider la complétude via extractLocalDigits(value).length === 10
+   */
+  onChangeText: (value: string) => void;
   placeholder?: string;
   testID?: string;
   /** Affiche le wrapper complet avec bordure (true) ou non (false → embed). Par défaut true */
@@ -55,7 +60,6 @@ interface Props {
 export default function PhoneInput({
   value,
   onChangeText,
-  onChangeLocal,
   placeholder = "07 09 00 53 00",
   testID,
   bordered = true,
@@ -63,13 +67,28 @@ export default function PhoneInput({
   editable = true,
   showIcon = true,
 }: Props) {
-  const localDigits = useMemo(() => extractLocalDigits(value), [value]);
-  const display = formatForDisplay(localDigits);
+  // État interne des 10 chiffres locaux (source de vérité de l'affichage)
+  const [localDigits, setLocalDigits] = useState<string>(() => extractLocalDigits(value));
+
+  // Synchronisation si le parent change la valeur de manière externe (reset, prefill...)
+  useEffect(() => {
+    const next = extractLocalDigits(value);
+    if (next !== localDigits) {
+      // Évite la boucle de re-render inutile : on ne re-set que si différent
+      setLocalDigits(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const display = useMemo(() => formatForDisplay(localDigits), [localDigits]);
 
   const handleChange = (txt: string) => {
     const next = extractLocalDigits(txt);
-    onChangeLocal?.(next);
-    onChangeText(buildCanonicalPhone(next));
+    setLocalDigits(next);
+    // On remonte au parent : valeur canonique si 10 chiffres, sinon les chiffres bruts
+    // (le parent peut ainsi stocker l'état partiel et valider à la soumission via extractLocalDigits)
+    const out = next.length === 10 ? buildCanonicalPhone(next) : next;
+    onChangeText(out);
   };
 
   return (
