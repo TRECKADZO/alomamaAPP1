@@ -21,7 +21,7 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Dict
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status, Response
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
@@ -1796,6 +1796,614 @@ async def admin_stats(user=Depends(require_roles("admin"))):
 async def admin_users(user=Depends(require_roles("admin"))):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return users
+
+
+# ======================================================================
+# 🏥 METRICS DE SANTÉ PUBLIQUE — Pour ministères, OMS/UNICEF, pharma, gouvernements
+# Toutes les métriques sont AGGRÉGÉES et ANONYMISÉES (pas de PII individuelle)
+# ======================================================================
+
+def _iso_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+@api.get("/admin/metrics/overview")
+async def metrics_overview(user=Depends(require_roles("admin"))):
+    """KPIs principaux pour le dashboard exécutif."""
+    now = datetime.now(timezone.utc)
+    d30 = _iso_days_ago(30)
+    d7 = _iso_days_ago(7)
+    d1 = _iso_days_ago(1)
+
+    total_users = await db.users.count_documents({})
+    new_users_30d = await db.users.count_documents({"created_at": {"$gte": d30}})
+    new_users_7d = await db.users.count_documents({"created_at": {"$gte": d7}})
+    by_role = {}
+    for role in ["maman", "professionnel", "centre_sante", "famille", "admin"]:
+        by_role[role] = await db.users.count_documents({"role": role})
+
+    total_grossesses = await db.grossesses.count_documents({})
+    active_grossesses = await db.grossesses.count_documents({"$or": [{"status": "en_cours"}, {"status": {"$exists": False}}]})
+    total_enfants = await db.enfants.count_documents({})
+    total_rdv = await db.rdv.count_documents({})
+    rdv_30d = await db.rdv.count_documents({"created_at": {"$gte": d30}})
+    rdv_completed = await db.rdv.count_documents({"status": "termine"})
+    teleconsultations = await db.rdv.count_documents({"mode": "teleconsultation"})
+    total_centres = await db.users.count_documents({"role": "centre_sante"})
+
+    # Premium
+    premium_users = await db.users.count_documents({"premium": True})
+    cmu_users = await db.users.count_documents({"$or": [{"cmu.numero": {"$ne": None, "$exists": True}}, {"accepte_cmu": True}]})
+
+    # Revenu
+    payments_completed = await db.payments.find({"status": "completed"}, {"_id": 0, "amount": 1, "created_at": 1, "kind": 1}).to_list(10000)
+    total_revenue = sum(p.get("amount", 0) for p in payments_completed)
+    revenue_30d = sum(p.get("amount", 0) for p in payments_completed if p.get("created_at", "") >= d30)
+
+    return {
+        "generated_at": now.isoformat(),
+        "users": {
+            "total": total_users,
+            "new_30d": new_users_30d,
+            "new_7d": new_users_7d,
+            "growth_rate_30d": round((new_users_30d / max(total_users - new_users_30d, 1)) * 100, 1),
+            "by_role": by_role,
+            "premium": premium_users,
+            "cmu": cmu_users,
+            "premium_conversion_rate": round((premium_users / max(by_role.get("maman", 1), 1)) * 100, 1),
+            "cmu_adoption_rate": round((cmu_users / max(total_users, 1)) * 100, 1),
+        },
+        "health": {
+            "total_grossesses": total_grossesses,
+            "active_grossesses": active_grossesses,
+            "total_enfants": total_enfants,
+            "total_centres": total_centres,
+        },
+        "rdv": {
+            "total": total_rdv,
+            "last_30d": rdv_30d,
+            "completed": rdv_completed,
+            "teleconsultations": teleconsultations,
+            "telecon_share": round((teleconsultations / max(total_rdv, 1)) * 100, 1),
+        },
+        "finance": {
+            "total_revenue_fcfa": total_revenue,
+            "revenue_30d_fcfa": revenue_30d,
+            "transactions": len(payments_completed),
+            "avg_basket_fcfa": round(total_revenue / max(len(payments_completed), 1)),
+        },
+    }
+
+
+@api.get("/admin/metrics/maternal-health")
+async def metrics_maternal_health(user=Depends(require_roles("admin"))):
+    """Métriques santé maternelle — valeur OMS/UNICEF/Ministères."""
+    grossesses = await db.grossesses.find({}, {"_id": 0}).to_list(20000)
+    mamans = await db.users.find({"role": "maman"}, {"_id": 0, "date_naissance": 1, "ville": 1, "id": 1}).to_list(20000)
+
+    # Distribution par âge des mères
+    now = datetime.now(timezone.utc)
+    ages = []
+    for m in mamans:
+        try:
+            dob = datetime.fromisoformat((m.get("date_naissance") or "").replace("Z", "+00:00"))
+            age = (now - dob).days // 365
+            if 10 <= age <= 60:
+                ages.append(age)
+        except Exception:
+            pass
+    age_brackets = {"15-19": 0, "20-24": 0, "25-29": 0, "30-34": 0, "35-39": 0, "40+": 0, "<15 ⚠️": 0}
+    for a in ages:
+        if a < 15: age_brackets["<15 ⚠️"] += 1
+        elif a < 20: age_brackets["15-19"] += 1
+        elif a < 25: age_brackets["20-24"] += 1
+        elif a < 30: age_brackets["25-29"] += 1
+        elif a < 35: age_brackets["30-34"] += 1
+        elif a < 40: age_brackets["35-39"] += 1
+        else: age_brackets["40+"] += 1
+    avg_age = round(sum(ages) / max(len(ages), 1), 1) if ages else 0
+
+    # Distribution par trimestre (basé sur date_debut)
+    trimestre_dist = {"T1 (0-13 SA)": 0, "T2 (14-27 SA)": 0, "T3 (28+ SA)": 0, "Post-partum": 0}
+    for g in grossesses:
+        try:
+            debut = datetime.fromisoformat((g.get("date_debut") or "").replace("Z", "+00:00"))
+            sa = (now - debut).days // 7
+            if sa <= 13: trimestre_dist["T1 (0-13 SA)"] += 1
+            elif sa <= 27: trimestre_dist["T2 (14-27 SA)"] += 1
+            elif sa <= 41: trimestre_dist["T3 (28+ SA)"] += 1
+            else: trimestre_dist["Post-partum"] += 1
+        except Exception:
+            pass
+
+    # Grossesses par mois (12 derniers mois)
+    grossesses_par_mois: dict[str, int] = {}
+    for i in range(11, -1, -1):
+        d = now.replace(day=1) - timedelta(days=i * 30)
+        key = d.strftime("%Y-%m")
+        grossesses_par_mois[key] = 0
+    for g in grossesses:
+        try:
+            ca = datetime.fromisoformat((g.get("created_at") or g.get("date_debut") or "").replace("Z", "+00:00"))
+            key = ca.strftime("%Y-%m")
+            if key in grossesses_par_mois:
+                grossesses_par_mois[key] += 1
+        except Exception:
+            pass
+
+    # Suivi prénatal (quantité moyenne de mesures par grossesse)
+    tracking = await db.grossesse_tracking.aggregate([
+        {"$group": {"_id": "$grossesse_id", "count": {"$sum": 1}}},
+    ]).to_list(20000)
+    avg_tracking_per_grossesse = round(sum(t["count"] for t in tracking) / max(len(tracking), 1), 1) if tracking else 0
+
+    # Plans de naissance (couverture)
+    plans_naissance = await db.plan_naissance.count_documents({})
+    plan_coverage = round((plans_naissance / max(len(grossesses), 1)) * 100, 1)
+
+    # Taux télé-écho
+    tele_echo_count = await db.tele_echo.count_documents({})
+
+    return {
+        "total_grossesses": len(grossesses),
+        "active_grossesses": sum(trimestre_dist.values()) - trimestre_dist.get("Post-partum", 0),
+        "avg_maternal_age": avg_age,
+        "age_distribution": age_brackets,
+        "early_pregnancy_alert": age_brackets["<15 ⚠️"],
+        "trimester_distribution": trimestre_dist,
+        "monthly_pregnancies": grossesses_par_mois,
+        "antenatal_tracking": {
+            "avg_visits_per_pregnancy": avg_tracking_per_grossesse,
+            "total_tracking_entries": sum(t["count"] for t in tracking),
+        },
+        "birth_plans_coverage_pct": plan_coverage,
+        "ultrasounds_count": tele_echo_count,
+    }
+
+
+@api.get("/admin/metrics/child-health")
+async def metrics_child_health(user=Depends(require_roles("admin"))):
+    """Métriques santé infantile — valeur UNICEF/OMS."""
+    enfants = await db.enfants.find({}, {"_id": 0}).to_list(20000)
+    now = datetime.now(timezone.utc)
+
+    # Distribution par âge
+    age_dist = {"0-6 mois": 0, "7-12 mois": 0, "1-2 ans": 0, "2-5 ans": 0, "5-10 ans": 0, "10+ ans": 0}
+    sex_dist = {"masculin": 0, "feminin": 0, "autre": 0}
+    for e in enfants:
+        try:
+            dn = datetime.fromisoformat((e.get("date_naissance") or "").replace("Z", "+00:00"))
+            months = ((now.year - dn.year) * 12 + (now.month - dn.month))
+            if months < 7: age_dist["0-6 mois"] += 1
+            elif months < 13: age_dist["7-12 mois"] += 1
+            elif months < 25: age_dist["1-2 ans"] += 1
+            elif months < 60: age_dist["2-5 ans"] += 1
+            elif months < 120: age_dist["5-10 ans"] += 1
+            else: age_dist["10+ ans"] += 1
+        except Exception:
+            pass
+        sx = (e.get("sexe") or "").lower()
+        if sx in ("m", "masculin", "garcon", "garçon"): sex_dist["masculin"] += 1
+        elif sx in ("f", "feminin", "féminin", "fille"): sex_dist["feminin"] += 1
+        else: sex_dist["autre"] += 1
+
+    # Vaccination — couverture (% enfants avec ≥1 vaccin enregistré)
+    enfants_vaccines = sum(1 for e in enfants if (e.get("vaccins") or []) != [])
+    vaccin_coverage = round((enfants_vaccines / max(len(enfants), 1)) * 100, 1)
+    avg_vaccins_per_child = round(sum(len(e.get("vaccins") or []) for e in enfants) / max(len(enfants), 1), 1)
+
+    # Mesures (croissance) — % d'enfants suivis
+    enfants_with_measures = await db.mesures.aggregate([
+        {"$group": {"_id": "$enfant_id"}},
+        {"$count": "total"},
+    ]).to_list(1)
+    enfants_suivis = enfants_with_measures[0]["total"] if enfants_with_measures else 0
+    growth_tracking_coverage = round((enfants_suivis / max(len(enfants), 1)) * 100, 1)
+
+    # Allergies (anonymisé : juste comptage)
+    enfants_avec_allergies = sum(1 for e in enfants if (e.get("allergies") or []) and any(a.strip() if isinstance(a, str) else True for a in (e.get("allergies") or [])))
+
+    # Naissances déclarées (12 derniers mois)
+    monthly_births: dict[str, int] = {}
+    for i in range(11, -1, -1):
+        d = now.replace(day=1) - timedelta(days=i * 30)
+        monthly_births[d.strftime("%Y-%m")] = 0
+    for e in enfants:
+        try:
+            dn = datetime.fromisoformat((e.get("date_naissance") or "").replace("Z", "+00:00"))
+            key = dn.strftime("%Y-%m")
+            if key in monthly_births:
+                monthly_births[key] += 1
+        except Exception:
+            pass
+
+    return {
+        "total_enfants": len(enfants),
+        "age_distribution": age_dist,
+        "sex_distribution": sex_dist,
+        "vaccination": {
+            "coverage_pct": vaccin_coverage,
+            "avg_vaccines_per_child": avg_vaccins_per_child,
+            "vaccinated_children": enfants_vaccines,
+            "unvaccinated_children": len(enfants) - enfants_vaccines,
+        },
+        "growth_tracking": {
+            "tracked_children": enfants_suivis,
+            "coverage_pct": growth_tracking_coverage,
+        },
+        "health_alerts": {
+            "children_with_allergies": enfants_avec_allergies,
+            "allergy_prevalence_pct": round((enfants_avec_allergies / max(len(enfants), 1)) * 100, 1),
+        },
+        "monthly_births": monthly_births,
+    }
+
+
+@api.get("/admin/metrics/healthcare-access")
+async def metrics_healthcare_access(user=Depends(require_roles("admin"))):
+    """Accès aux soins, CMU, télémédecine — valeur Ministère Santé."""
+    total_mamans = await db.users.count_documents({"role": "maman"})
+    cmu_mamans = await db.users.count_documents({"role": "maman", "$or": [{"cmu.numero": {"$ne": None, "$exists": True}}]})
+    premium_mamans = await db.users.count_documents({"role": "maman", "premium": True})
+
+    rdv_all = await db.rdv.find({}, {"_id": 0, "status": 1, "mode": 1, "created_at": 1, "type_consultation": 1}).to_list(50000)
+    by_status: dict[str, int] = {}
+    by_mode: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for r in rdv_all:
+        by_status[r.get("status") or "?"] = by_status.get(r.get("status") or "?", 0) + 1
+        by_mode[r.get("mode") or "?"] = by_mode.get(r.get("mode") or "?", 0) + 1
+        t = r.get("type_consultation") or "autre"
+        by_type[t] = by_type.get(t, 0) + 1
+
+    no_show_rate = round((by_status.get("annule", 0) / max(len(rdv_all), 1)) * 100, 1)
+    completion_rate = round((by_status.get("termine", 0) / max(len(rdv_all), 1)) * 100, 1)
+    telecon_share = round((by_mode.get("teleconsultation", 0) / max(len(rdv_all), 1)) * 100, 1)
+
+    return {
+        "cmu": {
+            "registered_mamans": cmu_mamans,
+            "adoption_rate_pct": round((cmu_mamans / max(total_mamans, 1)) * 100, 1),
+            "uncovered_mamans": total_mamans - cmu_mamans,
+        },
+        "premium": {
+            "subscribers": premium_mamans,
+            "conversion_rate_pct": round((premium_mamans / max(total_mamans, 1)) * 100, 1),
+        },
+        "appointments": {
+            "total": len(rdv_all),
+            "by_status": by_status,
+            "by_mode": by_mode,
+            "by_type": dict(sorted(by_type.items(), key=lambda x: -x[1])[:10]),
+            "no_show_rate_pct": no_show_rate,
+            "completion_rate_pct": completion_rate,
+            "telemedicine_share_pct": telecon_share,
+        },
+    }
+
+
+@api.get("/admin/metrics/geographic")
+async def metrics_geographic(user=Depends(require_roles("admin"))):
+    """Distribution géographique — valeur santé publique régionale."""
+    pipeline = [
+        {"$match": {"ville": {"$exists": True, "$ne": None, "$nin": ["", " "]}}},
+        {"$group": {"_id": {"ville": "$ville", "role": "$role"}, "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    rows = await db.users.aggregate(pipeline).to_list(1000)
+
+    cities: dict[str, dict] = {}
+    for r in rows:
+        ville = (r["_id"]["ville"] or "").strip().title() or "Inconnue"
+        role = r["_id"]["role"] or "autre"
+        if ville not in cities:
+            cities[ville] = {"ville": ville, "total": 0, "maman": 0, "professionnel": 0, "centre_sante": 0, "famille": 0}
+        cities[ville][role] = r["count"]
+        cities[ville]["total"] += r["count"]
+
+    top_cities = sorted(cities.values(), key=lambda x: -x["total"])[:25]
+
+    # Couverture professionnelle = ratio pros/mamans par ville
+    for c in top_cities:
+        c["pro_per_1000_mamans"] = round((c["professionnel"] / max(c["maman"], 1)) * 1000, 1)
+        c["medical_density_score"] = c["professionnel"] + c["centre_sante"] * 3
+
+    return {
+        "total_cities": len(cities),
+        "top_cities": top_cities,
+        "underserved_cities": sorted(
+            [c for c in cities.values() if c["maman"] >= 3 and c["professionnel"] == 0],
+            key=lambda x: -x["maman"],
+        )[:10],
+    }
+
+
+@api.get("/admin/metrics/financial")
+async def metrics_financial(user=Depends(require_roles("admin"))):
+    """KPIs financiers — valeur business/investisseurs/gouvernement (économie numérique)."""
+    payments = await db.payments.find({"status": "completed"}, {"_id": 0}).to_list(50000)
+    total_revenue = sum(p.get("amount", 0) for p in payments)
+    by_kind: dict[str, dict] = {}
+    by_method: dict[str, int] = {}
+    monthly_revenue: dict[str, int] = {}
+    now = datetime.now(timezone.utc)
+    for i in range(11, -1, -1):
+        d = now.replace(day=1) - timedelta(days=i * 30)
+        monthly_revenue[d.strftime("%Y-%m")] = 0
+
+    for p in payments:
+        k = p.get("kind") or "autre"
+        if k not in by_kind:
+            by_kind[k] = {"count": 0, "amount": 0}
+        by_kind[k]["count"] += 1
+        by_kind[k]["amount"] += p.get("amount", 0)
+        m = p.get("payment_method") or p.get("method") or "inconnu"
+        by_method[m] = by_method.get(m, 0) + 1
+        try:
+            ca = datetime.fromisoformat((p.get("created_at") or "").replace("Z", "+00:00"))
+            key = ca.strftime("%Y-%m")
+            if key in monthly_revenue:
+                monthly_revenue[key] += p.get("amount", 0)
+        except Exception:
+            pass
+
+    payouts = await db.payouts.find({}, {"_id": 0}).to_list(10000)
+    total_paid_to_pros = sum(p.get("net_amount_fcfa", 0) for p in payouts if p.get("status") == "completed")
+    pending_payouts = sum(p.get("amount_fcfa", 0) for p in payouts if p.get("status") in ("pending", "processing"))
+
+    return {
+        "total_revenue_fcfa": total_revenue,
+        "revenue_breakdown_by_kind": by_kind,
+        "payment_methods": dict(sorted(by_method.items(), key=lambda x: -x[1])),
+        "monthly_revenue": monthly_revenue,
+        "transactions": len(payments),
+        "avg_transaction_fcfa": round(total_revenue / max(len(payments), 1)),
+        "payouts_to_pros": {
+            "total_disbursed_fcfa": total_paid_to_pros,
+            "pending_fcfa": pending_payouts,
+            "count": len(payouts),
+        },
+    }
+
+
+@api.get("/admin/metrics/medical-trends")
+async def metrics_medical_trends(user=Depends(require_roles("admin"))):
+    """Tendances médicales / motifs / spécialités — valeur pharma/recherche."""
+    rdv = await db.rdv.find({}, {"_id": 0, "motif": 1, "type_consultation": 1, "pro_specialite": 1}).to_list(50000)
+    motifs: dict[str, int] = {}
+    types: dict[str, int] = {}
+    specs: dict[str, int] = {}
+    for r in rdv:
+        m = (r.get("motif") or "").strip().lower()
+        if m and len(m) > 3:
+            # Tokenize (basique) : compte chaque mot significatif
+            for token in m.split():
+                t = token.strip(",.;:!?\"'()").lower()
+                if len(t) > 3 and t not in {"avec", "pour", "dans", "consultation", "rdv", "rendez-vous"}:
+                    motifs[t] = motifs.get(t, 0) + 1
+        tc = r.get("type_consultation") or "autre"
+        types[tc] = types.get(tc, 0) + 1
+        sp = r.get("pro_specialite") or "autre"
+        specs[sp] = specs.get(sp, 0) + 1
+
+    quizzes = await db.quiz_responses.find({}, {"_id": 0}).to_list(20000) if hasattr(db, "quiz_responses") else []
+    quiz_engagement = len(quizzes)
+
+    pros = await db.users.find({"role": "professionnel"}, {"_id": 0, "specialite": 1}).to_list(5000)
+    pros_specs: dict[str, int] = {}
+    for p in pros:
+        s = p.get("specialite") or "autre"
+        pros_specs[s] = pros_specs.get(s, 0) + 1
+
+    return {
+        "top_consultation_keywords": dict(sorted(motifs.items(), key=lambda x: -x[1])[:25]),
+        "consultation_types": dict(sorted(types.items(), key=lambda x: -x[1])[:15]),
+        "demanded_specialties": dict(sorted(specs.items(), key=lambda x: -x[1])[:15]),
+        "available_pro_specialties": dict(sorted(pros_specs.items(), key=lambda x: -x[1])),
+        "supply_demand_gap": {
+            spec: {"demand": specs.get(spec, 0), "supply": pros_specs.get(spec, 0)}
+            for spec in set(list(specs.keys()) + list(pros_specs.keys()))
+        },
+        "educational_engagement": {
+            "quiz_responses": quiz_engagement,
+        },
+    }
+
+
+@api.get("/admin/metrics/engagement")
+async def metrics_engagement(user=Depends(require_roles("admin"))):
+    """Engagement & rétention — valeur produit/business."""
+    now = datetime.now(timezone.utc)
+    d1 = _iso_days_ago(1)
+    d7 = _iso_days_ago(7)
+    d30 = _iso_days_ago(30)
+
+    dau = await db.users.count_documents({"last_login_at": {"$gte": d1}})
+    wau = await db.users.count_documents({"last_login_at": {"$gte": d7}})
+    mau = await db.users.count_documents({"last_login_at": {"$gte": d30}})
+
+    # Cohorts par mois d'inscription, et rétention 30j
+    cohorts: dict[str, dict] = {}
+    for i in range(11, -1, -1):
+        d = now.replace(day=1) - timedelta(days=i * 30)
+        cohorts[d.strftime("%Y-%m")] = {"new": 0, "active": 0}
+
+    users = await db.users.find({}, {"_id": 0, "created_at": 1, "last_login_at": 1}).to_list(50000)
+    for u in users:
+        try:
+            ca = datetime.fromisoformat((u.get("created_at") or "").replace("Z", "+00:00"))
+            key = ca.strftime("%Y-%m")
+            if key in cohorts:
+                cohorts[key]["new"] += 1
+                la = u.get("last_login_at")
+                if la and la >= d30:
+                    cohorts[key]["active"] += 1
+        except Exception:
+            pass
+
+    return {
+        "daily_active_users": dau,
+        "weekly_active_users": wau,
+        "monthly_active_users": mau,
+        "stickiness_pct": round((dau / max(mau, 1)) * 100, 1),
+        "cohorts": cohorts,
+        "messages_total": await db.messages.count_documents({}),
+        "messages_30d": await db.messages.count_documents({"created_at": {"$gte": d30}}),
+    }
+
+
+# ======================================================================
+# 📋 ANNUAIRE — Répertoire complet par rôle pour le super admin
+# ======================================================================
+
+@api.get("/admin/directory")
+async def admin_directory(
+    role: Optional[str] = None,
+    q: Optional[str] = None,
+    ville: Optional[str] = None,
+    premium: Optional[bool] = None,
+    cmu: Optional[bool] = None,
+    sort: Optional[str] = "-created_at",
+    limit: int = 50,
+    offset: int = 0,
+    user=Depends(require_roles("admin")),
+):
+    """Annuaire paginé filtrable de tous les utilisateurs."""
+    query: dict = {}
+    if role and role != "tous":
+        query["role"] = role
+    if q:
+        rx = {"$regex": q, "$options": "i"}
+        query["$or"] = [{"name": rx}, {"email": rx}, {"phone": rx}, {"specialite": rx}, {"ville": rx}]
+    if ville:
+        query["ville"] = {"$regex": ville, "$options": "i"}
+    if premium is not None:
+        query["premium"] = premium
+    if cmu is True:
+        query["$or"] = (query.get("$or") or []) + [{"cmu.numero": {"$ne": None}}, {"accepte_cmu": True}]
+
+    total = await db.users.count_documents(query)
+    sort_field = sort.lstrip("-") if sort else "created_at"
+    sort_dir = -1 if (sort or "").startswith("-") else 1
+
+    cursor = (
+        db.users.find(query, {"_id": 0, "password_hash": 0, "cmu.numero": 0})
+        .sort(sort_field, sort_dir)
+        .skip(offset)
+        .limit(min(limit, 200))
+    )
+    rows = await cursor.to_list(min(limit, 200))
+
+    # Enrichir avec compteurs
+    for u in rows:
+        uid = u["id"]
+        if u.get("role") == "maman":
+            u["_stats"] = {
+                "grossesses": await db.grossesses.count_documents({"user_id": uid}),
+                "enfants": await db.enfants.count_documents({"user_id": uid}),
+                "rdv": await db.rdv.count_documents({"maman_id": uid}),
+            }
+        elif u.get("role") == "professionnel":
+            payments = await db.payments.find({"pro_id": uid, "status": "completed"}, {"_id": 0, "pro_amount": 1}).to_list(5000)
+            u["_stats"] = {
+                "rdv": await db.rdv.count_documents({"pro_id": uid}),
+                "patients": len(set([r.get("maman_id") for r in await db.rdv.find({"pro_id": uid}, {"_id": 0, "maman_id": 1}).to_list(5000)])),
+                "revenue_fcfa": sum(p.get("pro_amount", 0) for p in payments),
+            }
+        elif u.get("role") == "centre_sante":
+            u["_stats"] = {
+                "rdv": await db.rdv.count_documents({"pro_id": uid}),
+            }
+        else:
+            u["_stats"] = {}
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": rows,
+    }
+
+
+@api.get("/admin/directory/{user_id}")
+async def admin_directory_detail(user_id: str, user=Depends(require_roles("admin"))):
+    """Fiche détaillée d'un utilisateur avec ses données associées."""
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not target:
+        raise HTTPException(404, "Utilisateur introuvable")
+    role = target.get("role")
+    detail: dict = {"user": target, "stats": {}, "recent": {}}
+    if role == "maman":
+        detail["stats"] = {
+            "grossesses": await db.grossesses.count_documents({"user_id": user_id}),
+            "enfants": await db.enfants.count_documents({"user_id": user_id}),
+            "rdv": await db.rdv.count_documents({"maman_id": user_id}),
+            "messages_sent": await db.messages.count_documents({"from_id": user_id}),
+            "tracking_entries": await db.grossesse_tracking.count_documents({"user_id": user_id}),
+            "plans_naissance": await db.plan_naissance.count_documents({"user_id": user_id}),
+        }
+        detail["recent"]["enfants"] = await db.enfants.find({"user_id": user_id}, {"_id": 0, "id": 1, "prenom": 1, "date_naissance": 1, "sexe": 1}).to_list(20)
+        detail["recent"]["rdv"] = await db.rdv.find({"maman_id": user_id}, {"_id": 0}).sort("date", -1).to_list(10)
+    elif role == "professionnel":
+        payments = await db.payments.find({"pro_id": user_id, "status": "completed"}, {"_id": 0, "pro_amount": 1}).to_list(5000)
+        detail["stats"] = {
+            "rdv_total": await db.rdv.count_documents({"pro_id": user_id}),
+            "rdv_completed": await db.rdv.count_documents({"pro_id": user_id, "status": "termine"}),
+            "revenue_fcfa": sum(p.get("pro_amount", 0) for p in payments),
+            "transactions": len(payments),
+            "payouts_total": await db.payouts.count_documents({"pro_id": user_id}),
+        }
+        detail["recent"]["rdv"] = await db.rdv.find({"pro_id": user_id}, {"_id": 0}).sort("date", -1).to_list(10)
+        detail["recent"]["payouts"] = await db.payouts.find({"pro_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(10)
+    return detail
+
+
+# ======================================================================
+# 📤 EXPORT CSV pour rapports gouvernementaux / OMS
+# ======================================================================
+
+@api.get("/admin/metrics/export")
+async def metrics_export(kind: str = "overview", user=Depends(require_roles("admin"))):
+    """Export CSV des métriques pour rapports externes."""
+    import io as _io
+    import csv as _csv
+
+    fn_map = {
+        "overview": metrics_overview,
+        "maternal-health": metrics_maternal_health,
+        "child-health": metrics_child_health,
+        "healthcare-access": metrics_healthcare_access,
+        "geographic": metrics_geographic,
+        "financial": metrics_financial,
+        "medical-trends": metrics_medical_trends,
+        "engagement": metrics_engagement,
+    }
+    fn = fn_map.get(kind)
+    if not fn:
+        raise HTTPException(400, f"Type d'export inconnu : {kind}")
+    data = await fn(user=user)
+
+    buf = _io.StringIO()
+    writer = _csv.writer(buf)
+    writer.writerow(["section", "key", "value"])
+
+    def flatten(prefix: str, obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                flatten(f"{prefix}.{k}" if prefix else k, v)
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                flatten(f"{prefix}[{i}]", v)
+        else:
+            writer.writerow([prefix.split(".", 1)[0] if "." in prefix else "root", prefix, obj])
+
+    flatten("", data)
+    csv_bytes = buf.getvalue().encode("utf-8")
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="alomaman_metrics_{kind}_{datetime.now(timezone.utc).strftime("%Y%m%d")}.csv"'},
+    )
 
 
 # ----------------------------------------------------------------------
