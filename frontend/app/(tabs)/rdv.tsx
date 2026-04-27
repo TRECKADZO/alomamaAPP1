@@ -42,6 +42,7 @@ export default function Rdv() {
   const [filterStatut, setFilterStatut] = useState("tous");
   const [form, setForm] = useState({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel", prestation_id: "", tarif_fcfa: 10000 });
   const [prestations, setPrestations] = useState<any[]>([]);
+  const [proDispos, setProDispos] = useState<any[]>([]); // créneaux du pro avec type+durée+prix
 
   const load = async () => {
     try {
@@ -258,6 +259,10 @@ export default function Rdv() {
                     const r = await api.get(`/pros/${p.id}/prestations`);
                     setPrestations(r.data || []);
                   } catch { setPrestations([]); }
+                  try {
+                    const d = await api.get(`/professionnels/${p.id}/disponibilites`);
+                    setProDispos((d.data?.slots || []).filter((s: any) => s.actif));
+                  } catch { setProDispos([]); }
                 }} testID={`pro-${p.id}`}>
                   <View style={styles.proAvatar}><Text style={styles.proAvatarText}>{p.name.charAt(0)}</Text></View>
                   <View style={{ flex: 1 }}>
@@ -267,6 +272,52 @@ export default function Rdv() {
                   {form.pro_id === p.id && <Ionicons name="checkmark-circle" size={22} color={COLORS.primary} />}
                 </TouchableOpacity>
               ))}
+
+              {/* Récap des disponibilités du pro avec type+durée+prix */}
+              {form.pro_id && proDispos.length > 0 && (
+                <View style={styles.disposCard}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <Ionicons name="calendar-outline" size={16} color={COLORS.primary} />
+                    <Text style={styles.disposTitle}>Créneaux proposés</Text>
+                  </View>
+                  {Object.entries(
+                    proDispos.reduce((acc: Record<string, any[]>, s: any) => {
+                      if (!acc[s.jour]) acc[s.jour] = [];
+                      acc[s.jour].push(s);
+                      return acc;
+                    }, {})
+                  ).map(([jour, slots]: [string, any[]]) => (
+                    <View key={jour} style={styles.disposJour}>
+                      <Text style={styles.disposJourLabel}>{jour.charAt(0).toUpperCase() + jour.slice(1)}</Text>
+                      {slots.map((s, i) => {
+                        const tcolor = TYPES_CONSULTATION.find((t) => t.id === s.type_id)?.color || "#6B7280";
+                        return (
+                          <View key={i} style={[styles.disposSlot, { borderLeftColor: tcolor }]}>
+                            <View style={[styles.disposBadge, { backgroundColor: tcolor }]}>
+                              <Text style={styles.disposBadgeText}>{s.type_label}</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.disposHeure}>{s.heure_debut} → {s.heure_fin}</Text>
+                              <Text style={styles.disposMeta}>⏱ {s.duree_minutes} min · RDV de {s.duree_minutes} minutes</Text>
+                            </View>
+                            <View style={{ alignItems: "flex-end" }}>
+                              {s.prix_fcfa != null ? (
+                                <Text style={styles.disposPrix}>{s.prix_fcfa.toLocaleString()} F</Text>
+                              ) : (
+                                <Text style={styles.disposPrixNA}>Tarif sur place</Text>
+                              )}
+                              {s.cmu_prise_en_charge && (
+                                <View style={styles.cmuBadge}><Text style={styles.cmuBadgeText}>🏥 CMU</Text></View>
+                              )}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ))}
+                  <Text style={styles.disposHint}>💡 Consultez ces créneaux puis renseignez ci-dessous date, heure et type souhaités.</Text>
+                </View>
+              )}
 
               {form.pro_id && prestations.length > 0 && (
                 <>
@@ -513,4 +564,19 @@ const styles = StyleSheet.create({
   prestationPrice: { fontSize: 15, fontWeight: "800", color: COLORS.primary },
   noPrest: { flexDirection: "row", gap: 6, alignItems: "center", padding: 10, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
   noPrestText: { flex: 1, fontSize: 11, color: COLORS.textSecondary, lineHeight: 15 },
+
+  disposCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: 12, borderWidth: 1, borderColor: COLORS.border, marginTop: 6, marginBottom: 12 },
+  disposTitle: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary },
+  disposJour: { marginTop: 8 },
+  disposJourLabel: { fontSize: 12, fontWeight: "800", color: COLORS.textPrimary, textTransform: "capitalize", marginBottom: 4 },
+  disposSlot: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: COLORS.bgSecondary, borderRadius: 8, borderLeftWidth: 3, marginBottom: 4 },
+  disposBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  disposBadgeText: { color: "#fff", fontWeight: "800", fontSize: 10 },
+  disposHeure: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary },
+  disposMeta: { fontSize: 11, color: COLORS.textSecondary, marginTop: 1 },
+  disposPrix: { fontSize: 14, fontWeight: "800", color: COLORS.primary },
+  disposPrixNA: { fontSize: 10, color: COLORS.textMuted, fontStyle: "italic" },
+  cmuBadge: { backgroundColor: "#D1FAE5", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, marginTop: 2 },
+  cmuBadgeText: { fontSize: 9, fontWeight: "800", color: "#059669" },
+  disposHint: { fontSize: 11, color: COLORS.textSecondary, fontStyle: "italic", marginTop: 8, lineHeight: 15 },
 });

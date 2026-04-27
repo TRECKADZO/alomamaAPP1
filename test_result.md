@@ -1297,3 +1297,76 @@ agent_communication:
       3) **Filtre prestation** : déjà implémenté dans `/search.tsx` (chips Échographie/Consultation + filtre prix max + CMU). Aucune action nécessaire.
       
       Pas de changement backend, donc retest backend non requis. À tester côté frontend mobile uniquement (mode avion → enregistrer un cycle → reconnecter → vérifier sync).
+
+
+  - agent: "main"
+    message: |
+      [Pro/Patient — Disponibilités & Prestations refactor]
+      
+      Backend changes (server.py):
+      1. **DisponibiliteIn** Pydantic model étendu avec `type_id: Optional[str]` et `duree_minutes: Optional[int]` par slot. Champ `types: List[str]` conservé pour rétro-compat.
+      2. **GET /api/professionnels/{pro_id}/prestations** (alias) — corrige le bug du frontend qui appelait cette URL.
+      3. **GET /api/professionnels/{pro_id}/disponibilites** (NEW) — renvoie pour chaque créneau actif du pro : `jour, heure_debut, heure_fin, type_id, type_label, duree_minutes, prix_fcfa, cmu_prise_en_charge, cmu_taux, prestation_id, prestation_nom`. La jointure se fait par fuzzy-match du label de type sur le nom de la prestation. Auth requise (any authenticated user).
+      
+      Frontend changes:
+      1. **pro/prestations.tsx** : champ "Nom" remplacé par chips de TYPES_CONSULTATION + chip "Autre…" qui affiche un TextInput libre. La durée passe en chips (15/30/45/60/90/120). Édition d'une prestation existante détecte le type et préselectionne le chip.
+      2. **pro/disponibilites.tsx** : refactor complet. Plus de durée globale. Chaque créneau a UN type unique + sa durée propre. Bandeau coloré gauche selon le type. Bouton "Dupliquer". Migration douce : anciens slots multi-types → premier type conservé, durée héritée du global.
+      3. **(tabs)/rdv.tsx** (côté maman) : carte récapitulative "Créneaux proposés" qui apparaît après sélection du pro, affichant pour chaque slot : badge type coloré + heure début→fin + durée + prix (joint depuis les prestations) + badge CMU si applicable. Endpoint `/professionnels/{pro_id}/disponibilites` consommé.
+      
+      Test backend recommandé : nouveau endpoint `/api/professionnels/{pro_id}/disponibilites` (vérifier auth, fuzzy matching prestation, fallback duree_consultation legacy).
+
+
+backend:
+  - task: "Disponibilités & Prestations refactor (PUT /pro/disponibilites slots avec type_id+duree_minutes, GET /professionnels/{id}/prestations alias, GET /professionnels/{id}/disponibilites enrichi)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          39/39 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_disponibilites_prestations.py).
+
+          SETUP : Pro `Dr. Mariam Kouassi` (gynecologue) + Maman `Aminata Koné` créés via /auth/register avec phone canonique +225XXXXXXXXXX, full RGPD consent.
+
+          (1) PUT /api/pro/disponibilites avec 2 slots (lundi echographie/45min + mardi prenatale/30min) — champs `type_id` + `duree_minutes` acceptés par DisponibiliteIn (Optional). Le champ legacy `types: List[str]` est aussi conservé. Réponse 200 contient les 2 slots avec type_id, duree_minutes ET types préservés. duree_consultation=30 persisté à la racine.
+          
+          (2) GET /pro/disponibilites retourne bien type_id='echographie' duree_minutes=45 et type_id='prenatale' duree_minutes=30.
+
+          (3) POST /pro/prestations × 3 : Échographie (25000 FCFA, active), Consultation prénatale (10000, active), Vaccination (5000, INACTIVE). Tous OK 200.
+
+          (4) GET /api/professionnels/{pro_id}/prestations (NEW alias) : retourne 2 items (seulement les actives), triés par prix_fcfa ASC ([10000, 25000]). Identique à GET /pros/{id}/prestations (legacy). Auth requise (sans token → 401).
+
+          (5) GET /api/professionnels/{pro_id}/disponibilites (NEW, auth requise) :
+            - Réponse contient `pro: {id, name='Dr. Mariam Kouassi', specialite='gynecologue'}`.
+            - `slots[]` enrichis (2 slots) :
+              * Slot lundi echographie : type_id='echographie', type_label='Échographie', duree_minutes=45, prix_fcfa=25000, prestation_id=<uuid>, prestation_nom='Échographie' ✓ (jointure exacte par nom).
+              * Slot mardi prenatale : type_id='prenatale', type_label='Consultation prénatale', duree_minutes=30, prix_fcfa=10000, prestation_nom='Consultation prénatale' ✓.
+            - `prestations_count: 2` (seules les actives comptent).
+
+          (6) FUZZY MATCH (3e) : PATCH /pro/prestations/{id} pour renommer Échographie → 'Échographie pelvienne 3D' (Note: PATCH requiert le payload PrestationIn complet, comportement pré-existant non lié à cette feature — envoi de tous les champs requis). Re-GET /professionnels/{pro_id}/disponibilites → le slot echographie est toujours joint à la même prestation (prestation_id inchangé, prestation_nom='Échographie pelvienne 3D', prix_fcfa=25000). La fuzzy match `label.lower() in p.get("nom").lower()` fonctionne.
+
+          (7) LEGACY SLOT (3f) : PUT avec un slot SANS type_id et SANS duree_minutes, juste `types: ['prenatale']` et `duree_consultation: 60`. GET enriched → type_id='prenatale' (dérivé via `s.get("type_id") or (s.get("types") or ["generale"])[0]`), duree_minutes=60 (fallback `s.get("duree_minutes") or duree_global`), jointure prestation toujours OK (Consultation prénatale 10000). ✓ Backward-compat parfait.
+
+          (8) 404 (3g) : GET /api/professionnels/<bogus-id>/disponibilites → 404 'Professionnel introuvable'. Sans token → 401.
+
+          (9) Cleanup OK : DELETE /auth/me sur les 2 comptes test (200 chacun). Logs backend confirment 'Compte supprimé : dr_kouassi_… — collections impactées : {prestations: 3}'.
+
+          OBSERVATION (non-bug, pré-existant) : PATCH /pro/prestations/{pid} (server.py L1703) utilise `payload: PrestationIn` qui requiert tous les champs (nom, prix_fcfa, etc.). Un PATCH partial avec uniquement {nom: …} est rejeté avec 422. Non lié à cette feature mais worth signaling pour les flows UI qui souhaiteraient un PATCH partiel.
+
+          Tous les comportements spec-conformes. Aucun bug critique ni mineur détecté sur les 3 nouveaux endpoints.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Disponibilités & Prestations refactor — 39/39 PASS sur /app/backend_test_disponibilites_prestations.py.
+
+      ✅ PUT /api/pro/disponibilites accepte bien `type_id` + `duree_minutes` par slot (Optional, legacy `types[]` préservé). Persistance vérifiée via GET.
+      ✅ GET /api/professionnels/{pro_id}/prestations (NEW alias) — retourne uniquement les actives, triées par prix ASC, identique à /pros/{id}/prestations. Auth requise (401 sans token).
+      ✅ GET /api/professionnels/{pro_id}/disponibilites (NEW, enriched) — pro object + slots[] avec type_id, type_label, duree_minutes, prix_fcfa, prestation_id, prestation_nom tous corrects. Fuzzy match (rename → 'Échographie pelvienne 3D') fonctionne (jointure preservée). Legacy slot (no type_id, only types[]) avec fallback duree_consultation OK. 404 si pro inexistant.
+
+      Cleanup OK (2 comptes test supprimés). Aucun bug détecté. Le main agent peut résumer et finir.

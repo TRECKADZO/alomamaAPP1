@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import { TYPES_CONSULTATION } from "../../lib/data";
 
 export default function Prestations() {
   const router = useRouter();
@@ -14,7 +15,7 @@ export default function Prestations() {
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [form, setForm] = useState({ nom: "", prix_fcfa: "10000", duree_min: "30", description: "", active: true, cmu_prise_en_charge: false, cmu_taux: "0.70" });
+  const [form, setForm] = useState({ nom: "", typeId: "", customNom: "", prix_fcfa: "10000", duree_min: "30", description: "", active: true, cmu_prise_en_charge: false, cmu_taux: "0.70" });
 
   const load = async () => {
     setLoading(true);
@@ -29,14 +30,18 @@ export default function Prestations() {
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ nom: "", prix_fcfa: "10000", duree_min: "30", description: "", active: true, cmu_prise_en_charge: false, cmu_taux: "0.70" });
+    setForm({ nom: "", typeId: "", customNom: "", prix_fcfa: "10000", duree_min: "30", description: "", active: true, cmu_prise_en_charge: false, cmu_taux: "0.70" });
     setModal(true);
   };
 
   const openEdit = (p: any) => {
     setEditing(p);
+    // Détecte si le nom correspond à un type prédéfini
+    const matchedType = TYPES_CONSULTATION.find((t) => t.label === p.nom);
     setForm({
       nom: p.nom || "",
+      typeId: matchedType ? matchedType.id : "autre",
+      customNom: matchedType ? "" : (p.nom || ""),
       prix_fcfa: String(p.prix_fcfa || 0),
       duree_min: String(p.duree_min || 30),
       description: p.description || "",
@@ -48,11 +53,22 @@ export default function Prestations() {
   };
 
   const save = async () => {
-    if (!form.nom.trim()) return Alert.alert("Champ requis", "Le nom est obligatoire.");
+    // Détermine le nom final : type prédéfini OU saisie libre si "Autre"
+    let finalNom = "";
+    if (form.typeId === "autre") {
+      finalNom = form.customNom.trim();
+    } else if (form.typeId) {
+      const t = TYPES_CONSULTATION.find((x) => x.id === form.typeId);
+      finalNom = t ? t.label : "";
+    } else {
+      // Cas legacy : édition sans typeId, on garde nom existant
+      finalNom = form.nom.trim();
+    }
+    if (!finalNom) return Alert.alert("Champ requis", "Choisissez un type de prestation ou saisissez un nom.");
     const prix = parseInt(form.prix_fcfa || "0");
     if (isNaN(prix) || prix < 0) return Alert.alert("Prix invalide");
     const body = {
-      nom: form.nom.trim(),
+      nom: finalNom,
       prix_fcfa: prix,
       duree_min: parseInt(form.duree_min || "30"),
       description: form.description.trim() || undefined,
@@ -132,14 +148,60 @@ export default function Prestations() {
               <TouchableOpacity onPress={() => setModal(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
             </View>
             <ScrollView>
-              <Text style={styles.label}>Nom de la prestation *</Text>
-              <TextInput style={styles.input} value={form.nom} onChangeText={(v) => setForm({ ...form, nom: v })} placeholder="Ex: Consultation prénatale" placeholderTextColor={COLORS.textMuted} />
+              <Text style={styles.label}>Type de prestation *</Text>
+              <View style={styles.typeChipsWrap}>
+                {TYPES_CONSULTATION.map((t) => {
+                  const active = form.typeId === t.id;
+                  return (
+                    <TouchableOpacity
+                      key={t.id}
+                      onPress={() => setForm({ ...form, typeId: t.id, customNom: "" })}
+                      style={[styles.typeChip, active && { backgroundColor: t.color, borderColor: t.color }]}
+                    >
+                      <Text style={[styles.typeChipText, active && { color: "#fff" }]}>{t.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity
+                  onPress={() => setForm({ ...form, typeId: "autre" })}
+                  style={[styles.typeChip, form.typeId === "autre" && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}
+                >
+                  <Ionicons name="create-outline" size={14} color={form.typeId === "autre" ? "#fff" : COLORS.textPrimary} />
+                  <Text style={[styles.typeChipText, form.typeId === "autre" && { color: "#fff" }, { marginLeft: 4 }]}>Autre…</Text>
+                </TouchableOpacity>
+              </View>
+
+              {form.typeId === "autre" && (
+                <>
+                  <Text style={styles.label}>Nom personnalisé *</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={form.customNom}
+                    onChangeText={(v) => setForm({ ...form, customNom: v })}
+                    placeholder="Ex: Suivi diabète gestationnel"
+                    placeholderTextColor={COLORS.textMuted}
+                  />
+                </>
+              )}
 
               <Text style={styles.label}>Prix (FCFA) *</Text>
               <TextInput style={styles.input} value={form.prix_fcfa} onChangeText={(v) => setForm({ ...form, prix_fcfa: v.replace(/[^0-9]/g, "") })} keyboardType="numeric" placeholder="10000" placeholderTextColor={COLORS.textMuted} />
 
               <Text style={styles.label}>Durée (minutes)</Text>
-              <TextInput style={styles.input} value={form.duree_min} onChangeText={(v) => setForm({ ...form, duree_min: v.replace(/[^0-9]/g, "") })} keyboardType="numeric" placeholder="30" placeholderTextColor={COLORS.textMuted} />
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                {[15, 30, 45, 60, 90, 120].map((d) => {
+                  const active = form.duree_min === String(d);
+                  return (
+                    <TouchableOpacity
+                      key={d}
+                      onPress={() => setForm({ ...form, duree_min: String(d) })}
+                      style={[styles.dureeChip, active && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}
+                    >
+                      <Text style={[styles.dureeChipText, active && { color: "#fff" }]}>{d} min</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
               <Text style={styles.label}>Description (optionnelle)</Text>
               <TextInput style={[styles.input, { height: 80 }]} value={form.description} onChangeText={(v) => setForm({ ...form, description: v })} multiline placeholder="Décrivez la prestation…" placeholderTextColor={COLORS.textMuted} />
@@ -229,4 +291,9 @@ const styles = StyleSheet.create({
   switchHelp: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
   save: { backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: 999, alignItems: "center", marginTop: 20 },
   saveText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  typeChipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
+  typeChip: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 8, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgSecondary },
+  typeChipText: { fontSize: 12, fontWeight: "700", color: COLORS.textPrimary },
+  dureeChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgSecondary, marginTop: 4 },
+  dureeChipText: { fontSize: 13, fontWeight: "700", color: COLORS.textPrimary },
 });

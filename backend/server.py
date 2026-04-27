@@ -1735,6 +1735,78 @@ async def list_pro_prestations_public(pro_id: str, user=Depends(get_current_user
     return items
 
 
+@api.get("/professionnels/{pro_id}/prestations")
+async def list_pro_prestations_alias(pro_id: str, user=Depends(get_current_user)):
+    """Alias pour compatibilité frontend (legacy URL)."""
+    items = await db.prestations.find({"pro_id": pro_id, "active": True}, {"_id": 0}).sort("prix_fcfa", 1).to_list(100)
+    return items
+
+
+@api.get("/professionnels/{pro_id}/disponibilites")
+async def get_pro_disponibilites_public(pro_id: str, user=Depends(get_current_user)):
+    """
+    Renvoie les disponibilités d'un pro avec les prestations correspondantes
+    (jointure type_id ↔ nom de la prestation pour récupérer durée + prix).
+    Utilisé par la maman dans la prise de RDV.
+    """
+    # Vérifie que le pro existe
+    pro = await db.users.find_one({"id": pro_id, "role": "professionnel"}, {"_id": 0, "id": 1, "name": 1, "specialite": 1})
+    if not pro:
+        raise HTTPException(404, "Professionnel introuvable")
+    doc = await db.pro_disponibilites.find_one({"pro_id": pro_id}, {"_id": 0})
+    raw_slots = (doc or {}).get("slots", [])
+    duree_global = (doc or {}).get("duree_consultation", 30)
+    prestations = await db.prestations.find({"pro_id": pro_id, "active": True}, {"_id": 0}).to_list(200)
+
+    # Map type_id → prestation correspondante (par nom — fuzzy match)
+    type_id_to_label = {
+        "prenatale": "Consultation prénatale", "postnatale": "Consultation post-natale",
+        "echographie": "Échographie", "vaccination": "Vaccination",
+        "pediatrie": "Consultation pédiatrique", "nutrition": "Bilan nutritionnel",
+        "contraception": "Consultation contraception", "generale": "Consultation générale",
+        "teleconsultation": "Téléconsultation", "urgence": "Urgence / Garde",
+        "accouchement": "Accouchement / Suivi travail", "psychologie": "Soutien psychologique",
+    }
+
+    def find_prestation(type_id: str):
+        if not type_id:
+            return None
+        label = type_id_to_label.get(type_id, "")
+        # Match exact label, ou match contains
+        for p in prestations:
+            if p.get("nom", "").strip().lower() == label.lower():
+                return p
+        for p in prestations:
+            if label.lower() in p.get("nom", "").strip().lower():
+                return p
+        return None
+
+    enriched = []
+    for s in raw_slots:
+        type_id = s.get("type_id") or (s.get("types") or ["generale"])[0]
+        duree = s.get("duree_minutes") or duree_global
+        prest = find_prestation(type_id)
+        enriched.append({
+            "jour": s.get("jour"),
+            "heure_debut": s.get("heure_debut"),
+            "heure_fin": s.get("heure_fin"),
+            "actif": s.get("actif", True),
+            "type_id": type_id,
+            "type_label": type_id_to_label.get(type_id, "Consultation"),
+            "duree_minutes": duree,
+            "prix_fcfa": prest.get("prix_fcfa") if prest else None,
+            "cmu_prise_en_charge": prest.get("cmu_prise_en_charge", False) if prest else False,
+            "cmu_taux": prest.get("cmu_taux") if prest else None,
+            "prestation_id": prest.get("id") if prest else None,
+            "prestation_nom": prest.get("nom") if prest else None,
+        })
+    return {
+        "pro": pro,
+        "slots": enriched,
+        "prestations_count": len(prestations),
+    }
+
+
 # ------------------------------------------------------------------
 # Revenus & commissions du pro
 # ------------------------------------------------------------------
@@ -1875,6 +1947,9 @@ class DisponibiliteIn(BaseModel):
     heure_debut: str  # "08:00"
     heure_fin: str  # "12:00"
     actif: bool = True
+    type_id: Optional[str] = None       # nouveau : 1 type par créneau (id de TYPES_CONSULTATION)
+    duree_minutes: Optional[int] = None  # nouveau : durée par créneau (15/30/45/60/90/120)
+    types: Optional[List[str]] = None    # legacy : multi-types, conservé pour rétro-compat
 
 
 @api.get("/pro/disponibilites")
