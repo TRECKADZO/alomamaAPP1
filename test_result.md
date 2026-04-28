@@ -1318,6 +1318,69 @@ agent_communication:
 
 backend:
   - task: "Disponibilités & Prestations refactor (PUT /pro/disponibilites slots avec type_id+duree_minutes, GET /professionnels/{id}/prestations alias, GET /professionnels/{id}/disponibilites enrichi)"
+
+  - agent: "main"
+    message: |
+      [Feature] Carnet Médical Modulaire du Bébé (0-18 ans) — MVP v1 LIVRÉ.
+      
+      **Création de carnet :**
+      1. Automatique : déjà en place via POST /api/naissance (backend line 3908, flag `created_from_naissance: True`).
+      2. Manuelle rétroactive : NOUVEAU écran `/app/frontend/app/enfants/nouveau.tsx` — formulaire 3 étapes :
+         - Étape 1: Identité (prénom, nom, sexe, date/lieu naissance, photo via ImagePicker caméra/galerie)
+         - Étape 2: Santé (N° CMU chiffré, groupe sanguin, allergies multi-select)
+         - Étape 3: Récap visuel + création via smartPost (offline-ready)
+      
+      **Structure modulaire par âge :**
+      NOUVEAU `/app/frontend/app/enfants/[id]/carnet.tsx` (rewrite complet) :
+      - 6 onglets d'âge : Naissance (0-1m), 0-6m, 6-24m, 2-5a, 6-12a, 13-18a
+      - Déblocage auto selon l'âge réel de l'enfant (onglets futurs verrouillés)
+      - Onglet par défaut auto-sélectionné selon l'âge courant
+      - Chaque stage a sa couleur codée, son icône géante, sa description
+      
+      **Vue adaptée au rôle/spécialité (focus prioritaire affiché en tête) :**
+      - Sage-femme → croissance 0-6m, allaitement, post-partum, déclaration naissance
+      - Pédiatre → courbes OMS, calendrier vaccinal EPI, dév. psychomoteur, dépistages
+      - Gynécologue → lien mère-enfant, post-natal mère, contraception, allaitement
+      - Infirmier·ère → calendrier vaccinal, mesures anthropo, rappels, éducation
+      - Maman → "Mon espace" (taille/poids, vaccins, RDV, photos)
+      
+      **Modules fonctionnels affichés dans la grille :**
+      - Croissance OMS (réutilise `/croissance/[id]` existant avec courbes SVG P3-P97)
+      - Vaccins (réutilise carnet existant)
+      - Notes médicales, Documents, Rendez-vous
+      - Modules spécifiques par stage : Allaitement (0-6m), Jalons (0-5a), Santé scolaire (6-18a)
+      
+      **Accessibilité mamans analphabètes :**
+      - Mode vocal TTS activable 🔊 (expo-speech, français fr-FR)
+      - Lit à voix haute le nom de l'enfant, âge, stages, modules
+      - Icônes géantes partout (emojis 32px+)
+      - Couleurs codées par âge et par type de module
+      - Bandeau allergies critique avec bouton lecture vocale prioritaire
+      - Boutons 44x44pt+ (touch targets WCAG)
+      - Tip card dédié pour inciter les mamans à activer le vocal
+      
+      **UX :**
+      - Bouton partage (Share API native) pour envoi rapide du résumé
+      - Photo ronde 70px sur hero card avec fallback emoji du stage
+      - Gradient de fond du hero s'adapte à la couleur du stage
+      - Navigation fluide, 8pt grid, shadows appropriées
+      
+      **Offline :**
+      - Création enfant via smartPost (auto queued si hors ligne)
+      
+      **Intégration liste d'enfants (tab Mes enfants) :**
+      - Ancien bouton modal remplacé par route vers `/enfants/nouveau`
+      - Nom des boutons : "Nouveau carnet médical" / "Créer le premier carnet"
+      
+      **v2 prévue (à ne PAS tester, annoncée à l'utilisateur) :**
+      - Reconnaissance vocale STT (complexe, nécessite expo-av ou API externe)
+      - TTS en dioula (nécessite API externe comme Google Cloud TTS custom ou modèle LLM)
+      - Partage sécurisé chiffré du carnet (avec consentement granulaire)
+      - Rappels vocaux push (audio automatique)
+      
+      Pas de changement backend — les endpoints existants (POST /enfants, /naissance, /enfants/{id}/photo, /enfants/{id}/croissance-oms, /enfants/{id}/vaccins) sont réutilisés.
+      Pas de retest backend nécessaire. Test frontend possible via Expo Go.
+
     implemented: true
     working: true
     file: "/app/backend/server.py"

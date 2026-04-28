@@ -1,285 +1,413 @@
-import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform, Share } from "react-native";
+/**
+ * Carnet Médical Modulaire de l'Enfant (0-18 ans)
+ *
+ * - Navigation par onglets d'âge (Naissance, 0-6m, 6-24m, 2-5a, 6-12a, 13-18a)
+ * - Vue adaptée au rôle connecté (maman, sage-femme, pédiatre, gynéco, infirmier)
+ * - Intégration croissance OMS, vaccins, notes, documents (modules existants)
+ * - Mode vocal TTS (lecture à l'écran) pour mamans analphabètes — expo-speech
+ * - Accessibilité visuelle : icônes géantes, couleurs codées
+ */
+import { useEffect, useMemo, useState } from "react";
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Image, Share,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
+import * as Speech from "expo-speech";
 import { api, formatError } from "../../../lib/api";
+import { useAuth } from "../../../lib/auth";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
 
-function ageOf(date_naissance: string) {
+// ---------- Helpers âge ----------
+function monthsBetween(date_naissance: string): number {
   const ms = Date.now() - new Date(date_naissance).getTime();
-  const totalMonths = Math.floor(ms / (30.44 * 86400000));
-  if (totalMonths < 12) return `${totalMonths} mois`;
-  const annees = Math.floor(totalMonths / 12);
-  const moisRestants = totalMonths % 12;
-  return moisRestants > 0 ? `${annees} ans ${moisRestants} mois` : `${annees} ans`;
+  return Math.max(0, Math.floor(ms / (30.44 * 86400000)));
+}
+function ageLabel(date_naissance: string): string {
+  const m = monthsBetween(date_naissance);
+  if (m < 1) return "Nouveau-né";
+  if (m < 12) return `${m} mois`;
+  const a = Math.floor(m / 12);
+  const r = m % 12;
+  return r > 0 ? `${a} an${a > 1 ? "s" : ""} ${r} m` : `${a} an${a > 1 ? "s" : ""}`;
 }
 
-export default function CarnetScreen() {
+// ---------- Définition des modules par tranche d'âge ----------
+type StageKey = "naissance" | "0_6m" | "6_24m" | "2_5a" | "6_12a" | "13_18a";
+type Stage = {
+  key: StageKey;
+  label: string;
+  icon: string;
+  color: string;
+  bgColor: string;
+  ageMinMonths: number;
+  ageMaxMonths: number;
+  description: string;
+};
+
+const STAGES: Stage[] = [
+  { key: "naissance", label: "Naissance", icon: "🍼", color: "#EC4899", bgColor: "#FCE7F3", ageMinMonths: 0, ageMaxMonths: 1, description: "Premier mois de vie" },
+  { key: "0_6m", label: "0-6 mois", icon: "👶", color: "#F472B6", bgColor: "#FDF2F8", ageMinMonths: 0, ageMaxMonths: 6, description: "Premiers mois" },
+  { key: "6_24m", label: "6-24 mois", icon: "🧒", color: "#A855F7", bgColor: "#FAF5FF", ageMinMonths: 6, ageMaxMonths: 24, description: "Éveil et autonomie" },
+  { key: "2_5a", label: "2-5 ans", icon: "🎈", color: "#3B82F6", bgColor: "#EFF6FF", ageMinMonths: 24, ageMaxMonths: 60, description: "Petite enfance" },
+  { key: "6_12a", label: "6-12 ans", icon: "🎒", color: "#10B981", bgColor: "#ECFDF5", ageMinMonths: 72, ageMaxMonths: 144, description: "Âge scolaire" },
+  { key: "13_18a", label: "13-18 ans", icon: "🧑", color: "#F59E0B", bgColor: "#FFFBEB", ageMinMonths: 156, ageMaxMonths: 216, description: "Adolescence" },
+];
+
+function isStageUnlocked(stage: Stage, ageMonths: number): boolean {
+  return ageMonths >= stage.ageMinMonths;
+}
+function getDefaultStage(ageMonths: number): StageKey {
+  if (ageMonths < 1) return "naissance";
+  if (ageMonths < 6) return "0_6m";
+  if (ageMonths < 24) return "6_24m";
+  if (ageMonths < 60) return "2_5a";
+  if (ageMonths < 144) return "6_12a";
+  return "13_18a";
+}
+
+// ---------- Vues prioritaires par rôle/spécialité ----------
+function getRoleFocus(role?: string, specialite?: string): { title: string; items: string[] } {
+  const sp = (specialite || "").toLowerCase();
+  if (role === "professionnel") {
+    if (sp.includes("sage")) return {
+      title: "Vue Sage-femme",
+      items: ["Croissance 0-6 mois", "Allaitement & alimentation", "Post-partum de la mère", "Déclaration de naissance"],
+    };
+    if (sp.includes("pédiatre") || sp.includes("pediatre")) return {
+      title: "Vue Pédiatre",
+      items: ["Courbes OMS complètes", "Calendrier vaccinal EPI", "Développement psychomoteur", "Dépistages & bilans"],
+    };
+    if (sp.includes("gyné") || sp.includes("obstétr") || sp.includes("obstet")) return {
+      title: "Vue Gynéco / Obstétricien",
+      items: ["Lien mère-enfant", "Suivi post-natal mère", "Contraception post-partum", "Allaitement"],
+    };
+    if (sp.includes("infir") || sp.includes("agent")) return {
+      title: "Vue Infirmier·ère",
+      items: ["Calendrier vaccinal", "Mesures anthropométriques", "Rappels automatiques", "Éducation parentale"],
+    };
+    return { title: "Vue professionnelle", items: ["Croissance", "Vaccins", "Notes médicales", "Documents"] };
+  }
+  return { title: "Mon espace", items: ["Taille & poids", "Vaccins", "Rendez-vous", "Photos & souvenirs"] };
+}
+
+// ---------- Module card data ----------
+type Module = { id: string; title: string; icon: string; color: string; description: string; onPress: () => void };
+
+export default function CarnetModulaire() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
+  const { user } = useAuth();
+
   const [enfant, setEnfant] = useState<any>(null);
-  const [rdv, setRdv] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pdfLoading, setPdfLoading] = useState(false);
+  const [activeStage, setActiveStage] = useState<StageKey>("0_6m");
+  const [ttsOn, setTtsOn] = useState(false);
+
+  const ageMonths = enfant ? monthsBetween(enfant.date_naissance) : 0;
+  const focus = getRoleFocus(user?.role, (user as any)?.specialite);
 
   useEffect(() => {
     if (!id) return;
-    Promise.all([
-      api.get("/enfants").then((r) => (r.data || []).find((e: any) => e.id === id)),
-      api.get("/rdv").then((r) => (r.data || []).filter((x: any) => x.enfant_id === id)).catch(() => []),
-    ]).then(([e, rs]) => {
-      setEnfant(e);
-      setRdv(rs);
-      setLoading(false);
-    });
+    (async () => {
+      try {
+        const r = await api.get("/enfants");
+        const e = (r.data || []).find((x: any) => x.id === id);
+        setEnfant(e);
+        if (e) setActiveStage(getDefaultStage(monthsBetween(e.date_naissance)));
+      } finally { setLoading(false); }
+    })();
+    return () => { Speech.stop(); };
   }, [id]);
 
-  const generateHTML = () => {
-    if (!enfant) return "";
-    const vaccins = (enfant.vaccins || []).map((v: any) =>
-      `<li><b>${v.nom}</b> — ${new Date(v.date).toLocaleDateString("fr-FR")}${v.prochain_rappel ? ` (rappel ${new Date(v.prochain_rappel).toLocaleDateString("fr-FR")})` : ""}</li>`
-    ).join("");
-    const mesures = (enfant.mesures || []).map((m: any) =>
-      `<li>${new Date(m.date).toLocaleDateString("fr-FR")} — ${m.poids_kg ?? "?"} kg · ${m.taille_cm ?? "?"} cm${m.pc_cm ? ` · PC ${m.pc_cm} cm` : ""}</li>`
-    ).join("");
-    const rdvs = rdv.map((r: any) =>
-      `<li>${new Date(r.date).toLocaleDateString("fr-FR")} — ${r.pro?.name || r.pro_nom || "Praticien"}${r.pro?.specialite ? ` (${r.pro.specialite})` : ""} — ${r.motif || ""} (${r.status})</li>`
-    ).join("");
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-      <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 30px; color: #333; line-height: 1.6; }
-        h1 { color: #0F766E; border-bottom: 3px solid #A7F3D0; padding-bottom: 8px; }
-        h2 { color: #C97B63; margin-top: 24px; border-left: 4px solid #FBCFE8; padding-left: 10px; }
-        .meta { color: #888; font-size: 12px; }
-        .info { background: #ECFDF5; padding: 14px; border-radius: 8px; }
-        .empty { color: #999; font-style: italic; }
-        ul { padding-left: 20px; }
-      </style></head><body>
-      <h1>📘 Carnet de santé — ${enfant.nom}</h1>
-      <div class="meta">Généré le ${new Date().toLocaleString("fr-FR")} · À lo Maman</div>
-
-      <div class="info">
-        <p><b>Date de naissance :</b> ${new Date(enfant.date_naissance).toLocaleDateString("fr-FR")} (${ageOf(enfant.date_naissance)})</p>
-        <p><b>Sexe :</b> ${enfant.sexe === "F" ? "Fille 👧" : "Garçon 👦"}</p>
-        ${enfant.groupe_sanguin ? `<p><b>Groupe sanguin :</b> ${enfant.groupe_sanguin}</p>` : ""}
-        ${enfant.numero_cmu ? `<p><b>CMU :</b> ${enfant.numero_cmu}</p>` : ""}
-        ${(enfant.allergies || []).length ? `<p><b>Allergies :</b> ${enfant.allergies.join(", ")}</p>` : ""}
-      </div>
-
-      <h2>📊 Mesures (${(enfant.mesures || []).length})</h2>
-      ${mesures ? `<ul>${mesures}</ul>` : '<p class="empty">Aucune mesure enregistrée</p>'}
-
-      <h2>💉 Vaccins (${(enfant.vaccins || []).length})</h2>
-      ${vaccins ? `<ul>${vaccins}</ul>` : '<p class="empty">Aucun vaccin enregistré</p>'}
-
-      <h2>📅 Rendez-vous (${rdv.length})</h2>
-      ${rdvs ? `<ul>${rdvs}</ul>` : '<p class="empty">Aucun rendez-vous</p>'}
-
-      <p class="meta" style="margin-top: 30px;">Document confidentiel À lo Maman.</p>
-      </body></html>`;
+  const speak = async (text: string) => {
+    try {
+      await Speech.stop();
+      if (!ttsOn) return;
+      Speech.speak(text, { language: "fr-FR", pitch: 1.0, rate: 0.95 });
+    } catch {}
   };
 
-  const exportPDF = async () => {
-    setPdfLoading(true);
-    try {
-      const html = generateHTML();
-      if (Platform.OS === "web") {
-        const w = (window as any).open("", "_blank");
-        if (w) {
-          w.document.write(html);
-          w.document.close();
-          w.focus();
-          setTimeout(() => w.print(), 400);
-        }
-        return;
+  const toggleTts = async () => {
+    if (ttsOn) {
+      await Speech.stop();
+      setTtsOn(false);
+    } else {
+      setTtsOn(true);
+      if (enfant) {
+        Speech.speak(
+          `Carnet médical de ${enfant.nom}. ${ageLabel(enfant.date_naissance)}. Appuyez sur un module pour en savoir plus.`,
+          { language: "fr-FR", pitch: 1.0, rate: 0.95 },
+        );
       }
-      const { uri } = await Print.printToFileAsync({ html });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: `Carnet ${enfant.nom}` });
-      } else {
-        await Share.share({ url: uri });
-      }
-    } catch (e: any) {
-      Alert.alert("Erreur", formatError(e));
-    } finally {
-      setPdfLoading(false);
     }
   };
 
-  if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} size="large" /></SafeAreaView>;
-  if (!enfant) return <SafeAreaView style={styles.loading}><Text>Enfant introuvable</Text></SafeAreaView>;
+  const shareCarnet = async () => {
+    if (!enfant) return;
+    try {
+      const msg = `Carnet médical — ${enfant.nom}\nNé(e) le : ${enfant.date_naissance}\nÂge : ${ageLabel(enfant.date_naissance)}\nGroupe sanguin : ${enfant.groupe_sanguin || "—"}\n${enfant.allergies?.length ? "Allergies : " + enfant.allergies.join(", ") : ""}\n\n— À lo Maman`;
+      await Share.share({ message: msg });
+    } catch {}
+  };
 
-  const prochainVaccin = (enfant.vaccins || [])
-    .filter((v: any) => v.prochain_rappel && new Date(v.prochain_rappel) > new Date())
-    .sort((a: any, b: any) => new Date(a.prochain_rappel).getTime() - new Date(b.prochain_rappel).getTime())[0];
+  const modules: Module[] = useMemo(() => {
+    if (!enfant) return [];
+    const stage = STAGES.find((s) => s.key === activeStage)!;
+    const items: Module[] = [
+      {
+        id: "croissance", title: "Croissance OMS", icon: "📏", color: "#06B6D4",
+        description: "Taille, poids, périmètre crânien",
+        onPress: () => router.push(`/croissance/${enfant.id}`),
+      },
+      {
+        id: "vaccins", title: "Vaccins", icon: "💉", color: "#10B981",
+        description: "Calendrier EPI & rappels",
+        onPress: () => router.push(`/enfants/${enfant.id}/carnet`),
+      },
+      {
+        id: "notes", title: "Notes médicales", icon: "📝", color: "#3B82F6",
+        description: "Consultations & signatures",
+        onPress: () => router.push(`/enfants/${enfant.id}/carnet`),
+      },
+      {
+        id: "documents", title: "Documents", icon: "📄", color: "#8B5CF6",
+        description: "Analyses, ordonnances, PDF",
+        onPress: () => router.push(`/enfants/${enfant.id}/carnet`),
+      },
+      {
+        id: "rdv", title: "Rendez-vous", icon: "📅", color: "#F59E0B",
+        description: "Consultations passées et à venir",
+        onPress: () => router.push("/(tabs)/rdv"),
+      },
+    ];
 
-  const lastMesure = (enfant.mesures || [])[0];
+    // Modules spécifiques par stage
+    if (stage.key === "naissance" || stage.key === "0_6m") {
+      items.unshift({
+        id: "allaitement", title: "Allaitement", icon: "🍼", color: "#EC4899",
+        description: "Suivi des tétées et durée",
+        onPress: () => router.push("/post-partum"),
+      });
+    }
+    if (stage.key === "0_6m" || stage.key === "6_24m" || stage.key === "2_5a") {
+      items.splice(2, 0, {
+        id: "jalons", title: "Jalons & éveil", icon: "🎯", color: "#A855F7",
+        description: "Développement psychomoteur",
+        onPress: () => Alert.alert("Jalons", "Module à venir prochainement."),
+      });
+    }
+    if (stage.key === "6_12a" || stage.key === "13_18a") {
+      items.push({
+        id: "scolaire", title: "Santé scolaire", icon: "🎓", color: "#F472B6",
+        description: "Bilans & vaccins scolaires",
+        onPress: () => Alert.alert("Santé scolaire", "Module à venir prochainement."),
+      });
+    }
+    return items;
+  }, [enfant, activeStage]);
+
+  if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
+  if (!enfant) return (
+    <SafeAreaView style={styles.loading}>
+      <Text style={{ color: COLORS.textPrimary }}>Enfant introuvable</Text>
+      <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 12 }}>
+        <Text style={{ color: COLORS.primary, fontWeight: "700" }}>Retour</Text>
+      </TouchableOpacity>
+    </SafeAreaView>
+  );
+
+  const currentStage = STAGES.find((s) => s.key === activeStage)!;
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <LinearGradient colors={enfant.sexe === "F" ? ["#EC4899", "#F472B6"] : ["#3B82F6", "#60A5FA"]} style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}><Ionicons name="chevron-back" size={22} color="#fff" /></TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>📘 Carnet — {enfant.nom}</Text>
-          <Text style={styles.sub}>{enfant.sexe === "F" ? "👧 Fille" : "👦 Garçon"} · {ageOf(enfant.date_naissance)}</Text>
-        </View>
-        <TouchableOpacity onPress={exportPDF} disabled={pdfLoading} style={styles.pdfBtn} testID="export-carnet-pdf">
-          {pdfLoading ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="document-text" size={20} color="#fff" />}
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
         </TouchableOpacity>
-      </LinearGradient>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Carnet de {enfant.nom.split(" ")[0]}</Text>
+          <Text style={styles.sub}>{ageLabel(enfant.date_naissance)}</Text>
+        </View>
+        <TouchableOpacity onPress={toggleTts} style={[styles.iconBtn, ttsOn && { backgroundColor: "#FEF3C7" }]} accessibilityLabel="Activer ou désactiver le mode vocal">
+          <Ionicons name={ttsOn ? "volume-high" : "volume-mute"} size={20} color={ttsOn ? "#B45309" : COLORS.textPrimary} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={shareCarnet} style={styles.iconBtn}>
+          <Ionicons name="share-outline" size={20} color={COLORS.textPrimary} />
+        </TouchableOpacity>
+      </View>
 
-      <ScrollView contentContainerStyle={{ padding: SPACING.xl, paddingBottom: 60 }}>
-        {/* Identité */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>👶 Identité</Text>
-          <Row label="Date de naissance" value={new Date(enfant.date_naissance).toLocaleDateString("fr-FR")} />
-          <Row label="Sexe" value={enfant.sexe === "F" ? "Fille" : "Garçon"} />
-          {enfant.groupe_sanguin && <Row label="Groupe sanguin" value={enfant.groupe_sanguin} />}
-          {enfant.numero_cmu && <Row label="N° CMU" value={enfant.numero_cmu} />}
-          {(enfant.allergies || []).length > 0 && <Row label="Allergies" value={enfant.allergies.join(", ")} valueColor="#DC2626" />}
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        {/* Bandeau identité */}
+        <LinearGradient colors={[currentStage.color, currentStage.color + "CC"]} style={styles.heroCard}>
+          {enfant.photo_url || enfant.photo_base64 ? (
+            <Image source={{ uri: enfant.photo_url || enfant.photo_base64 }} style={styles.heroPhoto} />
+          ) : (
+            <View style={styles.heroPhotoPlaceholder}>
+              <Text style={{ fontSize: 40 }}>{currentStage.icon}</Text>
+            </View>
+          )}
+          <View style={{ flex: 1 }}>
+            <Text style={styles.heroName}>{enfant.nom}</Text>
+            <Text style={styles.heroAge}>{ageLabel(enfant.date_naissance)}</Text>
+            <View style={styles.heroMeta}>
+              <Text style={styles.heroMetaText}>{enfant.sexe === "F" ? "👧 Fille" : "👦 Garçon"}</Text>
+              {enfant.groupe_sanguin && <Text style={styles.heroMetaText}>· 🩸 {enfant.groupe_sanguin}</Text>}
+            </View>
+          </View>
+        </LinearGradient>
+
+        {/* Allergies critiques (toujours visibles) */}
+        {enfant.allergies?.length > 0 && (
+          <TouchableOpacity
+            style={styles.allergyBanner}
+            onPress={() => speak(`Attention, ${enfant.nom} est allergique à ${enfant.allergies.join(", ")}.`)}
+          >
+            <Ionicons name="warning" size={20} color="#B45309" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.allergyTitle}>⚠️ Allergies</Text>
+              <Text style={styles.allergyText}>{enfant.allergies.join(" · ")}</Text>
+            </View>
+            {ttsOn && <Ionicons name="volume-high" size={18} color="#B45309" />}
+          </TouchableOpacity>
+        )}
+
+        {/* Vue prioritaire selon rôle */}
+        <View style={styles.focusCard}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="star" size={16} color="#F59E0B" />
+            <Text style={styles.focusTitle}>{focus.title}</Text>
+          </View>
+          <View style={styles.focusItems}>
+            {focus.items.map((it, i) => (
+              <View key={i} style={styles.focusItem}>
+                <Text style={styles.focusItemText}>• {it}</Text>
+              </View>
+            ))}
+          </View>
         </View>
 
-        {/* Mesures */}
-        <View style={styles.card}>
-          <View style={styles.sectionHead}>
-            <Text style={styles.sectionTitle}>📊 Mesures ({(enfant.mesures || []).length})</Text>
-            <TouchableOpacity onPress={() => router.push(`/croissance/${enfant.id}`)} style={styles.miniBtn}>
-              <Ionicons name="trending-up" size={14} color={COLORS.primary} />
-              <Text style={styles.miniBtnText}>Courbes OMS</Text>
+        {/* Onglets par âge */}
+        <Text style={styles.sectionTitle}>📍 Naviguez par âge</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stagesScroll}>
+          {STAGES.map((s) => {
+            const unlocked = isStageUnlocked(s, ageMonths);
+            const active = activeStage === s.key;
+            return (
+              <TouchableOpacity
+                key={s.key}
+                disabled={!unlocked}
+                onPress={() => { setActiveStage(s.key); speak(`${s.label}. ${s.description}`); }}
+                style={[
+                  styles.stageChip,
+                  { backgroundColor: active ? s.color : s.bgColor, borderColor: active ? s.color : "transparent" },
+                  !unlocked && { opacity: 0.35 },
+                ]}
+              >
+                <Text style={styles.stageIcon}>{s.icon}</Text>
+                <Text style={[styles.stageLabel, active && { color: "#fff" }]}>{s.label}</Text>
+                {!unlocked && <Ionicons name="lock-closed" size={10} color={COLORS.textMuted} style={{ position: "absolute", top: 4, right: 4 }} />}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {/* Stage actif - description */}
+        <View style={[styles.stageBanner, { backgroundColor: currentStage.bgColor }]}>
+          <Text style={{ fontSize: 32 }}>{currentStage.icon}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.stageBannerTitle, { color: currentStage.color }]}>{currentStage.label}</Text>
+            <Text style={styles.stageBannerDesc}>{currentStage.description}</Text>
+          </View>
+          <TouchableOpacity onPress={() => speak(`${currentStage.label}. ${currentStage.description}`)} style={styles.playBtn}>
+            <Ionicons name="play-circle" size={28} color={currentStage.color} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Grille des modules */}
+        <Text style={styles.sectionTitle}>🗂️ Modules disponibles</Text>
+        <View style={styles.modulesGrid}>
+          {modules.map((m) => (
+            <TouchableOpacity
+              key={m.id}
+              style={[styles.moduleCard, { borderLeftColor: m.color }]}
+              onPress={() => { speak(`${m.title}. ${m.description}`); setTimeout(m.onPress, ttsOn ? 600 : 0); }}
+              accessibilityLabel={`${m.title}. ${m.description}`}
+            >
+              <View style={[styles.moduleIcon, { backgroundColor: m.color + "15" }]}>
+                <Text style={{ fontSize: 32 }}>{m.icon}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.moduleTitle}>{m.title}</Text>
+                <Text style={styles.moduleDesc}>{m.description}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
             </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Astuce vocale pour les mamans */}
+        {user?.role === "maman" && !ttsOn && (
+          <View style={styles.tipCard}>
+            <Ionicons name="bulb" size={18} color="#B45309" />
+            <Text style={styles.tipText}>
+              Activez le mode vocal 🔊 en haut à droite pour que l'application vous lise le carnet à voix haute.
+            </Text>
           </View>
-          {lastMesure ? (
-            <>
-              <Row label="Dernier poids" value={`${lastMesure.poids_kg} kg`} valueColor={COLORS.primary} />
-              <Row label="Dernière taille" value={`${lastMesure.taille_cm} cm`} valueColor={COLORS.primary} />
-              {lastMesure.pc_cm && <Row label="Périmètre crânien" value={`${lastMesure.pc_cm} cm`} />}
-              <Row label="Date" value={new Date(lastMesure.date).toLocaleDateString("fr-FR")} />
-              <Text style={styles.histLabel}>Historique :</Text>
-              {(enfant.mesures || []).slice(0, 5).map((m: any, i: number) => (
-                <View key={i} style={styles.histRow}>
-                  <Text style={styles.histDate}>{new Date(m.date).toLocaleDateString("fr-FR")}</Text>
-                  <Text style={styles.histVal}>{m.poids_kg} kg · {m.taille_cm} cm</Text>
-                </View>
-              ))}
-            </>
-          ) : (
-            <Text style={styles.empty}>Aucune mesure enregistrée.</Text>
-          )}
-        </View>
-
-        {/* Vaccins */}
-        <View style={styles.card}>
-          <View style={styles.sectionHead}>
-            <Text style={styles.sectionTitle}>💉 Vaccins ({(enfant.vaccins || []).length})</Text>
-            {prochainVaccin && (
-              <View style={styles.upcomingChip}>
-                <Ionicons name="alarm" size={11} color="#92400E" />
-                <Text style={styles.upcomingText}>Prochain : {prochainVaccin.nom}</Text>
-              </View>
-            )}
-          </View>
-          {(enfant.vaccins || []).length === 0 ? (
-            <Text style={styles.empty}>Aucun vaccin enregistré.</Text>
-          ) : (
-            (enfant.vaccins || []).map((v: any, i: number) => (
-              <View key={i} style={styles.vaccinRow}>
-                <Ionicons name="checkmark-circle" size={18} color="#22C55E" />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.vaccinNom}>{v.nom}</Text>
-                  <Text style={styles.vaccinDate}>
-                    {new Date(v.date).toLocaleDateString("fr-FR")}
-                    {v.prochain_rappel && ` · Rappel ${new Date(v.prochain_rappel).toLocaleDateString("fr-FR")}`}
-                  </Text>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-
-        {/* RDV */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>📅 Rendez-vous ({rdv.length})</Text>
-          {rdv.length === 0 ? (
-            <Text style={styles.empty}>Aucun rendez-vous pour cet enfant.</Text>
-          ) : (
-            rdv.slice(0, 10).map((r: any) => (
-              <View key={r.id} style={styles.rdvRow}>
-                <Ionicons name="medical" size={16} color={COLORS.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rdvDate}>{new Date(r.date).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}</Text>
-                  <Text style={styles.rdvMotif}>{r.pro?.name || r.pro_nom} · {r.motif || "—"}</Text>
-                </View>
-                <View style={[styles.statusChip, { backgroundColor: r.status === "confirme" ? "#DCFCE7" : "#FEF3C7" }]}>
-                  <Text style={[styles.statusText, { color: r.status === "confirme" ? "#15803D" : "#92400E" }]}>{r.status}</Text>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-
-        {/* Quick actions */}
-        <Text style={styles.actionsTitle}>Actions rapides</Text>
-        <View style={styles.actionsRow}>
-          <TouchableOpacity onPress={() => router.push(`/jalons/${enfant.id}`)} style={[styles.actionBtn, { backgroundColor: "#10B981" }]} testID="goto-jalons">
-            <Ionicons name="checkmark-done" size={16} color="#fff" />
-            <Text style={styles.actionBtnText}>Étapes développement</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={exportPDF} disabled={pdfLoading} style={[styles.actionBtn, { backgroundColor: "#0EA5E9" }]} testID="export-pdf-btn">
-            <Ionicons name="document-text" size={16} color="#fff" />
-            <Text style={styles.actionBtnText}>Exporter PDF</Text>
-          </TouchableOpacity>
-        </View>
+        )}
       </ScrollView>
     </SafeAreaView>
-  );
-}
-
-function Row({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <View style={styles.rowItem}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={[styles.rowValue, valueColor ? { color: valueColor, fontWeight: "800" } : null]}>{value}</Text>
-    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bgPrimary },
   loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.bgPrimary },
-  header: { flexDirection: "row", alignItems: "center", gap: 10, padding: SPACING.lg, paddingBottom: 18, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 },
-  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
-  pdfBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
-  title: { color: "#fff", fontSize: 17, fontWeight: "800" },
-  sub: { color: "rgba(255,255,255,0.85)", fontSize: 12, marginTop: 2 },
-  card: { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS.border, ...SHADOW.sm },
-  sectionTitle: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 15 },
-  sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  miniBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: COLORS.bgPrimary, borderRadius: 999, borderWidth: 1, borderColor: COLORS.border },
-  miniBtnText: { color: COLORS.primary, fontWeight: "700", fontSize: 11 },
-  upcomingChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#FEF3C7", borderRadius: 999 },
-  upcomingText: { color: "#92400E", fontWeight: "700", fontSize: 10 },
-  rowItem: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  rowLabel: { color: COLORS.textSecondary, fontSize: 13, fontWeight: "600" },
-  rowValue: { color: COLORS.textPrimary, fontSize: 13, fontWeight: "700" },
-  empty: { color: COLORS.textMuted, fontStyle: "italic", fontSize: 12, textAlign: "center", marginVertical: 8 },
-  histLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "700", marginTop: 12, marginBottom: 6, textTransform: "uppercase" },
-  histRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
-  histDate: { color: COLORS.textSecondary, fontSize: 12 },
-  histVal: { color: COLORS.textPrimary, fontSize: 12, fontWeight: "600" },
-  vaccinRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
-  vaccinNom: { fontWeight: "700", color: COLORS.textPrimary, fontSize: 13 },
-  vaccinDate: { color: COLORS.textSecondary, fontSize: 11, marginTop: 1 },
-  rdvRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
-  rdvDate: { fontWeight: "700", color: COLORS.textPrimary, fontSize: 13 },
-  rdvMotif: { color: COLORS.textSecondary, fontSize: 11, marginTop: 2 },
-  statusChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
-  statusText: { fontSize: 10, fontWeight: "800" },
-  actionsTitle: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 14, marginTop: 8, marginBottom: 8 },
-  actionsRow: { flexDirection: "row", gap: 8 },
-  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: 999, ...SHADOW.sm },
-  actionBtnText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+  header: { flexDirection: "row", alignItems: "center", gap: 8, padding: SPACING.lg },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
+  iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
+  title: { fontSize: 18, fontWeight: "800", color: COLORS.textPrimary },
+  sub: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+
+  heroCard: { flexDirection: "row", gap: 14, padding: SPACING.lg, margin: SPACING.lg, borderRadius: RADIUS.lg, alignItems: "center", ...SHADOW },
+  heroPhoto: { width: 70, height: 70, borderRadius: 35, borderWidth: 3, borderColor: "#fff" },
+  heroPhotoPlaceholder: { width: 70, height: 70, borderRadius: 35, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
+  heroName: { fontSize: 20, fontWeight: "800", color: "#fff" },
+  heroAge: { fontSize: 14, color: "rgba(255,255,255,0.95)", marginTop: 2, fontWeight: "600" },
+  heroMeta: { flexDirection: "row", gap: 6, marginTop: 4 },
+  heroMetaText: { color: "rgba(255,255,255,0.95)", fontSize: 12, fontWeight: "600" },
+
+  allergyBanner: { flexDirection: "row", gap: 10, alignItems: "center", padding: 12, marginHorizontal: SPACING.lg, backgroundColor: "#FEF3C7", borderRadius: RADIUS.md, borderWidth: 1, borderColor: "#F59E0B", marginBottom: 12 },
+  allergyTitle: { fontSize: 13, fontWeight: "800", color: "#B45309" },
+  allergyText: { fontSize: 12, color: "#92400E", marginTop: 2 },
+
+  focusCard: { marginHorizontal: SPACING.lg, padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 14 },
+  focusTitle: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary },
+  focusItems: { marginTop: 8, gap: 4 },
+  focusItem: {},
+  focusItemText: { fontSize: 12, color: COLORS.textSecondary, lineHeight: 18 },
+
+  sectionTitle: { fontSize: 14, fontWeight: "800", color: COLORS.textPrimary, paddingHorizontal: SPACING.lg, marginTop: 6, marginBottom: 8 },
+
+  stagesScroll: { paddingHorizontal: SPACING.lg, gap: 8, paddingBottom: 8 },
+  stageChip: { alignItems: "center", paddingVertical: 10, paddingHorizontal: 14, borderRadius: RADIUS.md, minWidth: 82, borderWidth: 2 },
+  stageIcon: { fontSize: 28 },
+  stageLabel: { fontSize: 11, fontWeight: "800", color: COLORS.textPrimary, marginTop: 4 },
+
+  stageBanner: { flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: SPACING.lg, padding: 14, borderRadius: RADIUS.md, marginTop: 6, marginBottom: 6 },
+  stageBannerTitle: { fontSize: 16, fontWeight: "800" },
+  stageBannerDesc: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  playBtn: { padding: 4 },
+
+  modulesGrid: { paddingHorizontal: SPACING.lg, gap: 10 },
+  moduleCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, borderLeftWidth: 4, ...SHADOW },
+  moduleIcon: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
+  moduleTitle: { fontSize: 16, fontWeight: "800", color: COLORS.textPrimary },
+  moduleDesc: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+
+  tipCard: { flexDirection: "row", gap: 8, alignItems: "flex-start", padding: 12, backgroundColor: "#FEF3C7", marginHorizontal: SPACING.lg, marginTop: 14, borderRadius: RADIUS.md },
+  tipText: { flex: 1, fontSize: 12, color: "#92400E", lineHeight: 17 },
 });

@@ -159,7 +159,7 @@ export default function Enfants() {
               <Text style={styles.headerSub}>Suivi complet de vos enfants</Text>
             </View>
           </View>
-          <TouchableOpacity onPress={() => setModal(true)} testID="add-enfant-btn" style={{ marginTop: SPACING.md }}>
+          <TouchableOpacity onPress={() => router.push("/enfants/nouveau")} testID="add-enfant-btn" style={{ marginTop: SPACING.md }}>
             <LinearGradient
               colors={["#3B82F6", "#06B6D4"]}
               start={{ x: 0, y: 0 }}
@@ -167,7 +167,7 @@ export default function Enfants() {
               style={styles.addBtn}
             >
               <Ionicons name="add" size={20} color="#fff" />
-              <Text style={styles.addBtnText}>Ajouter un enfant</Text>
+              <Text style={styles.addBtnText}>Nouveau carnet médical</Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>
@@ -209,7 +209,7 @@ export default function Enfants() {
             </View>
             <Text style={styles.emptyTitle}>Aucun enfant enregistré</Text>
             <Text style={styles.emptyText}>Commencez par ajouter le carnet de santé de votre enfant</Text>
-            <TouchableOpacity onPress={() => setModal(true)} style={{ marginTop: SPACING.lg }}>
+            <TouchableOpacity onPress={() => router.push("/enfants/nouveau")} style={{ marginTop: SPACING.lg }}>
               <LinearGradient
                 colors={["#3B82F6", "#06B6D4"]}
                 start={{ x: 0, y: 0 }}
@@ -217,7 +217,7 @@ export default function Enfants() {
                 style={styles.addBtn}
               >
                 <Ionicons name="add" size={18} color="#fff" />
-                <Text style={styles.addBtnText}>Ajouter mon premier enfant</Text>
+                <Text style={styles.addBtnText}>Créer le premier carnet</Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
