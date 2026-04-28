@@ -1443,6 +1443,27 @@ backend:
       - Helper `_verify_access_token()` vérifie validity + expiration
       
       Frontend:
+
+  - agent: "main"
+    message: |
+      [Bug fix] POST /api/enfants renvoyait 500 (puis 422 après fix `is_premium_active`) quand l'ancien modal de création d'enfant envoyait `allergies: ""` (chaîne vide) ou `allergies: "arachides, lait"` (CSV). Le backend attendait `List[str]` strict → rejet Pydantic.
+      
+      Fix (`/app/backend/server.py`):
+      - Import ajouté : `field_validator` depuis pydantic
+      - EnfantIn.allergies : validator `mode="before"` qui accepte null / "" / list / CSV str → normalise en list[str] ou None
+      - EnfantIn.groupe_sanguin / numero_cmu / notes : validator qui normalise "" → None
+      
+      Test manuel end-to-end :
+      - `allergies: ""` → 200 OK ✅
+      - `allergies: "arachides, lait"` → 200 OK (parsé en list[str]) ✅
+      - `allergies: []` → 200 OK ✅
+      - `allergies: ["Oeufs"]` → 200 OK ✅
+      - `allergies: null` → 200 OK ✅
+      - `groupe_sanguin: ""` → 200 OK (normalisé en null) ✅
+      
+      Compatibilité ascendante : les APK déployés avec l'ancien modal continueront de fonctionner.
+      Pas de retest backend automatisé requis (validation Pydantic pure, testée à la main).
+
       - `/pro/consulter-patient.tsx` — saisie identifier + motif, envoi demande, liste demandes avec statuts colorés (pending/validated/refused/expired), polling toutes les 5s, ouvre dossier si validated
       - `/pro/dossier-patient.tsx` — vue complète du dossier patient (maman OU enfant) avec allergies en alerte rouge, infos de base, vaccins, mesures, enfants liés + bandeau expiration accès
       - `/partage-dossier.tsx` (maman) — affiche grande carte CMU (vert) ou code AM (orange), bouton Partager (Share natif), liste demandes avec boutons Autoriser/Refuser, polling 5s

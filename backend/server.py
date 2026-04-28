@@ -24,7 +24,7 @@ from typing import List, Optional, Literal, Dict
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status, Response
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 # ----------------------------------------------------------------------
 # Mongo + App Setup
@@ -325,6 +325,29 @@ class EnfantIn(BaseModel):
     numero_cmu: Optional[str] = None  # N° CMU de l'enfant (bénéficiaire)
     groupe_sanguin: Optional[str] = None
     allergies: Optional[List[str]] = None
+
+    @field_validator("allergies", mode="before")
+    @classmethod
+    def _parse_allergies(cls, v):
+        """Accepte: list[str], "arachides, lait" (CSV), "" ou None."""
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return None
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return None
+
+    @field_validator("groupe_sanguin", "numero_cmu", "notes", mode="before")
+    @classmethod
+    def _empty_to_none(cls, v):
+        """Normalise chaîne vide → None pour éviter les validations strictes."""
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
 
 class VaccinIn(BaseModel):
