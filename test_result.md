@@ -1526,3 +1526,19 @@ agent_communication:
       FIX: remove the local `from .encryption import decrypt_str` (decrypt_str is already globally imported at server.py L7-11). Optionally, switch /pro/patient/recherche to a direct lookup by `cmu.numero_hash` (already stored at POST /cmu/me L2791) — O(1) indexed query vs. O(N) decrypt-all-mamans.
 
       UNRELATED CRITICAL FIX APPLIED BY TESTER (unblocker only): server.py L224 had the comment `# ----…----def is_premium_active(user: dict) -> bool:` merged on one line, making `is_premium_active` undefined and crashing all quota-checked endpoints (POST /enfants, /rdv, etc.). I split the line. This is unrelated to the code-partage feature but was blocking the tests — main agent should NOT re-apply since it's already fixed.
+
+
+  - agent: "testing"
+    message: |
+      🔁 Retest Test 7 only — CMU encrypted lookup (O(1) hash fix) — 8/8 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test_cmu_lookup.py).
+
+      Setup: registered fresh maman (Adjoa Yao, cmu_maman_<rnd>@test.alomaman.com, +22507XXXXXXXX) and fresh pro (Dr Kouakou Konan, cmu_pro_<rnd>@test.alomaman.com). Full CGU/Politique/données santé consents. Then POST /cmu/me with numero="225000000001" (12 digits), nom_complet, date_validite=2099-01-15, beneficiaires=[] → 200 statut='actif'.
+
+      (1) POST /pro/patient/recherche {identifier:"225000000001", motif:"Test CMU lookup"} → 200 body={demande_id:"9ec99db5…", patient_nom:"Adjoa Yao", patient_type:"maman", status:"pending", message:"Demande envoyée à Adjoa Yao. Attente de validation."} ✓ — O(1) SHA-256 hash lookup via cmu.numero_hash works.
+      (2) POST /pro/patient/recherche {identifier:"225 000 000 001"} (with spaces) → 200 same maman found ✓ — _clean_share_identifier normalises and strips non-digits before hashing.
+      (3) POST /pro/patient/recherche {identifier:"999999999999"} → 404 detail="Aucune patiente ou enfant trouvé avec cet identifiant" ✓.
+      (4) GET /auth/me/code-partage as maman → 200 body={cmu:"225000000001", code_provisoire:"AM-6JR4-JV", preferred:"225000000001"} ✓ — CMU returned in CLEAR TEXT (no enc_v1: prefix). The broken `from .encryption import decrypt_str` relative import has been removed; global decrypt_str (imported at L7-11) is now used.
+      (5) GET /cmu/me → returns clear numero, statut='actif', numero_hash=0ee012b4…. (round-trip OK).
+      (6) Cleanup via DELETE /auth/me {password, confirmation:"SUPPRIMER"} for both accounts → 200/200.
+
+      Both CRITICAL bugs from the previous run are now fixed. No regressions. Main agent can summarize and finish.

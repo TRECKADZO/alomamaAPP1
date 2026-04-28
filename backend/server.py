@@ -5743,7 +5743,6 @@ async def get_my_share_code(user=Depends(get_current_user)):
     cmu_clair = None
     if cmu_raw:
         try:
-            from .encryption import decrypt_str  # type: ignore
             cmu_clair = decrypt_str(cmu_raw)
         except Exception:
             cmu_clair = cmu_raw
@@ -5795,22 +5794,14 @@ async def pro_patient_recherche(payload: dict, user=Depends(require_roles("profe
         # Chiffres = CMU. Les CMU enfants ne sont pas chiffrés (numero_cmu)
         found_enfant = await db.enfants.find_one({"numero_cmu": cleaned}, {"_id": 0})
         if not found_enfant:
-            # Pour les mamans, le CMU est dans user.cmu.numero (chiffré) : on fait un best-effort
-            # en parcourant les mamans qui ont un cmu renseigné et en essayant de le déchiffrer.
-            # Pour performance : on limite aux mamans ayant un champ cmu existant.
-            cursor = db.users.find({"role": "maman", "cmu.numero": {"$exists": True, "$ne": None}}, {"_id": 0})
-            try:
-                from .encryption import decrypt_str  # type: ignore
-                async for u in cursor:
-                    enc = u.get("cmu", {}).get("numero")
-                    try:
-                        if decrypt_str(enc) == cleaned:
-                            found_maman = u
-                            break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+            # Pour les mamans, le CMU est dans user.cmu.numero (chiffré) + user.cmu.numero_hash (clair)
+            # Lookup O(1) via le hash déjà indexé.
+            import hashlib as _hl
+            num_hash = _hl.sha256(cleaned.encode()).hexdigest()[:16]
+            found_maman = await db.users.find_one(
+                {"role": "maman", "cmu.numero_hash": num_hash},
+                {"_id": 0},
+            )
 
     if not found_maman and not found_enfant:
         raise HTTPException(404, "Aucune patiente ou enfant trouvé avec cet identifiant")
@@ -6020,7 +6011,6 @@ async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends
             raise HTTPException(404, "Enfant introuvable")
         # Déchiffre allergies si chiffrées
         try:
-            from .encryption import decrypt_str  # type: ignore
             if isinstance(enfant.get("allergies"), str) and enfant["allergies"].startswith("enc::"):
                 enfant["allergies"] = decrypt_str(enfant["allergies"])
         except Exception:
