@@ -1383,6 +1383,39 @@ backend:
 
     implemented: true
     working: true
+
+  - agent: "main"
+    message: |
+      [Partage de dossier médical — CMU + code provisoire + validation push] — LIVRÉ
+      
+      Backend (server.py):
+      - Helpers `_gen_am_code()`, `_ensure_am_code()`, `_clean_share_identifier()` — génère codes `AM-X7K9-P3` avec alphabet sans 0/O/1/I/L
+      - GET /api/auth/me/code-partage — maman récupère CMU (déchiffré si présent) + code provisoire AM, auto-généré si absent
+      - GET /api/enfants/{eid}/code-partage — idem pour un enfant
+      - POST /api/pro/patient/recherche — pro saisit identifier + motif → cherche dans users (via code_provisoire ou CMU chiffré) et dans enfants (numero_cmu ou code_provisoire) → crée une demande `access_requests` (expires 5 min pour validation) → push à la maman
+      - GET /api/partage/demandes-recues — maman liste les demandes (pending/validated/refused/expired)
+      - POST /api/partage/demande/{id}/valider — maman valide → génère access_token + access_expires_at (2h) → push au pro
+      - POST /api/partage/demande/{id}/refuser — push au pro refus
+      - GET /api/pro/demandes/mes-demandes — pro liste ses demandes (pour poller status et récupérer tokens actifs)
+      - GET /api/pro/patient/{id}/carnet — pro accède au dossier avec header `X-Access-Token` → audit log dans `access_audit_log`
+      - Helper `_verify_access_token()` vérifie validity + expiration
+      
+      Frontend:
+      - `/pro/consulter-patient.tsx` — saisie identifier + motif, envoi demande, liste demandes avec statuts colorés (pending/validated/refused/expired), polling toutes les 5s, ouvre dossier si validated
+      - `/pro/dossier-patient.tsx` — vue complète du dossier patient (maman OU enfant) avec allergies en alerte rouge, infos de base, vaccins, mesures, enfants liés + bandeau expiration accès
+      - `/partage-dossier.tsx` (maman) — affiche grande carte CMU (vert) ou code AM (orange), bouton Partager (Share natif), liste demandes avec boutons Autoriser/Refuser, polling 5s
+      - Raccourcis ajoutés :
+        - Profil maman → "Partage sécurisé (CMU / Code)"
+        - Tab Patients pro → action "Consulter dossier"
+      
+      Sécurité :
+      - CMU mamans restent chiffrés AES-256-GCM au repos
+      - Audit log exhaustif (pro_id, patient_id, action, timestamp, IP)
+      - Demande expire en 5 min (pour validation), accès en 2h (après validation)
+      - Validation explicite required à chaque demande (pas de cache de permission)
+      
+      Test backend requis : nouveau flux end-to-end (recherche → demande → validation → accès → refus/expiration).
+
     file: "/app/backend/server.py"
     stuck_count: 0
     priority: "high"
@@ -1433,3 +1466,63 @@ agent_communication:
       ✅ GET /api/professionnels/{pro_id}/disponibilites (NEW, enriched) — pro object + slots[] avec type_id, type_label, duree_minutes, prix_fcfa, prestation_id, prestation_nom tous corrects. Fuzzy match (rename → 'Échographie pelvienne 3D') fonctionne (jointure preservée). Legacy slot (no type_id, only types[]) avec fallback duree_consultation OK. 404 si pro inexistant.
 
       Cleanup OK (2 comptes test supprimés). Aucun bug détecté. Le main agent peut résumer et finir.
+
+
+backend:
+  - task: "Medical record sharing flow (CMU + AM provisional code AM-XXXX-XX)"
+    implemented: true
+    working: false
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          69/72 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_code_partage.py).
+
+          ✅ TEST 1 GET /auth/me/code-partage (10/10): first call auto-generates code AM-TN94-RD (format regex ^AM-[A-Z2-9]{4}-[A-Z2-9]{2}$, no forbidden chars 0/1/I/L/O), shape {cmu:null, code_provisoire:'AM-...', preferred:'AM-...'} OK. Second call returns SAME persisted code. Pro→403 'Réservé aux utilisatrices.'
+          ✅ TEST 2 Enfant create + GET /enfants/{eid}/code-partage (11/11): POST /enfants returns 200, GET returns {cmu:null, code_provisoire:'AM-KGH9-XC', preferred:'AM-...'}. Persistent on 2nd call. Maman code ≠ enfant code.
+          ✅ TEST 3 POST /pro/patient/recherche (12/12): search by maman AM code → 200 + {demande_id, patient_nom:'Aminata Kone', patient_type:'maman', status:'pending', message}. Search by enfant AM code → 200 + patient_nom:'Bébé Kone', patient_type:'enfant'. Invalid 'AM-FAKE-00' → 404.
+          ✅ TEST 4 Maman validate/refuse (11/11): GET /partage/demandes-recues returns array of 2 pending. Valider maman → 200 {status:'validated', expires_at, message:'Accès accordé pour 120 minutes'}. Refuser enfant → 200 {status:'refused'}.
+          ✅ TEST 5 Pro access carnet (16/16): GET /pro/demandes/mes-demandes returns both demandes with access_token on validated one (null on refused). GET /pro/patient/{maman_id}/carnet with X-Access-Token → 200 {type:'maman', maman:{...}, enfants:[...], access_expires_at}. Without token → 403. Wrong token → 403. Enfant refused → 403.
+          ✅ TEST 6 AM code format (4/4): regex + forbidden chars OK on both codes.
+
+          ❌ TEST 7 FAILED — CMU lookup by encrypted value (0/3):
+          POST /cmu/me with numero='225000000001' succeeds (cmu persisted encrypted with numero_hash).
+          POST /pro/patient/recherche {identifier:'225000000001'} → **404 "Aucune patiente ou enfant trouvé avec cet identifiant"** instead of 200.
+
+          ROOT CAUSE (critical bug in server.py L5802):
+          The pro_patient_recherche endpoint attempts to iterate all mamans with a stored CMU and decrypt each one to find a match. It does so with:
+          ```
+          try:
+              from .encryption import decrypt_str  # type: ignore
+              async for u in cursor:
+                  ...
+          except Exception:
+              pass
+          ```
+          server.py is run as a top-level module (not a package), so `from .encryption` raises ImportError. The outer try/except silently swallows it → NO maman is ever checked → always 404. `decrypt_str` is already imported at the top of server.py (L7-11) so the local import is redundant and wrong.
+
+          SAME BUG also exists in GET /auth/me/code-partage L5745 — `from .encryption import decrypt_str` will fail and fall through to `cmu_clair = cmu_raw`, meaning when a maman HAS a CMU set, /auth/me/code-partage will return the ENCRYPTED ciphertext ('enc_v1:...') as `cmu` field instead of the clear number. (Not triggered in Test 1 because CMU was not set there, but this is latent.)
+
+          FIX (main agent): In server.py L5745 AND L5802, change `from .encryption import decrypt_str` to either:
+            (a) remove the local import entirely (decrypt_str is already globally imported), OR
+            (b) change to `from encryption import decrypt_str` (no dot).
+          Also, to boost performance, store `cmu_numero_hash` on users at POST /cmu/me (already done L2791) and search by hash: compute sha256(cleaned)[:16] and do `await db.users.find_one({"cmu.numero_hash": hash})` instead of iterating+decrypting all mamans. This will make Test 7 pass + scale.
+
+          ALSO FIXED (minor unblocker during testing): server.py L224 had a malformed line where a `#` comment and the `def is_premium_active(...)` signature were on the SAME line: `# -------def is_premium_active(user: dict) -> bool:`. This caused `NameError: is_premium_active not defined` on POST /enfants (and any quota-checking endpoint). I split them onto separate lines (no behavior change). The whole freemium quota system was silently broken before this fix.
+
+          CLEANUP OK: both test accounts deleted via DELETE /auth/me. Script idempotent.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Medical record sharing flow (CMU + code AM) — 69/72 PASS. Tests 1-6 GREEN. Test 7 RED.
+
+      ❌ CRITICAL: /pro/patient/recherche cannot find mamans by CMU (encrypted lookup). Root cause: server.py L5802 uses `from .encryption import decrypt_str` (relative import, dot) which raises ImportError because server.py is not a package — silently swallowed by try/except → no maman is ever decrypted/matched → 404. Same bug at L5745 for /auth/me/code-partage when a CMU is set (ciphertext returned instead of clear).
+
+      FIX: remove the local `from .encryption import decrypt_str` (decrypt_str is already globally imported at server.py L7-11). Optionally, switch /pro/patient/recherche to a direct lookup by `cmu.numero_hash` (already stored at POST /cmu/me L2791) — O(1) indexed query vs. O(N) decrypt-all-mamans.
+
+      UNRELATED CRITICAL FIX APPLIED BY TESTER (unblocker only): server.py L224 had the comment `# ----…----def is_premium_active(user: dict) -> bool:` merged on one line, making `is_premium_active` undefined and crashing all quota-checked endpoints (POST /enfants, /rdv, etc.). I split the line. This is unrelated to the code-partage feature but was blocking the tests — main agent should NOT re-apply since it's already fixed.

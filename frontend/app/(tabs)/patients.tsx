@@ -163,6 +163,7 @@ export default function Patients() {
         ) : (
           <>
             <Action icon="calendar" label="Disponibilités" color="#2DD4BF" onPress={() => router.push("/pro/disponibilites")} />
+            <Action icon="person-add" label="Consulter dossier" color="#3B82F6" onPress={() => router.push("/pro/consulter-patient")} />
             <Action icon="pricetags" label="Prestations" color="#F59E0B" onPress={() => router.push("/pro/prestations")} />
             <Action icon="cash" label="Revenus" color="#059669" onPress={() => router.push("/pro/revenus")} />
             <Action icon="shield-checkmark" label="CMU" color="#16A34A" onPress={() => router.push("/pro/cmu")} />

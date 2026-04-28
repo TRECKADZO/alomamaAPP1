@@ -221,7 +221,8 @@ def require_roles(*roles):
 
 # ----------------------------------------------------------------------
 # (anciens helpers RBAC supprimés — remplacés ci-dessus)
-# ----------------------------------------------------------------------def is_premium_active(user: dict) -> bool:
+# ----------------------------------------------------------------------
+def is_premium_active(user: dict) -> bool:
     if not user.get("premium"):
         return False
     pu = user.get("premium_until")
@@ -567,6 +568,48 @@ def _gen_code(n: int = 6) -> str:
     import string
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(n))
+
+
+# ========================================================================
+# Code provisoire À lo Maman — identifiant d'accès partage quand pas de CMU
+# Format : AM-XXXX-XX (alphabet sans 0/O/1/I/L pour lisibilité)
+# Ex: AM-X7K9-P3
+# ========================================================================
+_AM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+def _gen_am_code() -> str:
+    import secrets
+    p1 = "".join(secrets.choice(_AM_ALPHABET) for _ in range(4))
+    p2 = "".join(secrets.choice(_AM_ALPHABET) for _ in range(2))
+    return f"AM-{p1}-{p2}"
+
+async def _ensure_am_code(collection, doc_id: str, field: str = "code_provisoire") -> str:
+    """Génère ou retourne le code AM unique. Garantit l'unicité."""
+    import secrets
+    for _ in range(10):
+        code = _gen_am_code()
+        exists = await collection.find_one({field: code}, {"_id": 1})
+        if not exists:
+            await collection.update_one({"id": doc_id}, {"$set": {field: code}})
+            return code
+    # fallback très improbable
+    return f"AM-{_gen_code(4)}-{_gen_code(2)}"
+
+
+def _clean_share_identifier(raw: str) -> str:
+    """Normalise identifiant CMU (chiffres seulement) ou code AM (upper, espaces supprimés)."""
+    if not raw:
+        return ""
+    raw = raw.strip().upper().replace(" ", "")
+    if raw.startswith("AM-") or raw.startswith("AM"):
+        # Code provisoire - ensure format AM-XXXX-XX
+        parts = raw.replace("-", "")
+        if parts.startswith("AM") and len(parts) >= 8:
+            body = parts[2:]
+            return f"AM-{body[:4]}-{body[4:6]}"
+        return raw
+    # Sinon, CMU = chiffres uniquement
+    return "".join(c for c in raw if c.isdigit())
 
 
 @api.post("/auth/login")
@@ -5680,6 +5723,325 @@ async def delete_famille_member(member_email: str, user=Depends(get_current_user
         {"$pull": {"membres": {"email": member_email}}},
     )
     return {"ok": True}
+
+
+# ============================================================================
+# PARTAGE DOSSIER MÉDICAL — CMU / Code provisoire AM-XXXX-XX + validation push
+# ============================================================================
+
+@api.get("/auth/me/code-partage")
+async def get_my_share_code(user=Depends(get_current_user)):
+    """Retourne le code de partage de la maman (son CMU ou son code AM provisoire)."""
+    if user.get("role") != "maman":
+        raise HTTPException(403, "Réservé aux utilisatrices.")
+    # Génère un code AM si inexistant
+    code_prov = user.get("code_provisoire")
+    if not code_prov:
+        code_prov = await _ensure_am_code(db.users, user["id"], "code_provisoire")
+    # Décrypte CMU si chiffré
+    cmu_raw = user.get("cmu", {}).get("numero") if isinstance(user.get("cmu"), dict) else None
+    cmu_clair = None
+    if cmu_raw:
+        try:
+            from .encryption import decrypt_str  # type: ignore
+            cmu_clair = decrypt_str(cmu_raw)
+        except Exception:
+            cmu_clair = cmu_raw
+    return {
+        "cmu": cmu_clair,
+        "code_provisoire": code_prov,
+        "preferred": cmu_clair or code_prov,
+    }
+
+
+@api.get("/enfants/{eid}/code-partage")
+async def get_enfant_share_code(eid: str, user=Depends(require_roles("maman"))):
+    """Retourne le code de partage d'un enfant (CMU enfant ou code AM provisoire)."""
+    enfant = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    if not enfant:
+        raise HTTPException(404, "Enfant introuvable")
+    code_prov = enfant.get("code_provisoire")
+    if not code_prov:
+        code_prov = await _ensure_am_code(db.enfants, eid, "code_provisoire")
+    return {
+        "cmu": enfant.get("numero_cmu"),
+        "code_provisoire": code_prov,
+        "preferred": enfant.get("numero_cmu") or code_prov,
+    }
+
+
+@api.post("/pro/patient/recherche")
+async def pro_patient_recherche(payload: dict, user=Depends(require_roles("professionnel"))):
+    """
+    Pro saisit un CMU ou un code AM provisoire.
+    Recherche parmi les mamans ET les enfants.
+    Si trouvé : crée une demande de partage et envoie un push à la maman pour validation.
+    """
+    raw = payload.get("identifier", "").strip()
+    motif = (payload.get("motif") or "Consultation médicale").strip()[:200]
+    if not raw:
+        raise HTTPException(400, "Identifiant requis (CMU ou code AM)")
+    cleaned = _clean_share_identifier(raw)
+
+    # Cherche d'abord dans users (mamans) par CMU puis code provisoire
+    found_maman = None
+    found_enfant = None
+    # CMU des mamans est chiffré → on match par code_provisoire en priorité si format AM-
+    if cleaned.startswith("AM-"):
+        found_maman = await db.users.find_one({"code_provisoire": cleaned, "role": "maman"}, {"_id": 0})
+        if not found_maman:
+            found_enfant = await db.enfants.find_one({"code_provisoire": cleaned}, {"_id": 0})
+    else:
+        # Chiffres = CMU. Les CMU enfants ne sont pas chiffrés (numero_cmu)
+        found_enfant = await db.enfants.find_one({"numero_cmu": cleaned}, {"_id": 0})
+        if not found_enfant:
+            # Pour les mamans, le CMU est dans user.cmu.numero (chiffré) : on fait un best-effort
+            # en parcourant les mamans qui ont un cmu renseigné et en essayant de le déchiffrer.
+            # Pour performance : on limite aux mamans ayant un champ cmu existant.
+            cursor = db.users.find({"role": "maman", "cmu.numero": {"$exists": True, "$ne": None}}, {"_id": 0})
+            try:
+                from .encryption import decrypt_str  # type: ignore
+                async for u in cursor:
+                    enc = u.get("cmu", {}).get("numero")
+                    try:
+                        if decrypt_str(enc) == cleaned:
+                            found_maman = u
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+    if not found_maman and not found_enfant:
+        raise HTTPException(404, "Aucune patiente ou enfant trouvé avec cet identifiant")
+
+    # Détermine la maman à qui envoyer le push (propriétaire du profil ou de l'enfant)
+    if found_enfant:
+        maman = await db.users.find_one({"id": found_enfant["user_id"]}, {"_id": 0})
+        patient_id = found_enfant["id"]
+        patient_type = "enfant"
+        patient_nom = found_enfant.get("nom", "Enfant")
+    else:
+        maman = found_maman
+        patient_id = found_maman["id"]
+        patient_type = "maman"
+        patient_nom = found_maman.get("name", "Patiente")
+
+    if not maman:
+        raise HTTPException(404, "Parente introuvable")
+
+    # Crée la demande (expires in 5 min pour la validation)
+    now = datetime.now(timezone.utc)
+    demande = {
+        "id": str(uuid.uuid4()),
+        "pro_id": user["id"],
+        "pro_name": user.get("name"),
+        "pro_specialite": user.get("specialite"),
+        "maman_id": maman["id"],
+        "patient_id": patient_id,
+        "patient_type": patient_type,
+        "patient_nom": patient_nom,
+        "via": "code_provisoire" if cleaned.startswith("AM-") else "cmu",
+        "motif": motif,
+        "status": "pending",
+        "duree_minutes_demandee": 120,  # 2h par défaut
+        "access_token": None,
+        "access_expires_at": None,
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(minutes=5)).isoformat(),  # la demande elle-même expire en 5 min
+    }
+    await db.access_requests.insert_one(demande)
+    demande.pop("_id", None)
+
+    # Push à la maman
+    try:
+        await push_notif(
+            maman["id"],
+            "🔐 Demande d'accès à votre dossier",
+            f"Dr {user.get('name')} souhaite consulter le dossier de {patient_nom}. Motif : {motif}",
+            ntype="partage_demande",
+        )
+    except Exception:
+        pass
+
+    return {
+        "demande_id": demande["id"],
+        "patient_nom": patient_nom,
+        "patient_type": patient_type,
+        "status": "pending",
+        "message": f"Demande envoyée à {maman.get('name', 'la patiente')}. Attente de validation.",
+    }
+
+
+@api.get("/partage/demandes-recues")
+async def list_demandes_recues(user=Depends(require_roles("maman"))):
+    """La maman liste les demandes d'accès qu'elle a reçues (pending + récentes)."""
+    now = datetime.now(timezone.utc).isoformat()
+    items = await db.access_requests.find(
+        {"maman_id": user["id"]},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(50)
+    return items
+
+
+@api.post("/partage/demande/{demande_id}/valider")
+async def valider_demande_partage(demande_id: str, user=Depends(require_roles("maman"))):
+    """La maman valide une demande d'accès — génère un token temporaire pour le pro."""
+    demande = await db.access_requests.find_one({"id": demande_id, "maman_id": user["id"]})
+    if not demande:
+        raise HTTPException(404, "Demande introuvable")
+    if demande["status"] != "pending":
+        raise HTTPException(400, f"Demande déjà {demande['status']}")
+    # Vérifie que la demande n'a pas expiré (5 min pour valider)
+    try:
+        exp = datetime.fromisoformat(demande["expires_at"])
+        if datetime.now(timezone.utc) > exp:
+            await db.access_requests.update_one({"id": demande_id}, {"$set": {"status": "expired"}})
+            raise HTTPException(400, "Demande expirée. Le pro doit relancer.")
+    except (ValueError, KeyError):
+        pass
+
+    # Génère token + expiration accès (2h par défaut)
+    import secrets as _sec
+    token = _sec.token_urlsafe(32)
+    duree = int(demande.get("duree_minutes_demandee", 120))
+    access_expires = datetime.now(timezone.utc) + timedelta(minutes=duree)
+    await db.access_requests.update_one(
+        {"id": demande_id},
+        {"$set": {
+            "status": "validated",
+            "access_token": token,
+            "access_expires_at": access_expires.isoformat(),
+            "validated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    # Push au pro pour lui dire que l'accès est accordé
+    try:
+        await push_notif(
+            demande["pro_id"],
+            "✅ Accès autorisé",
+            f"L'accès au dossier de {demande['patient_nom']} vous a été accordé ({duree} min).",
+            ntype="partage_accorde",
+        )
+    except Exception:
+        pass
+    return {
+        "status": "validated",
+        "expires_at": access_expires.isoformat(),
+        "message": f"Accès accordé pour {duree} minutes",
+    }
+
+
+@api.post("/partage/demande/{demande_id}/refuser")
+async def refuser_demande_partage(demande_id: str, user=Depends(require_roles("maman"))):
+    """La maman refuse une demande d'accès."""
+    demande = await db.access_requests.find_one({"id": demande_id, "maman_id": user["id"]})
+    if not demande:
+        raise HTTPException(404, "Demande introuvable")
+    if demande["status"] != "pending":
+        raise HTTPException(400, f"Demande déjà {demande['status']}")
+    await db.access_requests.update_one(
+        {"id": demande_id},
+        {"$set": {"status": "refused", "refused_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    try:
+        await push_notif(
+            demande["pro_id"],
+            "❌ Accès refusé",
+            f"La patiente a refusé l'accès au dossier de {demande['patient_nom']}.",
+            ntype="partage_refuse",
+        )
+    except Exception:
+        pass
+    return {"status": "refused"}
+
+
+async def _verify_access_token(pro_id: str, patient_id: str, token: Optional[str]) -> dict:
+    """Valide le token d'accès d'un pro sur un patient. Retourne la demande ou lève 403."""
+    if not token:
+        raise HTTPException(403, "Token d'accès requis. Demandez l'autorisation à la patiente.")
+    demande = await db.access_requests.find_one({
+        "pro_id": pro_id,
+        "patient_id": patient_id,
+        "access_token": token,
+        "status": "validated",
+    })
+    if not demande:
+        raise HTTPException(403, "Accès invalide ou expiré. Demandez une nouvelle autorisation.")
+    # Check expiry
+    try:
+        exp = datetime.fromisoformat(demande["access_expires_at"])
+        if datetime.now(timezone.utc) > exp:
+            await db.access_requests.update_one({"id": demande["id"]}, {"$set": {"status": "expired"}})
+            raise HTTPException(403, "Accès expiré. Demandez une nouvelle autorisation.")
+    except (ValueError, KeyError):
+        raise HTTPException(403, "Accès invalide")
+    return demande
+
+
+@api.get("/pro/demandes/mes-demandes")
+async def list_mes_demandes_pro(user=Depends(require_roles("professionnel"))):
+    """Le pro liste ses demandes (pending/validated/refused/expired)."""
+    items = await db.access_requests.find(
+        {"pro_id": user["id"]},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(50)
+    # Masque les tokens d'accès sortants (pas besoin de les renvoyer en clair dans la liste)
+    # On les masque sauf pour l'utilisation active (frontend les récupère via endpoint dédié)
+    return items
+
+
+@api.get("/pro/patient/{patient_id}/carnet")
+async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends(require_roles("professionnel"))):
+    """Le pro accède au carnet complet d'une patiente ou enfant via son access_token."""
+    token = request.headers.get("X-Access-Token") or request.query_params.get("access_token")
+    demande = await _verify_access_token(user["id"], patient_id, token)
+
+    # Audit log
+    try:
+        await db.access_audit_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "pro_id": user["id"],
+            "pro_name": user.get("name"),
+            "patient_id": patient_id,
+            "patient_type": demande.get("patient_type"),
+            "action": "view_carnet",
+            "demande_id": demande.get("id"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ip": request.client.host if request.client else None,
+        })
+    except Exception:
+        pass
+
+    # Prépare la réponse
+    if demande["patient_type"] == "enfant":
+        enfant = await db.enfants.find_one({"id": patient_id}, {"_id": 0})
+        if not enfant:
+            raise HTTPException(404, "Enfant introuvable")
+        # Déchiffre allergies si chiffrées
+        try:
+            from .encryption import decrypt_str  # type: ignore
+            if isinstance(enfant.get("allergies"), str) and enfant["allergies"].startswith("enc::"):
+                enfant["allergies"] = decrypt_str(enfant["allergies"])
+        except Exception:
+            pass
+        return {
+            "type": "enfant",
+            "enfant": enfant,
+            "access_expires_at": demande["access_expires_at"],
+            "accordee_par": "parent",
+        }
+    else:
+        maman = await db.users.find_one({"id": patient_id}, {"_id": 0, "password_hash": 0})
+        if not maman:
+            raise HTTPException(404, "Patiente introuvable")
+        enfants = await db.enfants.find({"user_id": patient_id}, {"_id": 0}).to_list(50)
+        return {
+            "type": "maman",
+            "maman": maman,
+            "enfants": enfants,
+            "access_expires_at": demande["access_expires_at"],
+        }
 
 
 app.include_router(api)

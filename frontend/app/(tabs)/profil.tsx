@@ -140,6 +140,7 @@ export default function Profil() {
               <Text style={styles.sectionTitle}>Mon espace santé</Text>
               <MenuRow icon="grid" iconColor="#EC4899" label="Mon espace santé (hub)" onPress={() => router.push("/mon-espace-sante")} />
               <MenuRow icon="document-text" iconColor="#14B8A6" label="Mon dossier médical" onPress={() => router.push("/dossier-medical")} />
+              <MenuRow icon="qr-code" iconColor="#16A34A" label="Partage sécurisé (CMU / Code)" onPress={() => router.push("/partage-dossier")} />
               <MenuRow icon="heart" iconColor="#EC4899" label="Suivi grossesse" onPress={() => router.push("/(tabs)/grossesse")} />
               <MenuRow icon="happy" iconColor="#3B82F6" label="Carnets de santé enfants" onPress={() => router.push("/(tabs)/enfants")} />
               <MenuRow icon="flower" iconColor="#E11D48" label="Cycle menstruel" onPress={() => router.push("/cycle")} />
