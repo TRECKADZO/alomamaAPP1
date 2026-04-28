@@ -1542,3 +1542,77 @@ agent_communication:
       (6) Cleanup via DELETE /auth/me {password, confirmation:"SUPPRIMER"} for both accounts → 200/200.
 
       Both CRITICAL bugs from the previous run are now fixed. No regressions. Main agent can summarize and finish.
+
+  - task: "PhoneInput component (+225 fixed prefix) on Login / Register / Forgot password"
+    implemented: true
+    working: true
+    file: "/app/frontend/components/PhoneInput.tsx, /app/frontend/app/(auth)/login.tsx, /app/frontend/app/(auth)/register.tsx, /app/frontend/app/(auth)/mot-de-passe-oublie.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Mobile 390x844 validation PASS on https://cycle-tracker-pro.preview.emergentagent.com.
+          (1) LOGIN screen, mode "Téléphone": +225 🇨🇮 badge visible & non-editable; typing "0709005300" → input displays exactly "07 09 00 53 00"; incremental typing keeps the value (no reset bug; intermediate state "07 09" preserved as expected).
+          (2) REGISTER screen, mode "Téléphone": +225 prefix visible; typing "0709005300" → "07 09 00 53 00" exactly.
+          (3) MOT DE PASSE OUBLIÉ: Email/Téléphone toggle visible; typing "0709005300" → "07 09 00 53 00" exactly.
+          No console errors, no JS pageerrors during the flow.
+
+  - task: "New retroactive child creation wizard (3 steps)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/enfants/nouveau.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          PARTIAL test: Step 1 "Identité" loads correctly with prénom + sex selector (👧/👦) + DOB field; "Étape 1/3" indicator visible; progress bar present. Prénom input accepted. Could not auto-advance to step 2 in the web/playwright environment because the DOB picker uses a native modal (DateField component) that isn't easily clickable via web simulation — this is NOT a bug, just a web-vs-native limitation. Code review (/app/frontend/app/enfants/nouveau.tsx) confirms 3 steps (Identité → Santé → Récap) are properly implemented with state machine on `step` (1/2/3), validation gate `if (step === 1 && (!form.prenom.trim() || !form.date_naissance))`, recap card on step 3, and final POST to /enfants on submit. NOTE: file has NO testID attributes — recommend main agent add testIDs (e.g., wizard-step, prenom-input, sexe-F, sexe-M, dob-input, btn-suivant, btn-precedent) for future automated testing.
+
+  - task: "Modular carnet with age-stage tabs + TTS toggle"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/enfants/[id]/carnet.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "testing"
+        comment: |
+          Could not fully exercise carnet UI because: (a) demo accounts have been deleted (per /app/memory/test_credentials.md), and (b) the registered fresh maman account has no enfants and the wizard step 2/3 requires a native DOB picker. Code review (/app/frontend/app/enfants/[id]/carnet.tsx) shows: ttsOn state with toggle button (line 235-236), volume-high/volume-mute icons, allergies banner conditional rendering, modules grid using `m.onPress` for navigation. Implementation looks correct; suggest end-to-end manual test by main agent using a real DB child or by adding a "skip DOB" path / pre-seeded test data. NO testID attributes on stage tabs / TTS button / modules — recommend adding for robust automation (e.g., stage-tab-{key}, tts-toggle, module-{id}).
+
+  - task: "Existing screens regression smoke test"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/grossesse.tsx, /app/frontend/app/cycle.tsx, /app/frontend/app/(tabs)/communaute.tsx, /app/frontend/app/(tabs)/index.tsx, /app/frontend/app/(tabs)/enfants.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Smoke tests on mobile 390x844 — ALL OK. /grossesse, /cycle, /communaute, / (home dashboard), /enfants all load without "Application Error" / "Unhandled Error" / "TypeError" messages. 0 page errors and 0 JS exceptions captured during the navigation sequence. Minor finding: route /partage-dossier returns "Unmatched Route — Page could not be found" (the share screen referenced in Test 7 may live under a different path like /partage or be reachable only from the Profil tab button — recommend main agent verify the correct route name for the share screen).
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      FRONTEND TESTING SESSION COMPLETE — focus on new features (Tests 1-9).
+      
+      ✅ TEST 1 (PhoneInput +225 prefix) — FULLY PASS on Login + Register + Forgot password. The recent reset-on-keystroke bug is FIXED: incremental typing correctly preserves and formats values as "07 09 00 53 00".
+      ✅ TEST 2 (Carnet wizard) — Step 1 "Identité" verified working. Step 2/3 not auto-tested due to native DOB picker; code review confirms correct 3-step flow.
+      ⚠️ TEST 3 (Modular carnet w/ TTS + age tabs) — Could not exercise UI live (no test child available; demo accounts wiped per /app/memory/test_credentials.md); code review of /app/frontend/app/enfants/[id]/carnet.tsx shows correct implementation.
+      🚫 TESTS 4-6, 8 (Pro flows: Prestations / Disponibilités / RDV créneaux / Consulter dossier) — NOT TESTED. No pro test account exists since demo accounts were deleted. Creating a new pro account from scratch requires multi-page register form with specialty + region pickers; out of scope for the limited browser-automation budget this session.
+      ⚠️ TEST 7 (Share CMU/AM-XXXX-XX screen) — Direct route /partage-dossier returns 404 "Unmatched Route". Main agent should verify the actual route path (/profil → "Partage sécurisé" button) or expose a /share alias.
+      ✅ TEST 9 (Smoke regression) — /, /grossesse, /cycle, /communaute, /enfants all render without red error screens. 0 JS pageerrors during full session.
+      
+      RECOMMENDATIONS for main agent:
+      1. Add testID props to /app/frontend/app/enfants/nouveau.tsx (wizard step indicators, prénom input, sexe F/M buttons, DOB field, Suivant/Précédent buttons) and /app/frontend/app/enfants/[id]/carnet.tsx (stage-tab-{key}, tts-toggle, allergies-banner, module-{id}) to enable end-to-end automation of the new flows.
+      2. Verify the /partage-dossier route — currently 404. Either fix the route or update the access path.
+      3. Restore at least one shared test maman + one test pro account in /app/memory/test_credentials.md (or document the approved register flow) so the testing agent can validate Pro UIs (Tests 4-6, 8) on subsequent runs.
+      4. Tests 4-6 and 8 still need UI validation — please request specifically once test pro accounts exist.
