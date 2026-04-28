@@ -496,6 +496,48 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+frontend_retest_2026_04_28:
+  - task: "Test A — /partage-dossier (Maman)"
+    working: true
+    comment: |
+      PASS on mobile 390x844.
+      • Login maman.test@alomaman.dev / Test1234! → Profil tab → tap "Partage sécurisé (CMU / Code)" → navigates to /partage-dossier.
+      • Big orange gradient card displayed with code AM-RSDZ-UQ (matches format AM-XXXX-XX, regex validated).
+      • "Mon code À lo Maman" label + "Code provisoire" hint + "Partager" button all visible.
+      • Info card "Communiquez ce code… accès 2 heures" present.
+      • Section "📬 Demandes d'accès" shows "Aucune demande." (empty, expected initially).
+      Screenshot: .screenshots/testA_partage.png.
+  - task: "Test B — /pro/prestations modal with dropdown + Autre"
+    working: true
+    comment: |
+      PASS on mobile 390x844.
+      • Login pro.test@alomaman.dev → /pro/prestations → tap "+ Créer ma première prestation" → modal "Nouvelle prestation" opens.
+      • Section "Type de prestation *" contains all 13 chips: Consultation prénatale, Consultation post-natale, Échographie, Vaccination, Consultation pédiatrique, Bilan nutritionnel, Consultation contraception, Consultation générale, Téléconsultation, Urgence/Garde, Accouchement/Suivi travail, Soutien psychologique, Autre….
+      • Tapping Échographie turns chip orange (selected).
+      • Tapping "Autre…" reveals TextInput "Nom personnalisé *" below with placeholder "Ex: Suivi diabète gestationnel" — VERIFIED in screenshot.
+      • Duration chips present: 15/30/45/60/90/120 min (30 min selected).
+      • Prix (FCFA) field accepts 10000. Description textarea + Active toggle + Prise en charge CMU toggle + Créer button all visible.
+      Screenshot: .screenshots/testB_modal.png. (Note: test B chip-hide-on-switch check was inconclusive due to last tap being back on Autre; visual inspection confirmed the conditional TextInput logic works.)
+  - task: "Test C — /pro/disponibilites per-slot type + duration"
+    working: true
+    comment: |
+      PASS on mobile 390x844.
+      • /pro/disponibilites shows 7 day cards (Lundi → Dimanche), each with "+ Ajouter" button on the right.
+      • Info banner: "Chaque créneau a son type de consultation et sa durée propre…".
+      • Tapping Ajouter on Lundi inserts a slot card with: start time 08:00 → end time 12:00 (both tappable time pickers), active toggle, Type de consultation chips (all 12 types), DURÉE PAR RDV chips (15'/30'/45'/60'/90'/120' — 30' selected), Dupliquer + Supprimer buttons.
+      • Tap a type chip (Échographie) → colored selection OK (visual, confirmed via body text change).
+      • Green checkmark save button present top-right.
+      Screenshot: .screenshots/testC_dispo.png.
+  - task: "Test D — /pro/consulter-patient form"
+    working: true
+    comment: |
+      PASS on mobile 390x844 (UI structure).
+      • /pro/consulter-patient renders header "Consulter un dossier" + subtitle "Par N° CMU ou code À lo Maman" + blue "Accès sécurisé" info banner.
+      • Form contains: TextInput labelled "N° CMU (12 CHIFFRES) OU CODE AM-XXXX-XX", TextInput "MOTIF DE CONSULTATION (FACULTATIF)" with placeholder "Ex: Suivi grossesse 3e trimestre", gradient blue button "Rechercher et demander" with search icon.
+      • Section "Mes demandes récentes" shows "Aucune demande pour le moment." when empty.
+      • Filled fake code "AM-ZZZZ-99" + tapped Rechercher; backend request fires but Alert.alert() on web RN doesn't surface via Playwright's dialog event (native React Native Alert renders as custom component, not window.alert). Visually the form submit is wired correctly.
+      Screenshot: .screenshots/testD_consulter.png.
+
 backend:
   - task: "Account deletion (GDPR / Google Play) — DELETE /api/auth/me"
     implemented: true
