@@ -455,8 +455,8 @@ class NaissanceIn(BaseModel):
     heure_naissance: str  # HH:MM
     poids_naissance_g: Optional[int] = 0
     taille_naissance_cm: Optional[float] = 0
-    score_apgar_1min: Optional[int] = None  # 0-10
-    score_apgar_5min: Optional[int] = None
+    score_apgar_1min: Optional[int] = Field(default=None, ge=0, le=10)  # 0-10
+    score_apgar_5min: Optional[int] = Field(default=None, ge=0, le=10)
     nom_pere: Optional[str] = None
     nom_mere: str
     profession_pere: Optional[str] = None
