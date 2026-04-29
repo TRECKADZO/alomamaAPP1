@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Dimensions,
+  Modal, TextInput, KeyboardAvoidingView, Platform, Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Svg, { Line, Path, Circle, Text as SvgText, Rect } from "react-native-svg";
-import { api } from "../../lib/api";
-import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import { api, formatError } from "../../lib/api";
+import { smartPost } from "../../lib/offline";
+import { useAuth } from "../../lib/auth";
+import DateField from "../../components/DateField";
+import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
 
 const CLASSIF_COLORS: Record<string, string> = {
   tres_bas: "#DC2626",
@@ -27,16 +31,48 @@ const CLASSIF_LABEL: Record<string, string> = {
 export default function Croissance() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { user } = useAuth();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"poids" | "taille">("poids");
+  const [addModal, setAddModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [mes, setMes] = useState({
+    date: new Date().toISOString().slice(0, 10),
+    poids_kg: "",
+    taille_cm: "",
+    perimetre_cranien_cm: "",
+  });
 
-  useEffect(() => { (async () => {
+  const load = async () => {
     try {
       const r = await api.get(`/enfants/${id}/croissance-oms`);
       setData(r.data);
     } finally { setLoading(false); }
-  })(); }, [id]);
+  };
+  useEffect(() => { load(); }, [id]);
+
+  const saveMesure = async () => {
+    if (!mes.date) return Alert.alert("Date requise");
+    if (!mes.poids_kg && !mes.taille_cm && !mes.perimetre_cranien_cm) {
+      return Alert.alert("Au moins une mesure", "Saisissez au moins le poids, la taille ou le périmètre crânien.");
+    }
+    const payload: any = { date: new Date(mes.date).toISOString() };
+    if (mes.poids_kg) payload.poids_kg = parseFloat(mes.poids_kg.replace(",", "."));
+    if (mes.taille_cm) payload.taille_cm = parseFloat(mes.taille_cm.replace(",", "."));
+    if (mes.perimetre_cranien_cm) payload.perimetre_cranien_cm = parseFloat(mes.perimetre_cranien_cm.replace(",", "."));
+    setSubmitting(true);
+    try {
+      const r = await smartPost(`/enfants/${id}/mesures`, payload);
+      setAddModal(false);
+      setMes({ date: new Date().toISOString().slice(0, 10), poids_kg: "", taille_cm: "", perimetre_cranien_cm: "" });
+      if (r?.queued) Alert.alert("Enregistré hors ligne", "La mesure sera envoyée dès la reconnexion.");
+      else Alert.alert("✅ Mesure enregistrée");
+      load();
+    } catch (e) {
+      Alert.alert("Erreur", formatError(e));
+    } finally { setSubmitting(false); }
+  };
 
   if (loading) return <SafeAreaView style={styles.center}><ActivityIndicator color={COLORS.primary} size="large" /></SafeAreaView>;
   if (!data) return <SafeAreaView style={styles.center}><Text>Pas de données</Text></SafeAreaView>;
@@ -74,7 +110,13 @@ export default function Croissance() {
           <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.title}>Courbes OMS — {enfant.nom}</Text>
-        <View style={{ width: 40 }} />
+        {user?.role === "maman" ? (
+          <TouchableOpacity onPress={() => setAddModal(true)} style={styles.addBtn} testID="add-mesure-btn">
+            <Ionicons name="add" size={22} color="#fff" />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 40 }} />
+        )}
       </View>
 
       <ScrollView contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 60 }}>
@@ -145,9 +187,25 @@ export default function Croissance() {
         </View>
 
         {/* Points list */}
-        <Text style={styles.h2}>Historique des mesures</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4, marginBottom: 8 }}>
+          <Text style={[styles.h2, { marginTop: 0, marginBottom: 0 }]}>Historique des mesures</Text>
+          {user?.role === "maman" && (
+            <TouchableOpacity onPress={() => setAddModal(true)} style={styles.addInlineBtn} testID="add-mesure-inline">
+              <Ionicons name="add-circle" size={16} color={COLORS.primary} />
+              <Text style={styles.addInlineText}>Ajouter</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         {points.length === 0 ? (
-          <View style={styles.empty}><Text style={styles.emptyTxt}>Aucune mesure enregistrée. Ajoutez-en depuis la fiche enfant.</Text></View>
+          <View style={styles.empty}>
+            <Text style={styles.emptyTxt}>Aucune mesure enregistrée pour le moment.</Text>
+            {user?.role === "maman" && (
+              <TouchableOpacity onPress={() => setAddModal(true)} style={styles.emptyBtn} testID="add-mesure-empty">
+                <Ionicons name="add-circle" size={18} color="#fff" />
+                <Text style={styles.emptyBtnText}>Ajouter ma 1ère mesure</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         ) : (
           points.filter((p: any) => p[keyY]).map((p: any, i: number) => (
             <View key={i} style={styles.ptRow}>
@@ -169,6 +227,88 @@ export default function Croissance() {
 
         <Text style={styles.source}>📊 {data.source}</Text>
       </ScrollView>
+
+      {/* Modal d'ajout de mesure */}
+      <Modal visible={addModal} animationType="slide" transparent onRequestClose={() => setAddModal(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: "flex-end" }}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHead}>
+                <Text style={styles.modalTitle}>📏 Nouvelle mesure</Text>
+                <TouchableOpacity onPress={() => setAddModal(false)} testID="close-mesure-modal">
+                  <Ionicons name="close" size={24} color={COLORS.textPrimary} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.modalSub}>Saisissez au moins une valeur (poids, taille ou périmètre crânien).</Text>
+
+              <Text style={styles.label}>Date de la mesure *</Text>
+              <DateField
+                value={mes.date}
+                onChange={(v) => setMes({ ...mes, date: v })}
+                mode="date"
+                maximumDate={new Date()}
+                placeholder="Choisir une date"
+                testID="mesure-date"
+              />
+
+              <View style={styles.row2}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Poids (kg)</Text>
+                  <View style={styles.inputWrap}>
+                    <Ionicons name="scale" size={18} color={COLORS.textMuted} />
+                    <TextInput
+                      style={styles.input}
+                      value={mes.poids_kg}
+                      onChangeText={(v) => setMes({ ...mes, poids_kg: v.replace(/[^0-9.,]/g, "") })}
+                      placeholder="Ex: 7.5"
+                      placeholderTextColor={COLORS.textMuted}
+                      keyboardType="decimal-pad"
+                      testID="mesure-poids"
+                    />
+                    <Text style={styles.unit}>kg</Text>
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Taille (cm)</Text>
+                  <View style={styles.inputWrap}>
+                    <Ionicons name="resize" size={18} color={COLORS.textMuted} />
+                    <TextInput
+                      style={styles.input}
+                      value={mes.taille_cm}
+                      onChangeText={(v) => setMes({ ...mes, taille_cm: v.replace(/[^0-9.,]/g, "") })}
+                      placeholder="Ex: 68"
+                      placeholderTextColor={COLORS.textMuted}
+                      keyboardType="decimal-pad"
+                      testID="mesure-taille"
+                    />
+                    <Text style={styles.unit}>cm</Text>
+                  </View>
+                </View>
+              </View>
+
+              <Text style={styles.label}>Périmètre crânien (cm)</Text>
+              <View style={styles.inputWrap}>
+                <Ionicons name="ellipse-outline" size={18} color={COLORS.textMuted} />
+                <TextInput
+                  style={styles.input}
+                  value={mes.perimetre_cranien_cm}
+                  onChangeText={(v) => setMes({ ...mes, perimetre_cranien_cm: v.replace(/[^0-9.,]/g, "") })}
+                  placeholder="Ex: 42 (optionnel)"
+                  placeholderTextColor={COLORS.textMuted}
+                  keyboardType="decimal-pad"
+                  testID="mesure-pc"
+                />
+                <Text style={styles.unit}>cm</Text>
+              </View>
+
+              <TouchableOpacity onPress={saveMesure} disabled={submitting} style={[styles.saveBtn, submitting && { opacity: 0.6 }]} testID="save-mesure-btn">
+                {submitting ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark-circle" size={20} color="#fff" />}
+                <Text style={styles.saveBtnText}>{submitting ? "Enregistrement..." : "Enregistrer la mesure"}</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -225,6 +365,25 @@ const styles = StyleSheet.create({
   classifText: { fontSize: 10, fontWeight: "800" },
 
   empty: { padding: 14, alignItems: "center", backgroundColor: COLORS.surface, borderRadius: RADIUS.md },
-  emptyTxt: { color: COLORS.textMuted, fontSize: 12, textAlign: "center" },
+  emptyTxt: { color: COLORS.textMuted, fontSize: 12, textAlign: "center", marginBottom: 12 },
+  emptyBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 18, paddingVertical: 12, borderRadius: 999, backgroundColor: COLORS.primary },
+  emptyBtnText: { color: "#fff", fontWeight: "800", fontSize: 13 },
   source: { fontSize: 10, color: COLORS.textMuted, textAlign: "center", marginTop: 18, fontStyle: "italic" },
+
+  addBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center", ...SHADOW },
+  addInlineBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: COLORS.primaryLight },
+  addInlineText: { color: COLORS.primary, fontWeight: "800", fontSize: 12 },
+
+  modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)" },
+  modalCard: { backgroundColor: COLORS.bgPrimary, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: SPACING.xl, paddingBottom: 40 },
+  modalHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: COLORS.textPrimary },
+  modalSub: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 6 },
+  label: { fontSize: 13, fontWeight: "700", color: COLORS.textPrimary, marginTop: 12, marginBottom: 6 },
+  inputWrap: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, paddingHorizontal: 12, height: 48 },
+  input: { flex: 1, color: COLORS.textPrimary, fontSize: 15, fontWeight: "600" },
+  unit: { color: COLORS.textMuted, fontSize: 12, fontWeight: "700" },
+  row2: { flexDirection: "row", gap: 10 },
+  saveBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 18, paddingVertical: 14, borderRadius: 999, backgroundColor: COLORS.primary },
+  saveBtnText: { color: "#fff", fontWeight: "800", fontSize: 15 },
 });

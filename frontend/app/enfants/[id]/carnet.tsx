@@ -160,7 +160,7 @@ export default function CarnetModulaire() {
     const items: Module[] = [
       {
         id: "croissance", title: "Croissance OMS", icon: "📏", color: "#06B6D4",
-        description: "Taille, poids, périmètre crânien",
+        description: "Ajouter et suivre poids, taille, périmètre crânien",
         onPress: () => router.push(`/croissance/${enfant.id}`),
       },
       {
