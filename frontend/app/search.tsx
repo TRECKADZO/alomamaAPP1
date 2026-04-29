@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, FlatList, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -46,10 +46,29 @@ export default function Search() {
       }
       const { data } = await api.get(url);
       setResults(data);
+    } catch {
+      setResults([]);
     } finally {
       setLoading(false);
     }
   };
+
+  // Chargement auto initial + à chaque changement de filtre/tab (debounce 300ms)
+  useEffect(() => {
+    const t = setTimeout(() => { run(); }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, spec, prestation, maxPrix, cmuOnly]);
+
+  // Pour la recherche libre (q), on attend que l'utilisateur clique pour ne pas spammer
+  useEffect(() => {
+    if (!q) {
+      // Si l'utilisateur efface q, on relance pour réafficher tous les pros
+      const t = setTimeout(() => { run(); }, 200);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   const fmtPrix = (n: number) => n.toLocaleString("fr-FR") + " F";
 
