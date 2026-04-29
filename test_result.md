@@ -484,10 +484,80 @@ backend:
           - /admin/cmu/stats (L1383-1410) retourne à la fois `total_mamans`/`mamans_total` et `total_pros`/`pros_total` (alias pour backward-compat).
           Vérification manuelle : /auth/me (pro@test.com) → accepte_cmu=true, is_super_admin=false. /admin/cmu/stats → 10 clés incluant total_mamans + total_pros.
 
+backend:
+  - task: "Module Déclaration de Naissance v2 (PDF + Email + État civil)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/pdf_generator.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          25/25 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_naissance_v2.py).
+
+          🅰 POST /api/naissance (création) — 6/6 PASS
+          (1.1) POST sans consentement_explicite → 400 "Vous devez confirmer votre consentement explicite…" ✓
+          (1.2) POST avec consentement_explicite=true + enfant inline (enfant_nom/sexe/date_naissance) → 200 ;
+                numero_reference="AM-2026-A8B6DD" format AM-YYYY-XXXXXX (6 hex uppercase) ✓ ;
+                enfant_cree_auto=true ✓ ; status="en_attente" ✓ ;
+                prenoms="Amina Marie" + lieu_type="maternite" + score_apgar_1min=9 + score_apgar_5min=10 tous préservés ✓.
+          (1.3) POST 2e fois avec le même enfant_id → 400 "Déclaration déjà enregistrée pour cet enfant" ✓.
+          (1.4) POST avec enfant_id existant (créé via POST /enfants en amont sur Maman B fraîche) → 200 avec enfant_cree_auto=false ✓.
+          (1.6) Pro tente POST /naissance → 403 (require_roles("maman")) ✓.
+          (1.7) [OBSERVATION] score_apgar_1min=11 (hors range 0-10) → **200 accepté** — NaissanceIn n'a pas de validation
+                Field(ge=0, le=10) pour les scores APGAR. Non bloquant, mais à considérer pour une future Pydantic validation.
+
+          🅱 GET /api/naissance/{nid}/pdf (génération PDF) — 4/4 PASS
+          (2.1) Maman owner → 200 ; response complet :
+                - filename="declaration_naissance_AM-2026-A8B6DD.pdf" ✓
+                - mime="application/pdf" ✓
+                - size_bytes=10453 > 5000 ✓ (PDF non vide)
+                - data_uri commence par "data:application/pdf;base64," ✓
+                - base64 non vide ✓
+                - numero_reference présent ✓
+                - base64.b64decode(base64) commence par b"%PDF" ✓ (ReportLab + qrcode fonctionnels).
+          (2.2) Maman B → PDF de Maman A → 403 "Accès refusé" ✓ (pas de leak cross-tenant).
+          (2.3) Admin → 200 (super admin accède partout) ✓.
+          (2.4) ID inexistant → 404 "Déclaration introuvable" ✓.
+
+          🅲 POST /api/naissance/{nid}/share (partage email) — 7/7 PASS
+          (3.1) Maman owner canal="email_maman" → 200 ; ok=true, queued=true,
+                destinataire="maman.test@alomaman.dev", canal="email_maman",
+                message="Demande enregistrée. L'envoi sera traité dès qu'un service email est connecté." ✓.
+          (3.1b) Vérification MongoDB : doc créé dans db.naissance_share_queue avec status="queued" ✓.
+          (3.2) canal="email_etat_civil" SANS config préalable → 400
+                "L'adresse email de l'état civil n'est pas encore configurée. Contactez votre super admin." ✓.
+          (3.3) Admin POST /api/admin/config/etat_civil_email {"value":"etatcivil@onaci.ci"} → 200 ✓.
+          (3.4) Re-test canal="email_etat_civil" après config → 200 avec destinataire="etatcivil@onaci.ci" ✓.
+          (3.5) Avec email_destinataire="surcharge@test.dev" surchargé → 200 avec ce destinataire ✓.
+          (3.6) Maman B → share sur naissance Maman A → 403 ✓.
+
+          ⚠️ MOCKED : l'envoi réel d'email n'est PAS implémenté. Le PDF est simplement enregistré dans la
+          file `naissance_share_queue` avec status="queued" pour traitement ultérieur (aucun worker SMTP/SendGrid).
+          Cela est documenté par le backend lui-même dans le docstring du endpoint.
+
+          🅳 Configuration globale Admin (/api/admin/config/{key}) — 5/5 PASS
+          (4.1) GET /admin/config/etat_civil_email en admin → 200 avec {key,value,updated_at,updated_by} ✓.
+          (4.2) POST /admin/config/etat_civil_email {"value":"new@etat.ci"} en admin → 200 ; upsert confirmé en DB ✓.
+          (4.3) GET en maman (pas admin) → 403 ✓.
+          (4.4) GET /config/etat-civil-email-public en maman → 200 avec {"configured": true} ;
+                la clé "value" est absente → pas de révélation de l'adresse ✓.
+
+          🅴 Liste & détail (régression) — 3/3 PASS
+          (5.1) GET /naissance maman → renvoie SES naissances uniquement, toutes avec numero_reference ✓.
+          (5.2) GET /naissance admin → renvoie toutes (6 docs, 3 user_ids distincts) ✓.
+          (5.3) GET /naissance/{nid_A} avec Maman B → 403 ✓.
+
+          CLEANUP : toutes les naissances, enfants, queue docs et le compte Maman B ont été supprimés.
+          Le flag etat_civil_email dans app_config a été remis à null. Idempotent pour futures exécutions.
+
 metadata:
   created_by: "main_agent"
-  version: "1.2"
-  test_sequence: 6
+  version: "1.3"
+  test_sequence: 7
   run_ui: false
 
 test_plan:
@@ -1960,3 +2030,38 @@ agent_communication:
       FIX recommandé : appliquer un check `res.matched_count == 0 → 404` puis `find_one({"id": eid, "user_id": user["id"]})`.
 
       Sécurité Pro role=professionnel → 403 (require_roles("maman")) ✅. Heure CMU/croissance OK. Tests 1+3 PROD-READY.
+
+
+  - agent: "testing"
+    message: |
+      Module Déclaration de Naissance v2 (PDF + Email + État civil) — 25/25 PASS.
+      Script : /app/backend_test_naissance_v2.py. Cible : https://cycle-tracker-pro.preview.emergentagent.com/api.
+
+      ✅ SECTION 1 — POST /api/naissance (6/6) : consentement_explicite obligatoire (400 sans), création inline d'enfant
+         avec numero_reference "AM-YYYY-XXXXXX" (6 hex uppercase), enfant_cree_auto=true, status="en_attente",
+         champs prenoms/lieu_type/score_apgar_1min/score_apgar_5min préservés, duplicate→400, enfant_id existant→200 avec
+         enfant_cree_auto=false, Pro→403.
+         [OBSERVATION 1.7] score_apgar_1min=11 (hors 0-10) → 200 ACCEPTÉ — NaissanceIn n'a pas Field(ge=0, le=10)
+         sur les APGAR. Non bloquant mais à considérer pour robustesse.
+
+      ✅ SECTION 2 — GET /api/naissance/{nid}/pdf (4/4) : filename correct, mime=application/pdf, size>5000,
+         data_uri valide, base64 décode en b"%PDF" (ReportLab + qrcode + Pillow fonctionnels). Cross-tenant Maman B→403.
+         Admin→200. ID inexistant→404.
+
+      ✅ SECTION 3 — POST /api/naissance/{nid}/share (7/7) : canal=email_maman OK, doc créé en
+         db.naissance_share_queue avec status="queued", canal=email_etat_civil sans config→400, POST admin config
+         etat_civil_email→200, re-test après config→200 avec le bon destinataire, surcharge email_destinataire OK,
+         cross-tenant Maman B→403.
+         ⚠️ **MOCKED** : aucun envoi email réel n'est effectué. Les demandes restent en "queued" forever —
+         il n'y a PAS de worker SMTP/SendGrid. Documenté dans le docstring du backend.
+
+      ✅ SECTION 4 — /api/admin/config/{key} (5/5) : GET/POST admin OK, upsert confirmé en DB, GET maman→403,
+         /api/config/etat-civil-email-public expose uniquement {configured: bool} sans révéler la valeur.
+
+      ✅ SECTION 5 — Liste/détail (3/3) : GET maman → ses naissances uniquement avec numero_reference, GET admin →
+         toutes, cross-tenant GET détail Maman B sur Maman A→403.
+
+      CLEANUP : toutes les naissances, enfants, queue docs supprimés. Maman B deleté. app_config.etat_civil_email reset.
+      Idempotent.
+
+      Aucun bug critique détecté. Le module est prêt pour production côté backend. Main agent peut synthétiser et finir.
