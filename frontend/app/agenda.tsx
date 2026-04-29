@@ -111,7 +111,7 @@ export default function MonAgenda() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.eventTitle}>{e.title}</Text>
                   {e.sub && <Text style={styles.eventSub}>{e.sub}</Text>}
-                  <Text style={styles.eventDate}>{e.date.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
+                  <Text style={styles.eventDate}>{e.date.toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
                 </View>
               </View>
             );

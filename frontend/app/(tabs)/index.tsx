@@ -361,7 +361,7 @@ function MamanDash({ user, data, router }: any) {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.widgetRowTitle}>{r.title}</Text>
-                  <Text style={styles.widgetRowSub}>{new Date(r.due_at).toLocaleDateString("fr-FR")}</Text>
+                  <Text style={styles.widgetRowSub}>{new Date(r.due_at).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
                 </View>
               </View>
             ))

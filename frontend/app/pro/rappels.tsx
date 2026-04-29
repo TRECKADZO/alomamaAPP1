@@ -57,7 +57,7 @@ export default function RappelsEnvoyes() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardTitle}>{r.title}</Text>
-                <Text style={styles.cardMeta}>Échéance : {new Date(r.due_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}</Text>
+                <Text style={styles.cardMeta}>Échéance : {new Date(r.due_at).toLocaleString("fr-FR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</Text>
                 {r.notes ? <Text style={styles.cardNotes}>{r.notes}</Text> : null}
               </View>
             </View>
@@ -74,7 +74,7 @@ export default function RappelsEnvoyes() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.cardTitle, { textDecorationLine: "line-through" }]}>{r.title}</Text>
-                  <Text style={styles.cardMeta}>{new Date(r.due_at).toLocaleDateString("fr-FR")}</Text>
+                  <Text style={styles.cardMeta}>{new Date(r.due_at).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
                 </View>
               </View>
             ))}

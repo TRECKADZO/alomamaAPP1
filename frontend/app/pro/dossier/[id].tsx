@@ -17,7 +17,15 @@ export default function DossierPatient() {
   const [noteModal, setNoteModal] = useState(false);
   const [rappelModal, setRappelModal] = useState(false);
   const [note, setNote] = useState({ date: new Date().toISOString().slice(0, 10), diagnostic: "", traitement: "", notes: "" });
-  const [rappel, setRappel] = useState({ title: "", due_at: new Date().toISOString().slice(0, 10), notes: "" });
+  const [rappel, setRappel] = useState(() => {
+    // Default: tomorrow at 09:00
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const local = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return { title: "", due_at: local, notes: "" };
+  });
 
   const load = async () => {
     try {
@@ -42,10 +50,18 @@ export default function DossierPatient() {
 
   const saveRappel = async () => {
     if (!rappel.title) return Alert.alert("Titre requis");
+    if (!rappel.due_at) return Alert.alert("Date et heure requises");
     try {
-      await api.post("/pro/rappels-patient", { patient_id: id, ...rappel });
+      // Convert local datetime "YYYY-MM-DDTHH:mm" -> ISO UTC string
+      const due_iso = new Date(rappel.due_at).toISOString();
+      await api.post("/pro/rappels-patient", { patient_id: id, title: rappel.title, due_at: due_iso, notes: rappel.notes });
       setRappelModal(false);
-      setRappel({ title: "", due_at: new Date().toISOString().slice(0, 10), notes: "" });
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+      const pad = (n: number) => n.toString().padStart(2, "0");
+      const local = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      setRappel({ title: "", due_at: local, notes: "" });
       Alert.alert("Succès", "Rappel envoyé à la patiente");
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
   };
@@ -255,8 +271,8 @@ export default function DossierPatient() {
             </View>
             <Label text="Titre *" />
             <TextInput style={styles.input} value={rappel.title} onChangeText={(v) => setRappel({ ...rappel, title: v })} placeholder="Ex: Prise de médicament, RDV de suivi..." placeholderTextColor={COLORS.textMuted} />
-            <Label text="Échéance" />
-            <DateField value={rappel.due_at} onChange={(v) => setRappel({ ...rappel, due_at: v })} placeholder="Choisir la date" />
+            <Label text="Date et heure *" />
+            <DateField value={rappel.due_at} onChange={(v) => setRappel({ ...rappel, due_at: v })} mode="datetime" minimumDate={new Date()} placeholder="Choisir date et heure" />
             <Label text="Notes" />
             <TextInput style={[styles.input, { height: 80, textAlignVertical: "top" }]} multiline value={rappel.notes} onChangeText={(v) => setRappel({ ...rappel, notes: v })} />
             <TouchableOpacity onPress={saveRappel}>

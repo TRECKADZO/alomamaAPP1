@@ -61,7 +61,7 @@ export default function DossierMedical() {
     ).join("");
 
     const remindersHTML = remindersList.slice(0, 30).map((r: any) =>
-      `<li>${new Date(r.due_at).toLocaleDateString("fr-FR")} — <b>${r.title || ""}</b> ${r.description || r.note || ""}</li>`
+      `<li>${new Date(r.due_at).toLocaleString("fr-FR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })} — <b>${r.title || ""}</b> ${r.description || r.note || ""}</li>`
     ).join("");
 
     const grossesseBlock = gObj ? `
