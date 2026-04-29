@@ -17,8 +17,10 @@ const CATS = [
   { value: "post_partum", label: "Post-partum", icon: "happy", color: "#F472B6" },
   { value: "nutrition", label: "Nutrition", icon: "nutrition", color: "#10B981" },
   { value: "vaccination", label: "Vaccination", icon: "shield-checkmark", color: "#3B82F6" },
-  { value: "sante_enfant", label: "Santé enfant", icon: "body", color: "#06B6D4" },
-  { value: "planification_familiale", label: "Planif. familiale", icon: "calendar", color: "#8B5CF6" },
+  { value: "soins_bebe", label: "Soins bébé", icon: "body", color: "#06B6D4" },
+  { value: "developpement", label: "Développement", icon: "school", color: "#0EA5E9" },
+  { value: "urgence", label: "Urgences", icon: "warning", color: "#EF4444" },
+  { value: "contraception", label: "Contraception", icon: "calendar", color: "#8B5CF6" },
   { value: "hygiene", label: "Hygiène", icon: "sparkles", color: "#14B8A6" },
 ];
 
