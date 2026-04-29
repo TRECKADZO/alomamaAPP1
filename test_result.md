@@ -1814,12 +1814,47 @@ backend:
 
   - task: "Mesures bébé — POST /api/enfants/{eid}/mesures"
     implemented: true
-    working: false
+    working: true
     file: "/app/backend/server.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          🔒 SECURITY RETEST 2026-04-29 — 26/26 PASS sur /app/backend_test_enfant_security.py (BASE=https://cycle-tracker-pro.preview.emergentagent.com/api).
+
+          Le data-leak CRITIQUE signalé précédemment est CORRIGÉ pour les 4 endpoints patchés.
+
+          Setup: Maman A = maman.test@alomaman.dev (persistant), Maman B = security_b_<rnd>@test.alomaman.dev (registré frais). A1 = enfant créé par Maman A avec données sensibles {nom: "Aïcha-Sec-…", numero_cmu: "9988776655", allergies: ["arachides", "lait_de_vache"], groupe_sanguin: "O+"}.
+
+          (T1) POST /api/enfants/{A1_id}/mesures par Maman B → 404 {"detail":"Enfant introuvable"} ; body NE CONTIENT AUCUN champ A1 (pas de nom, pas de numero_cmu, pas d'allergies). ✅
+          (T2) POST /api/enfants/{A1_id}/photo par Maman B → 404 {"detail":"Enfant introuvable"} ; aucun leak. ✅
+          (T3) PATCH /api/enfants/{A1_id} {nom:"PWNED", numero_cmu:"0000000000"} par Maman B → 404 ; aucun leak. ✅
+          (T4) POST /api/enfants/{A1_id}/vaccins par Maman B → 404 ; aucun leak. ✅
+
+          (T5) Intégrité DB après attaques (vérification owner GET /enfants):
+            • A1 toujours dans la liste de Maman A.
+            • nom = "Aïcha-Sec-<rnd>" (PAS "PWNED").
+            • numero_cmu = "9988776655" (déchiffré, INCHANGÉ).
+            • allergies = ["arachides", "lait_de_vache"] (INCHANGÉES).
+            • Pas de mesure 2026-04-29 ajoutée par B, pas de vaccin BCG ajouté par B, pas de photo écrite par B.
+            → Confirme que update_one filtré sur user_id reste un no-op silencieux côté DB ET que le find_one suivant ne fuite plus.
+
+          (T6) RÉGRESSION OWNER (5/5 PASS):
+            • POST /enfants/{A1}/mesures par Maman A → 200 + body décrypte numero_cmu="9988776655".
+            • POST /enfants/{A1}/vaccins par Maman A → 200 + body décrypte allergies (arachides/lait_de_vache).
+            • POST /enfants/{A1}/photo par Maman A → 200 + body décrypte numero_cmu.
+            • PATCH /enfants/{A1} {nom: A1+"-upd", numero_cmu, allergies} par Maman A → 200 ; nom màj, cmu/allergies en clair.
+            → Le legit owner peut toujours opérer normalement (aucune régression introduite par le fix).
+
+          (T7) POST /enfants/{bogus_uuid}/mesures par owner (id inexistant) → 404 ✓.
+
+          Cleanup: enfant A1 supprimé (DELETE /enfants/{id}=200) et compte Maman B supprimé (DELETE /auth/me=200, anonymisation RGPD appliquée). Aucun résidu en DB.
+
+          Implementation review (server.py): les 4 endpoints (mesures L1180-1192, photo L1195-1206, PATCH L1231-1247, vaccins L1256-1267) suivent maintenant le pattern correct : update_one filtré sur user_id → matched_count==0 ⇒ 404 → find_one({id, user_id}) ⇒ 404 si None. Plus aucun find_one sans user_id. Bug de fuite RGPD entièrement résolu.
+
       - working: false
         agent: "testing"
         comment: |
@@ -1875,6 +1910,24 @@ backend:
           (5) Sécurité: une nouvelle maman isolée créée (sans RDV avec ce pro) ; POST /pro/rappels-patient avec son patient_id → 403 ("Patient non autorisé") ✅ correct (server.py L2174-2177 : has_rdv == 0 → 403).
           Aucun bug détecté. Cleanup: maman isolée supprimée via DELETE /auth/me.
 
+  - agent: "testing"
+    message: |
+      🔒 SECURITY RETEST 2026-04-29 — Data-leak fix sur /api/enfants/{eid}/* — 26/26 PASS.
+
+      Script: /app/backend_test_enfant_security.py (BASE = https://cycle-tracker-pro.preview.emergentagent.com/api).
+
+      Les 4 endpoints patchés (mesures L1180, photo L1195, PATCH L1231, vaccins L1256) appliquent maintenant le pattern correct:
+      • update_one({id, user_id}) → si matched_count==0 ⇒ raise 404
+      • find_one({id, user_id}) → si None ⇒ raise 404
+      Plus aucun find_one sans user_id.
+
+      Cross-tenant attaque (Maman B vs A1 de Maman A): TOUS les 4 endpoints renvoient 404 {"detail":"Enfant introuvable"}, body NE CONTIENT PAS A1's nom/numero_cmu/allergies. Aucune mutation côté DB (vérifié via owner GET /enfants après attaque: nom, numero_cmu, allergies, mesures, vaccins, photo TOUS inchangés).
+
+      Régression owner: les 4 opérations légitimes sur son propre enfant fonctionnent (200 + données déchiffrées correctes). Bonus: owner avec UUID inexistant → 404.
+
+      Cleanup OK (enfant A1 supprimé, compte Maman B supprimé via DELETE /auth/me). Aucun bug détecté. La task "Mesures bébé" est passée de working:false à working:true. Main agent peut summarizer et finir.
+
+
 metadata:
   created_by: "main_agent"
   version: "1.3"
@@ -1882,8 +1935,7 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Mesures bébé — POST /api/enfants/{eid}/mesures"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "stuck_first"

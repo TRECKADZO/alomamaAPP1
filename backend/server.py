@@ -1180,21 +1180,29 @@ async def list_enfants(user=Depends(require_roles("maman"))):
 @api.post("/enfants/{eid}/mesures")
 async def add_mesure(eid: str, payload: MesureIn, user=Depends(require_roles("maman"))):
     mesure = {"id": str(uuid.uuid4()), **payload.dict()}
-    await db.enfants.update_one(
+    res = await db.enfants.update_one(
         {"id": eid, "user_id": user["id"]},
         {"$push": {"mesures": mesure}},
     )
-    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
+    e = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
     return decrypt_enfant(e)
 
 
 @api.post("/enfants/{eid}/photo")
 async def set_enfant_photo(eid: str, payload: PhotoIn, user=Depends(require_roles("maman"))):
-    await db.enfants.update_one(
+    res = await db.enfants.update_one(
         {"id": eid, "user_id": user["id"]},
         {"$set": {"photo": payload.photo_base64}},
     )
-    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
+    e = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
     return decrypt_enfant(e)
 
 
@@ -1227,11 +1235,15 @@ async def update_enfant(eid: str, payload: EnfantIn, user=Depends(require_roles(
         data["numero_cmu"] = encrypt_str(data["numero_cmu"])
     if "allergies" in data and isinstance(data["allergies"], list):
         data["allergies"] = encrypt_list(data["allergies"])
-    await db.enfants.update_one(
+    res = await db.enfants.update_one(
         {"id": eid, "user_id": user["id"]},
         {"$set": data},
     )
-    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
+    e = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
     return decrypt_enfant(e)
 
 
@@ -1244,10 +1256,15 @@ async def delete_enfant(eid: str, user=Depends(require_roles("maman"))):
 @api.post("/enfants/{eid}/vaccins")
 async def add_vaccin(eid: str, payload: VaccinIn, user=Depends(require_roles("maman"))):
     vaccin = {"id": str(uuid.uuid4()), **payload.dict()}
-    await db.enfants.update_one(
+    res = await db.enfants.update_one(
         {"id": eid, "user_id": user["id"]}, {"$push": {"vaccins": vaccin}}
     )
-    return await db.enfants.find_one({"id": eid}, {"_id": 0})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
+    e = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
+    return decrypt_enfant(e)
 
 
 @api.delete("/enfants/{eid}/vaccins/{vid}")
