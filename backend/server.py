@@ -448,17 +448,22 @@ class NaissanceIn(BaseModel):
     enfant_nom: Optional[str] = None
     enfant_sexe: Optional[Literal["F", "M"]] = None
     enfant_date_naissance: Optional[str] = None  # ISO
+    prenoms: Optional[str] = None  # prénom(s) de l'enfant
     # Déclaration naissance
     lieu_naissance: str
+    lieu_type: Optional[str] = None  # maternite | pmi | domicile | autre
     heure_naissance: str  # HH:MM
-    poids_naissance_g: int
-    taille_naissance_cm: float
+    poids_naissance_g: Optional[int] = 0
+    taille_naissance_cm: Optional[float] = 0
+    score_apgar_1min: Optional[int] = None  # 0-10
+    score_apgar_5min: Optional[int] = None
     nom_pere: Optional[str] = None
     nom_mere: str
     profession_pere: Optional[str] = None
     profession_mere: Optional[str] = None
     medecin_accoucheur: Optional[str] = None
     numero_acte: Optional[str] = None
+    consentement_explicite: bool = False  # exigé pour générer le PDF
 
 
 class TeleEchoIn(BaseModel):
@@ -4151,6 +4156,8 @@ async def echos_for_rdv(rdv_id: str, user=Depends(get_current_user)):
 # ----------------------------------------------------------------------
 @api.post("/naissance")
 async def create_naissance(payload: NaissanceIn, user=Depends(require_roles("maman"))):
+    if not payload.consentement_explicite:
+        raise HTTPException(400, "Vous devez confirmer votre consentement explicite avant de générer la déclaration.")
     enfant_id = payload.enfant_id
     enfant = None
     # 🆕 Création auto du carnet enfant si pas d'enfant_id fourni
@@ -4167,13 +4174,13 @@ async def create_naissance(payload: NaissanceIn, user=Depends(require_roles("mam
             "nom": payload.enfant_nom,
             "sexe": payload.enfant_sexe,
             "date_naissance": payload.enfant_date_naissance,
-            "poids_kg": round(payload.poids_naissance_g / 1000, 3) if payload.poids_naissance_g else None,
+            "poids_kg": round((payload.poids_naissance_g or 0) / 1000, 3) if payload.poids_naissance_g else None,
             "taille_cm": payload.taille_naissance_cm,
             "vaccins": [],
             "mesures": [{
                 "id": str(uuid.uuid4()),
                 "date": payload.enfant_date_naissance,
-                "poids_kg": round(payload.poids_naissance_g / 1000, 3) if payload.poids_naissance_g else None,
+                "poids_kg": round((payload.poids_naissance_g or 0) / 1000, 3) if payload.poids_naissance_g else None,
                 "taille_cm": payload.taille_naissance_cm,
                 "notes": f"Mesures de naissance ({payload.lieu_naissance})",
             }],
@@ -4191,15 +4198,20 @@ async def create_naissance(payload: NaissanceIn, user=Depends(require_roles("mam
     data = payload.dict()
     # Ne stocker les champs enfant_* que si on les a reçus
     data["enfant_id"] = enfant_id
+    # Numéro de référence unique : AM-YYYY-XXXXXX
+    now_dt = datetime.now(timezone.utc)
+    ref_seq = str(uuid.uuid4()).replace("-", "")[:6].upper()
+    numero_reference = f"AM-{now_dt.year}-{ref_seq}"
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "enfant_nom": enfant["nom"],
         "enfant_sexe": enfant["sexe"],
         "enfant_date_naissance": enfant["date_naissance"],
+        "numero_reference": numero_reference,
         **data,
         "status": "en_attente",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": now_dt.isoformat(),
     }
     await db.naissances.insert_one(doc)
     doc.pop("_id", None)
@@ -4241,6 +4253,129 @@ async def validate_naissance(nid: str, user=Depends(require_roles("admin"))):
             "info",
         )
     return {"ok": True}
+
+
+@api.get("/naissance/{nid}/pdf")
+async def get_naissance_pdf(nid: str, user=Depends(get_current_user)):
+    """Génère le PDF officiel pré-rempli en base64 (data URI ready-to-display)."""
+    from pdf_generator import generate_naissance_pdf
+    n = await db.naissances.find_one({"id": nid}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Déclaration introuvable")
+    if user["role"] != "admin" and n["user_id"] != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    # Récupérer les infos maman (pour CMU et autres)
+    maman = await db.users.find_one({"id": n["user_id"]}, {"_id": 0, "password_hash": 0})
+    if maman:
+        # déchiffrer CMU si présent
+        if maman.get("cmu") and isinstance(maman["cmu"], dict) and maman["cmu"].get("numero"):
+            try:
+                maman["cmu"]["numero"] = decrypt_str(maman["cmu"]["numero"])
+            except Exception:
+                pass
+    try:
+        pdf_bytes = generate_naissance_pdf(n, maman or {})
+    except Exception as e:
+        logger.exception(f"PDF generation failed: {e}")
+        raise HTTPException(500, f"Erreur lors de la génération du PDF: {str(e)}")
+    import base64 as _b64
+    pdf_b64 = _b64.b64encode(pdf_bytes).decode("ascii")
+    filename = f"declaration_naissance_{n.get('numero_reference', n['id'])}.pdf"
+    return {
+        "filename": filename,
+        "mime": "application/pdf",
+        "size_bytes": len(pdf_bytes),
+        "data_uri": f"data:application/pdf;base64,{pdf_b64}",
+        "base64": pdf_b64,
+        "numero_reference": n.get("numero_reference"),
+    }
+
+
+class NaissanceShareIn(BaseModel):
+    canal: Literal["email_maman", "email_etat_civil"] = "email_maman"
+    email_destinataire: Optional[str] = None  # surcharge facultative
+
+
+@api.post("/naissance/{nid}/share")
+async def share_naissance(nid: str, payload: NaissanceShareIn, user=Depends(get_current_user)):
+    """
+    Met en file d'attente l'envoi du PDF par email.
+    ⚠️ MOCKED: l'envoi réel d'email n'est PAS implémenté (aucun service SMTP/SendGrid configuré).
+    Le PDF est simplement enregistré dans la file 'naissance_share_queue' pour traitement ultérieur.
+    """
+    n = await db.naissances.find_one({"id": nid}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Déclaration introuvable")
+    if user["role"] != "admin" and n["user_id"] != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+
+    # Résoudre l'email destinataire
+    dest_email = payload.email_destinataire
+    if payload.canal == "email_maman" and not dest_email:
+        maman = await db.users.find_one({"id": n["user_id"]}, {"_id": 0, "email": 1})
+        dest_email = maman.get("email") if maman else None
+    elif payload.canal == "email_etat_civil" and not dest_email:
+        # Récupérer l'email configuré par le super admin
+        cfg = await db.app_config.find_one({"key": "etat_civil_email"}, {"_id": 0})
+        dest_email = (cfg or {}).get("value") if cfg else None
+
+    if not dest_email:
+        if payload.canal == "email_etat_civil":
+            raise HTTPException(400, "L'adresse email de l'état civil n'est pas encore configurée. Contactez votre super admin.")
+        else:
+            raise HTTPException(400, "Aucune adresse email destinataire trouvée. Vérifiez votre profil.")
+
+    queue_doc = {
+        "id": str(uuid.uuid4()),
+        "naissance_id": nid,
+        "canal": payload.canal,
+        "destinataire": dest_email,
+        "status": "queued",  # queued | sent | failed (currently jamais traité = MOCKED)
+        "requested_by": user["id"],
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.naissance_share_queue.insert_one(queue_doc)
+    queue_doc.pop("_id", None)
+    return {
+        "ok": True,
+        "queued": True,
+        "destinataire": dest_email,
+        "canal": payload.canal,
+        "message": "Demande enregistrée. L'envoi sera traité dès qu'un service email est connecté.",
+    }
+
+
+# ----- Configuration globale (super admin) -----
+class AppConfigIn(BaseModel):
+    value: str
+
+
+@api.get("/admin/config/{key}")
+async def get_app_config(key: str, user=Depends(require_roles("admin"))):
+    cfg = await db.app_config.find_one({"key": key}, {"_id": 0})
+    return cfg or {"key": key, "value": None}
+
+
+@api.post("/admin/config/{key}")
+async def set_app_config(key: str, payload: AppConfigIn, user=Depends(require_roles("admin"))):
+    await db.app_config.update_one(
+        {"key": key},
+        {"$set": {
+            "value": payload.value,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": user["id"],
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "key": key, "value": payload.value}
+
+
+@api.get("/config/etat-civil-email-public")
+async def get_etat_civil_public(user=Depends(get_current_user)):
+    """Endpoint public pour savoir si l'email état civil est configuré (sans révéler l'adresse aux non-admins)."""
+    cfg = await db.app_config.find_one({"key": "etat_civil_email"}, {"_id": 0})
+    is_set = bool(cfg and cfg.get("value"))
+    return {"configured": is_set}
 
 
 # ----------------------------------------------------------------------
