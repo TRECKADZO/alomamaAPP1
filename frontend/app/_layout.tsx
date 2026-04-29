@@ -1,13 +1,39 @@
 import { Stack } from "expo-router";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider } from "../lib/auth";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { Ionicons, MaterialIcons, MaterialCommunityIcons, FontAwesome5 } from "@expo/vector-icons";
+import * as Font from "expo-font";
 import { COLORS } from "../constants/theme";
 import OfflineBanner from "../components/OfflineBanner";
 
 export default function RootLayout() {
+  // Précharge les polices d'icônes (silencieusement) pour éviter le warning
+  // FontFaceObserver "6000ms timeout exceeded" sur le web preview lent.
+  const [fontsReady, setFontsReady] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        await Promise.race([
+          Font.loadAsync({
+            ...Ionicons.font,
+            ...MaterialIcons.font,
+            ...MaterialCommunityIcons.font,
+            ...FontAwesome5.font,
+          }),
+          new Promise((resolve) => setTimeout(resolve, 5000)), // ne bloque jamais > 5s
+        ]);
+      } catch {
+        // Échec silencieux : les icônes vont juste se charger plus tard
+      } finally {
+        setFontsReady(true);
+      }
+    })();
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: COLORS.bgPrimary }}>
       <SafeAreaProvider>
