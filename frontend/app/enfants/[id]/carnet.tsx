@@ -19,6 +19,7 @@ import * as Speech from "expo-speech";
 import { api, formatError } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
+import MiniGrowthChart from "../../../components/MiniGrowthChart";
 
 // ---------- Helpers âge ----------
 function monthsBetween(date_naissance: string): number {
