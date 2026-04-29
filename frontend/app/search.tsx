@@ -19,6 +19,30 @@ export default function Search() {
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [expandedPro, setExpandedPro] = useState<string | null>(null);
+  const [proDispos, setProDispos] = useState<Record<string, any[]>>({});
+  const [loadingDispos, setLoadingDispos] = useState<string | null>(null);
+
+  const loadDispos = async (proId: string) => {
+    if (proDispos[proId]) return;
+    setLoadingDispos(proId);
+    try {
+      const r = await api.get(`/professionnels/${proId}/disponibilites`);
+      const slots = (r.data?.slots || []).filter((s: any) => s.actif);
+      setProDispos((p) => ({ ...p, [proId]: slots }));
+    } catch {
+      setProDispos((p) => ({ ...p, [proId]: [] }));
+    } finally { setLoadingDispos(null); }
+  };
+
+  const toggleExpand = (proId: string) => {
+    if (expandedPro === proId) {
+      setExpandedPro(null);
+    } else {
+      setExpandedPro(proId);
+      loadDispos(proId);
+    }
+  };
 
   const QUICK_PRESTATIONS = [
     { label: "Échographie", value: "échographie" },
@@ -205,6 +229,54 @@ export default function Search() {
                       <Text style={styles.prestPrix}>{fmtPrix(p.prix_fcfa)}</Text>
                     </View>
                   ))}
+                </View>
+              )}
+
+              {/* Bouton voir disponibilités */}
+              <TouchableOpacity
+                style={styles.dispoToggle}
+                onPress={() => toggleExpand(item.id)}
+                testID={`expand-dispos-${item.id}`}
+              >
+                <Ionicons name="calendar-outline" size={16} color={COLORS.primary} />
+                <Text style={styles.dispoToggleText}>
+                  {expandedPro === item.id ? "Masquer les disponibilités" : "Voir les disponibilités"}
+                </Text>
+                <Ionicons name={expandedPro === item.id ? "chevron-up" : "chevron-down"} size={16} color={COLORS.primary} />
+              </TouchableOpacity>
+
+              {/* Disponibilités du pro (lazy) */}
+              {expandedPro === item.id && (
+                <View style={styles.disposBox}>
+                  {loadingDispos === item.id ? (
+                    <ActivityIndicator color={COLORS.primary} size="small" />
+                  ) : (proDispos[item.id] || []).length === 0 ? (
+                    <Text style={styles.dispoEmpty}>Aucun créneau renseigné par ce pro</Text>
+                  ) : (
+                    Object.entries(
+                      (proDispos[item.id] || []).reduce((acc: Record<string, any[]>, s: any) => {
+                        if (!acc[s.jour]) acc[s.jour] = [];
+                        acc[s.jour].push(s);
+                        return acc;
+                      }, {})
+                    ).map(([jour, slots]: [string, any[]]) => (
+                      <View key={jour} style={styles.dispoJour}>
+                        <Text style={styles.dispoJourLabel}>{jour.charAt(0).toUpperCase() + jour.slice(1)}</Text>
+                        {slots.map((s, i) => (
+                          <View key={i} style={styles.dispoSlot}>
+                            <View style={styles.dispoTime}>
+                              <Text style={styles.dispoTimeText}>{s.heure_debut}-{s.heure_fin}</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.dispoType}>{s.type_label || "Consultation"}</Text>
+                              <Text style={styles.dispoMeta}>⏱ {s.duree_minutes} min{s.prix_fcfa ? ` · 💰 ${s.prix_fcfa.toLocaleString()} F` : ""}</Text>
+                            </View>
+                            {s.cmu_prise_en_charge && <Text style={styles.dispoCmu}>🏥</Text>}
+                          </View>
+                        ))}
+                      </View>
+                    ))
+                  )}
                 </View>
               )}
               <View style={styles.proActions}>
