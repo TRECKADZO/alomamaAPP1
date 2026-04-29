@@ -165,17 +165,17 @@ export default function CarnetModulaire() {
       {
         id: "vaccins", title: "Vaccins", icon: "💉", color: "#10B981",
         description: "Calendrier EPI & rappels",
-        onPress: () => router.push(`/enfants/${enfant.id}/carnet`),
+        onPress: () => router.push(`/enfants/${enfant.id}/vaccins`),
       },
       {
         id: "notes", title: "Notes médicales", icon: "📝", color: "#3B82F6",
         description: "Consultations & signatures",
-        onPress: () => router.push(`/enfants/${enfant.id}/carnet`),
+        onPress: () => router.push(`/enfants/${enfant.id}/notes`),
       },
       {
         id: "documents", title: "Documents", icon: "📄", color: "#8B5CF6",
         description: "Analyses, ordonnances, PDF",
-        onPress: () => router.push(`/enfants/${enfant.id}/carnet`),
+        onPress: () => router.push(`/enfants/${enfant.id}/documents`),
       },
       {
         id: "rdv", title: "Rendez-vous", icon: "📅", color: "#F59E0B",
@@ -196,7 +196,7 @@ export default function CarnetModulaire() {
       items.splice(2, 0, {
         id: "jalons", title: "Jalons & éveil", icon: "🎯", color: "#A855F7",
         description: "Développement psychomoteur",
-        onPress: () => Alert.alert("Jalons", "Module à venir prochainement."),
+        onPress: () => router.push(`/enfants/${enfant.id}/jalons`),
       });
     }
     if (stage.key === "6_12a" || stage.key === "13_18a") {

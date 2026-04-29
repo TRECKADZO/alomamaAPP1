@@ -1250,6 +1250,112 @@ async def add_vaccin(eid: str, payload: VaccinIn, user=Depends(require_roles("ma
     return await db.enfants.find_one({"id": eid}, {"_id": 0})
 
 
+@api.delete("/enfants/{eid}/vaccins/{vid}")
+async def delete_vaccin(eid: str, vid: str, user=Depends(require_roles("maman"))):
+    await db.enfants.update_one(
+        {"id": eid, "user_id": user["id"]},
+        {"$pull": {"vaccins": {"id": vid}}},
+    )
+    return {"ok": True}
+
+
+@api.patch("/enfants/{eid}/vaccins/{vid}")
+async def update_vaccin(eid: str, vid: str, payload: dict, user=Depends(require_roles("maman"))):
+    """Toggle fait/non-fait ou modifier date d'un vaccin."""
+    sets = {}
+    if "fait" in payload:
+        sets["vaccins.$.fait"] = bool(payload["fait"])
+    if "date" in payload and payload["date"]:
+        sets["vaccins.$.date"] = payload["date"]
+    if sets:
+        await db.enfants.update_one(
+            {"id": eid, "user_id": user["id"], "vaccins.id": vid},
+            {"$set": sets},
+        )
+    return {"ok": True}
+
+
+# Documents médicaux liés à un enfant (analyses, ordonnances, échographies, etc.)
+class DocumentIn(BaseModel):
+    nom: str
+    type: Optional[str] = "autre"  # ordonnance | analyse | echo | vaccin | autre
+    description: Optional[str] = None
+    file_base64: str  # data URI complet "data:application/pdf;base64,..."
+
+
+@api.post("/enfants/{eid}/documents")
+async def add_document(eid: str, payload: DocumentIn, user=Depends(require_roles("maman"))):
+    """Ajouter un document médical à un enfant."""
+    enfant = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0, "id": 1})
+    if not enfant:
+        raise HTTPException(404, "Enfant introuvable")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "enfant_id": eid,
+        "user_id": user["id"],
+        "nom": payload.nom.strip()[:200],
+        "type": payload.type or "autre",
+        "description": (payload.description or "").strip()[:500] or None,
+        "file_base64": payload.file_base64,
+        "size_kb": len(payload.file_base64) // 1024,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.enfant_documents.insert_one(doc)
+    doc.pop("_id", None)
+    return {"id": doc["id"], "nom": doc["nom"], "type": doc["type"], "size_kb": doc["size_kb"], "created_at": doc["created_at"]}
+
+
+@api.get("/enfants/{eid}/documents")
+async def list_documents(eid: str, user=Depends(require_roles("maman"))):
+    """Liste les documents d'un enfant (sans le base64 pour la liste)."""
+    cursor = db.enfant_documents.find(
+        {"enfant_id": eid, "user_id": user["id"]},
+        {"_id": 0, "file_base64": 0},
+    ).sort("created_at", -1)
+    return await cursor.to_list(100)
+
+
+@api.get("/enfants/{eid}/documents/{doc_id}")
+async def get_document(eid: str, doc_id: str, user=Depends(require_roles("maman"))):
+    """Récupère un document complet (avec base64)."""
+    doc = await db.enfant_documents.find_one(
+        {"id": doc_id, "enfant_id": eid, "user_id": user["id"]},
+        {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Document introuvable")
+    return doc
+
+
+@api.delete("/enfants/{eid}/documents/{doc_id}")
+async def delete_document(eid: str, doc_id: str, user=Depends(require_roles("maman"))):
+    await db.enfant_documents.delete_one({"id": doc_id, "enfant_id": eid, "user_id": user["id"]})
+    return {"ok": True}
+
+
+# Notes médicales d'un enfant (consultations signées par les pros)
+@api.get("/enfants/{eid}/notes")
+async def list_enfant_notes(eid: str, user=Depends(get_current_user)):
+    """Liste les notes médicales d'un enfant. Maman voit ses enfants. Pro voit via son patient_id (les notes liées à RDV)."""
+    if user.get("role") == "maman":
+        enfant = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0, "id": 1})
+        if not enfant:
+            raise HTTPException(404, "Enfant introuvable")
+    cursor = db.consultation_notes.find(
+        {"enfant_id": eid},
+        {"_id": 0},
+    ).sort("created_at", -1)
+    notes = await cursor.to_list(100)
+    # Déchiffre les notes si chiffrées
+    for n in notes:
+        if isinstance(n.get("notes"), str) and n["notes"].startswith("enc::"):
+            try:
+                n["notes"] = decrypt_str(n["notes"])
+            except Exception:
+                pass
+    return notes
+
+
 # ----------------------------------------------------------------------
 # Courbes de croissance OMS (Tables simplifiées Weight-for-Age & Height-for-Age 0-60 mois)
 # Source : OMS Child Growth Standards 2006 — valeurs P3/P15/P50/P85/P97

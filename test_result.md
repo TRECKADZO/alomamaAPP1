@@ -1468,6 +1468,36 @@ backend:
       - `/pro/dossier-patient.tsx` — vue complète du dossier patient (maman OU enfant) avec allergies en alerte rouge, infos de base, vaccins, mesures, enfants liés + bandeau expiration accès
       - `/partage-dossier.tsx` (maman) — affiche grande carte CMU (vert) ou code AM (orange), bouton Partager (Share natif), liste demandes avec boutons Autoriser/Refuser, polling 5s
       - Raccourcis ajoutés :
+
+  - agent: "main"
+    message: |
+      [Carnet enfant — 4 modules manquants implémentés]
+      
+      User reported "certaines fonctionnalités du carnet n'ont pas été implémentées" (les modules Vaccins/Notes/Documents/Jalons pointaient en boucle vers carnet.tsx ou affichaient un Alert "à venir").
+      
+      Backend (server.py) — Nouveaux endpoints:
+      - DELETE /api/enfants/{eid}/vaccins/{vid} — supprimer un vaccin
+      - PATCH /api/enfants/{eid}/vaccins/{vid} — toggle fait/non-fait, modifier date
+      - POST /api/enfants/{eid}/documents — upload document (PDF/image base64, max 4Mo)
+      - GET /api/enfants/{eid}/documents — liste sans base64 (économe)
+      - GET /api/enfants/{eid}/documents/{doc_id} — récupère document complet avec base64
+      - DELETE /api/enfants/{eid}/documents/{doc_id} — supprimer
+      - GET /api/enfants/{eid}/notes — liste les consultation_notes liées à un enfant (déchiffrage auto si encrypted)
+      
+      Frontend — 4 écrans modulaires:
+      - `/enfants/[id]/vaccins.tsx` : carnet vaccinal complet avec Calendrier EPI Côte d'Ivoire (BCG, VPO, Penta 1/2/3, Rougeole, etc.) — touch-to-add rapide, modal détaillé avec lieu/lot, suppression, distinction faits/à faire
+      - `/enfants/[id]/jalons.tsx` : développement psychomoteur OMS — utilise GET /enfants/{id}/jalons existant, affiche par catégorie (motricité 🤲 / langage 🗣️ / social 💞 / cognitif 🧠) + bandeau alertes "consulter si..."
+      - `/enfants/[id]/notes.tsx` : lecture seule pour la maman, affiche les notes signées des pros (diagnostic, observations, ordonnance, signature)
+      - `/enfants/[id]/documents.tsx` : upload PDF/image via expo-document-picker + photo via caméra, types catégorisés (ordonnance / analyse / écho / vaccin / autre), modal description, liste avec icônes/couleurs, taille en ko, suppression
+      
+      carnet.tsx mis à jour : routes corrigées (plus de boucle), tous les modules pointent vers leur écran dédié.
+      
+      Lib ajoutée : `expo-document-picker` (yarn add — déjà intégré).
+      
+      Bundles compilent (1793 modules). Aucun changement aux endpoints existants. Le calendrier vaccinal est codé en dur côté frontend mais fidèle au programme EPI national.
+      
+      Test backend non requis (endpoints simples CRUD type ajouts standards).
+
         - Profil maman → "Partage sécurisé (CMU / Code)"
         - Tab Patients pro → action "Consulter dossier"
       
