@@ -275,6 +275,20 @@ export default function CarnetModulaire() {
           </TouchableOpacity>
         )}
 
+        {/* Mini courbe de croissance */}
+        <View style={{ paddingHorizontal: SPACING.lg }}>
+          <Text style={styles.sectionTitle}>📈 Évolution de la croissance</Text>
+          <MiniGrowthChart
+            date_naissance={enfant.date_naissance}
+            mesures={enfant.mesures || []}
+            initialPoids={enfant.poids_kg}
+            initialTaille={enfant.taille_cm}
+            poids_actuel={enfant.poids_kg}
+            taille_actuel={enfant.taille_cm}
+            onPressDetails={() => router.push(`/croissance/${enfant.id}`)}
+          />
+        </View>
+
         {/* Vue prioritaire selon rôle */}
         <View style={styles.focusCard}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
