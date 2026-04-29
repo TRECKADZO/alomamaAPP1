@@ -1692,6 +1692,45 @@ agent_communication:
         comment: |
           Smoke tests on mobile 390x844 — ALL OK. /grossesse, /cycle, /communaute, / (home dashboard), /enfants all load without "Application Error" / "Unhandled Error" / "TypeError" messages. 0 page errors and 0 JS exceptions captured during the navigation sequence. Minor finding: route /partage-dossier returns "Unmatched Route — Page could not be found" (the share screen referenced in Test 7 may live under a different path like /partage or be reachable only from the Profil tab button — recommend main agent verify the correct route name for the share screen).
 
+  - task: "Recherche Pro avec mapping intelligent des types de consultation (chips Échographie, Pédiatre, etc.) + endpoint single Pro"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Modifs sur GET /api/search/pros : (1) Le filtre `prestation` matche désormais à la fois les prestations (regex sur nom/description) ET les disponibilités (regex sur slots.type_id, slots.type_label, slots.types) en faisant l'union des pro_ids. (2) Mapping intelligent TYPE_KEYWORDS : "échographie"→[échographie,echographie,écho,echo], "consultation"→[consultation,generale,prenatale,...], "accouchement"→[accouchement,travail,naissance], "prénatal"→[prénatal,prenatal,...], "vaccin"→[vaccin,vaccination], "pédiatre"→[pédiatre,pediatre,pédiatrie,...], "nutrition"→[nutrition,nutritionnel,diététique], "psychologie"→[psychologie,psychologue], "urgence"→[urgence,garde], "contraception"→[contraception,planning familial]. Les regex sont construits via build_regex() et utilisés dans 3 endroits (prest_query principal, dispos query, enrichissement prestations_match). Nouveau endpoint GET /api/professionnels/{pro_id} retournant id/name/specialite/ville/accepte_cmu sans password_hash. À tester : (a) chips "Échographie" "Consultation" "Pédiatre" doivent renvoyer les pros pertinents même si le pro n'a pas tagué exactement le mot-clé, (b) max_prix continue de fonctionner uniquement sur prestations, (c) cmu_only continue de filtrer correctement, (d) endpoint single pro renvoie 404 si pro inconnu et 200 sinon.
+
+  - task: "Reminders avec heure (Pro envoie rappel daté+heuré au patient)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py, /app/frontend/app/pro/dossier/[id].tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          POST /api/pro/rappels-patient accepte déjà `due_at` en string ISO complet (datetime). Aucun changement backend nécessaire — le scheduler /reminders/_reminders_scheduler scanne due_at et envoie push à l'heure exacte. Côté frontend, /app/frontend/app/pro/dossier/[id].tsx passe DateField mode="datetime" et envoie new Date(rappel.due_at).toISOString() au backend. À vérifier côté backend que créer un rappel avec due_at="2026-02-15T14:30:00.000Z" est bien stocké en BDD avec heure préservée et que GET /pro/rappels-envoyes & GET /reminders renvoient l'ISO complet.
+
+  - task: "Mesures bébé — endpoint POST /api/enfants/{eid}/mesures (vérification)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Endpoint pré-existant POST /api/enfants/{eid}/mesures (ligne 1180) accepte MesureIn = {date, poids_kg?, taille_cm?, perimetre_cranien_cm?}. Frontend ajoute désormais une UI dans /app/frontend/app/croissance/[id].tsx (modale avec DateField + 3 inputs decimal-pad) qui appelle smartPost(`/enfants/${id}/mesures`, payload). Curl manuel a fonctionné (mesure ajoutée sur enfant 'Jean Paul'). À tester : (a) maman crée plusieurs mesures successives sur un enfant et la liste renvoyée par GET /enfants contient toutes les mesures, (b) GET /enfants/{id}/croissance-oms reflète les nouvelles mesures dans 'points' avec age_mois calculé correctement, (c) classification_poids/classification_taille (tres_bas/bas/normal/eleve/tres_eleve) est cohérente avec les références OMS, (d) un autre user (autre maman) ne peut PAS ajouter de mesure à l'enfant d'autrui (403/404), (e) un Pro ne peut pas appeler ce endpoint (require_roles maman).
+
 agent_communication:
   - agent: "testing"
     message: |
@@ -1709,3 +1748,163 @@ agent_communication:
       2. Verify the /partage-dossier route — currently 404. Either fix the route or update the access path.
       3. Restore at least one shared test maman + one test pro account in /app/memory/test_credentials.md (or document the approved register flow) so the testing agent can validate Pro UIs (Tests 4-6, 8) on subsequent runs.
       4. Tests 4-6 and 8 still need UI validation — please request specifically once test pro accounts exist.
+
+  - agent: "main"
+    message: |
+      NEW BACKEND TESTING REQUEST (Feb 2026) — please validate 3 areas:
+
+      1) **Recherche Pro avec mapping intelligent** (priority HIGH)
+         File: /app/backend/server.py — function search_pros() ~ ligne 3907
+         New endpoint: GET /api/professionnels/{pro_id} (ligne ~1485)
+         - Login as maman.test@alomaman.dev / Test1234! (or any maman)
+         - GET /api/search/pros?prestation=consultation → expect ≥1 pro (matche prestations.nom OU dispos.type_id)
+         - GET /api/search/pros?prestation=pédiatre → expect ≥1 pro (matche le mapping étendu : pediatre, pediatrie, etc.)
+         - GET /api/search/pros?prestation=échographie&max_prix=50000 → vérifier filtre combiné prix (prestations seulement)
+         - GET /api/search/pros?cmu_only=true → vérifier filtre CMU
+         - GET /api/search/pros?q=Dr → vérifier recherche texte libre nom/spécialité
+         - GET /api/professionnels/{valid_id} → 200 avec id, name, specialite, ville, accepte_cmu
+         - GET /api/professionnels/inexistant-id → 404
+         - GET /api/professionnels/{maman_id} → 404 (n'est pas un pro)
+
+      2) **Enfants — Mesures (POST)** (priority HIGH)
+         File: /app/backend/server.py — endpoint POST /api/enfants/{eid}/mesures ligne 1180
+         - Login as maman, créer un enfant si besoin (POST /api/enfants), récupérer son ID
+         - POST /api/enfants/{id}/mesures avec {date:"2026-02-10T08:00:00Z", poids_kg:7.5, taille_cm:68, perimetre_cranien_cm:42}
+         - POST une 2ème mesure 1 mois plus tard
+         - GET /api/enfants → vérifier que enfant.mesures contient les 2 entrées avec champs préservés
+         - GET /api/enfants/{id}/croissance-oms → vérifier que `points` contient 2 entries avec age_mois calculé, et `classification_poids`/`classification_taille` non vides
+         - Sécurité : essayer POST avec un autre user (créer une autre maman) sur l'enfant d'autrui → 403/404
+         - Sécurité : essayer POST avec un user role=professionnel → 403
+
+      3) **Reminders (rappel patient avec heure)** (priority MEDIUM)
+         File: /app/backend/server.py — POST /api/pro/rappels-patient ligne 2160
+         - Login Pro (pro.test@alomaman.dev / Test1234!), avoir un RDV existant avec une maman
+         - POST /api/pro/rappels-patient {patient_id, title:"Prise médicament", due_at:"2026-02-20T14:30:00.000Z", notes:"..."}
+         - GET /api/pro/rappels-envoyes → vérifier que due_at est bien préservé avec heure (pas tronqué à minuit)
+         - Login maman concernée, GET /api/reminders → le rappel apparaît avec due_at heure exacte
+         - Sécurité : Pro essaie POST avec patient_id sans RDV avec lui → 403
+
+      Credentials: cf /app/memory/test_credentials.md.
+      Si DB seed nécessaire (pas de pro/maman/enfant), merci de créer les comptes et noter dans /app/memory/test_credentials.md.
+
+
+backend:
+  - task: "Recherche Pro avec mapping intelligent + endpoint single Pro"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          PASS — 11/11 sur https://cycle-tracker-pro.preview.emergentagent.com/api (script /app/backend_test_review_2026.py).
+          Setup: ensured pro.test@alomaman.dev a 3 prestations actives (Consultation générale 10000, Échographie obstétricale 30000, Consultation pédiatrique 8000).
+          (1) GET /search/pros?prestation=consultation → 200 count=2 (matche via prestations.nom).
+          (2) GET /search/pros?prestation=pédiatre → 200 count=2 (mapping étendu OK).
+          (3) GET /search/pros?prestation=échographie&max_prix=50000 → 200 count=1 (pro retourné). Avec max_prix=10000 → count=0 (le pro est exclu car son écho coûte 30000 > 10000) ; les prestations_match retournées respectent toutes <=max_prix.
+          (4) GET /search/pros?cmu_only=true → 200, tous les pros retournés ont accepte_cmu=true (pas de leak des autres).
+          (5) GET /search/pros?q=Dr → 200 count=8 (recherche regex sur name+specialite OK).
+          (6) GET /professionnels/{pro_id valide} → 200 ; payload contient id, name, specialite, ville, accepte_cmu ; aucun password_hash exposé.
+          (7) GET /professionnels/inexistant-id-zzz → 404.
+          (8) GET /professionnels/{maman_id} → 404 (correctement filtré sur role=professionnel).
+          Aucun bug détecté. Endpoints prêts pour la prod.
+
+  - task: "Mesures bébé — POST /api/enfants/{eid}/mesures"
+    implemented: true
+    working: false
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          7/8 PASS — 1 failure (sécurité). Script: /app/backend_test_review_2026.py.
+
+          ✅ FONCTIONNEL (7/7):
+          (1) POST /enfants 402 quota atteint pour cette maman → réutilisé l'enfant existant (id=2abc2caa…). Note: n'est pas un bug, juste le quota freemium (max 1 enfant gratuit).
+          (2) POST /enfants/{id}/mesures m1 {date:"2026-02-10T08:00:00Z", poids_kg:7.5, taille_cm:68, perimetre_cranien_cm:42} → 200, mesure ajoutée.
+          (3) POST /enfants/{id}/mesures m2 {date:"2026-03-10T08:00:00Z", poids_kg:8.3, taille_cm:70.5, perimetre_cranien_cm:43} → 200.
+          (4) GET /enfants : enfant.mesures[] passe de 1→3 (les 2 nouvelles ajoutées correctement). Tous les champs préservés verbatim (date, poids_kg, taille_cm, perimetre_cranien_cm).
+          (5) GET /enfants/{id}/croissance-oms → 200 ; points contient 3 entries (1 ancienne + 2 nouvelles) ; chaque point a age_mois (float, calculé), oms_poids_ref/oms_taille_ref (P3..P97), classification_poids et classification_taille non null (ex: "tres_eleve").
+          (6) Sécurité Pro: POST /enfants/{id}/mesures par pro.test → 403 ("Accès refusé" via require_roles("maman")) ✅ correct.
+
+          ❌ CRITIQUE — Sécurité owner-only NON respectée + DATA LEAK:
+          Une AUTRE maman authentifiée fait POST /enfants/{eid}/mesures avec eid d'une enfant qu'elle ne possède pas :
+          - Status: 200 (au lieu du 403/404 attendu)
+          - La mesure n'est PAS ajoutée (update_one filtre {id, user_id} → no-op silencieux) ✅ pas de mutation
+          - MAIS la réponse retourne `decrypt_enfant(e)` où `e = await db.enfants.find_one({"id": eid})` SANS filtre user_id (server.py L1186). Cela LEAK le document complet de l'enfant d'autrui : nom, date_naissance, sexe, **numero_cmu** (déchiffré), **allergies** (déchiffrées), **photo**, mesures, vaccins, etc. → fuite de données sensibles RGPD/santé.
+          Test exécuté: une autre maman crée un compte et POST sur l'enfant_id de la maman propriétaire → reçoit 200 + payload enfant complet de la propriétaire.
+
+          FIX recommandé (server.py L1180-1188):
+          ```python
+          @api.post("/enfants/{eid}/mesures")
+          async def add_mesure(eid: str, payload: MesureIn, user=Depends(require_roles("maman"))):
+              mesure = {"id": str(uuid.uuid4()), **payload.dict()}
+              res = await db.enfants.update_one(
+                  {"id": eid, "user_id": user["id"]},
+                  {"$push": {"mesures": mesure}},
+              )
+              if res.matched_count == 0:
+                  raise HTTPException(404, "Enfant introuvable")
+              e = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+              return decrypt_enfant(e)
+          ```
+          Même type de fix à appliquer à /enfants/{eid}/photo (server.py L1191-1198) qui a le même pattern (find_one sans user_id après update_one). Et idéalement à add_vaccin / update_vaccin / list_documents si pas déjà filtré.
+
+  - task: "Reminders (rappel patient avec heure préservée)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          PASS — 6/6 sur /app/backend_test_review_2026.py.
+          (1) Setup: pro.test@alomaman.dev avait 0 RDV avec maman.test ; créé un RDV maman→pro (motif="Test rappel patient", date J+10) → 200.
+          (2) POST /pro/rappels-patient {patient_id=maman_id, title="Prise médicament", due_at:"2026-02-20T14:30:00.000Z", notes:"Prendre paracétamol matin"} → 200. Réponse contient due_at="2026-02-20T14:30:00.000Z" verbatim (heure 14:30 préservée, pas tronquée à minuit).
+          (3) GET /pro/rappels-envoyes (Pro) → liste contient l'entry avec due_at="2026-02-20T14:30:00.000Z" (T14:30 intact).
+          (4) GET /reminders (maman) → le rappel apparaît côté patiente avec due_at="2026-02-20T14:30:00.000Z" — la maman voit bien l'heure exacte (pas de troncature).
+          (5) Sécurité: une nouvelle maman isolée créée (sans RDV avec ce pro) ; POST /pro/rappels-patient avec son patient_id → 403 ("Patient non autorisé") ✅ correct (server.py L2174-2177 : has_rdv == 0 → 403).
+          Aucun bug détecté. Cleanup: maman isolée supprimée via DELETE /auth/me.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.3"
+  test_sequence: 7
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Mesures bébé — POST /api/enfants/{eid}/mesures"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "stuck_first"
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Backend retest 3 zones (Feb 2026) — 24/25 PASS (script /app/backend_test_review_2026.py).
+
+      ✅ ZONE 1 — Recherche Pro + endpoint single Pro (11/11): mapping intelligent OK (consultation, pédiatre→pédiatrie/enfant, échographie/écho), filtre prix combiné OK, cmu_only OK, q libre OK. GET /professionnels/{id} retourne 200 avec champs requis (id, name, specialite, ville, accepte_cmu) sans password_hash ; 404 sur id inexistant et sur maman_id (filtré sur role=professionnel).
+
+      ✅ ZONE 3 — Reminders rappel patient (6/6): heure T14:30 préservée tout au long de la chaîne (POST → DB → GET pro/envoyes → GET maman/reminders). Sécurité OK : Pro sans RDV avec patient → 403.
+
+      ❌ ZONE 2 — Mesures bébé : 7/8 — 1 BUG SÉCURITÉ CRITIQUE
+      Le endpoint POST /api/enfants/{eid}/mesures (server.py L1180-1188) **leak des données sensibles** lorsqu'une maman authentifiée tente d'ajouter une mesure sur un enfant qu'elle ne possède pas :
+      - status 200 au lieu de 403/404
+      - la mesure n'est pas mutée (update_one est correctement filtré sur user_id) MAIS
+      - find_one juste après est appelé SANS filter user_id → renvoie le document complet de l'enfant d'autrui (numero_cmu déchiffré, allergies, photo, vaccins…). Risque RGPD majeur.
+
+      Le même pattern existe dans POST /enfants/{eid}/photo (L1191-1198). À auditer.
+
+      FIX recommandé : appliquer un check `res.matched_count == 0 → 404` puis `find_one({"id": eid, "user_id": user["id"]})`.
+
+      Sécurité Pro role=professionnel → 403 (require_roles("maman")) ✅. Heure CMU/croissance OK. Tests 1+3 PROD-READY.
