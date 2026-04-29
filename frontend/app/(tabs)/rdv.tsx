@@ -43,6 +43,7 @@ export default function Rdv() {
   const [form, setForm] = useState({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel", prestation_id: "", tarif_fcfa: 10000 });
   const [prestations, setPrestations] = useState<any[]>([]);
   const [proDispos, setProDispos] = useState<any[]>([]); // créneaux du pro avec type+durée+prix
+  const [lockedPro, setLockedPro] = useState<any | null>(null); // Pro pré-sélectionné depuis la recherche
 
   const load = async () => {
     try {
@@ -62,10 +63,21 @@ export default function Rdv() {
     if (pid && user?.role === "maman") {
       (async () => {
         setForm((f) => ({ ...f, pro_id: pid, prestation_id: "", tarif_fcfa: 10000 }));
+        // Charger l'objet Pro complet pour l'afficher seul (locked)
+        try {
+          const pInfo = await api.get(`/professionnels/${pid}`);
+          setLockedPro(pInfo.data || { id: pid, name: "Professionnel", specialite: "" });
+        } catch {
+          setLockedPro({ id: pid, name: "Professionnel", specialite: "" });
+        }
         try {
           const pr = await api.get(`/professionnels/${pid}/prestations`);
           setPrestations(pr.data || []);
-        } catch {}
+        } catch { setPrestations([]); }
+        try {
+          const d = await api.get(`/professionnels/${pid}/disponibilites`);
+          setProDispos((d.data?.slots || []).filter((s: any) => s.actif));
+        } catch { setProDispos([]); }
         setModal(true);
         // nettoyer le paramètre pour éviter ré-ouverture au focus
         router.setParams({ pro_id: undefined as any });
@@ -74,12 +86,23 @@ export default function Rdv() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params?.pro_id, user?.role]);
 
+  const closeModal = () => {
+    setModal(false);
+    setLockedPro(null);
+    setForm({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel", prestation_id: "", tarif_fcfa: 10000 });
+    setPrestations([]);
+    setProDispos([]);
+  };
+
   const create = async () => {
     if (!form.pro_id || !form.date || !form.motif || !form.type_consultation) return Alert.alert("Champs requis", "Veuillez remplir tous les champs");
     try {
       const r = await smartPost("/rdv", form);
       setForm({ pro_id: "", date: "", motif: "", type_consultation: "", mode: "presentiel", prestation_id: "", tarif_fcfa: 10000 });
       setModal(false);
+      setLockedPro(null);
+      setPrestations([]);
+      setProDispos([]);
       if (r.queued) Alert.alert("Enregistré hors ligne", "Le rendez-vous sera envoyé dès la reconnexion.");
       load();
     } catch (e) {
@@ -123,7 +146,7 @@ export default function Rdv() {
       <View style={styles.header}>
         <Text style={styles.title}>Rendez-vous</Text>
         {user?.role === "maman" && (
-          <TouchableOpacity style={styles.addHeader} onPress={() => setModal(true)} testID="add-rdv-btn">
+          <TouchableOpacity style={styles.addHeader} onPress={() => { setLockedPro(null); setModal(true); }} testID="add-rdv-btn">
             <Ionicons name="add" size={22} color="#fff" />
           </TouchableOpacity>
         )}
@@ -249,29 +272,51 @@ export default function Rdv() {
             <View style={styles.modalCard}>
               <View style={styles.modalHead}>
                 <Text style={styles.modalTitle}>Nouveau rendez-vous</Text>
-                <TouchableOpacity onPress={() => setModal(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
+                <TouchableOpacity onPress={closeModal}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
               </View>
               <Text style={styles.label}>Professionnel</Text>
-              {pros.map((p) => (
-                <TouchableOpacity key={p.id} style={[styles.proCard, form.pro_id === p.id && styles.proCardActive]} onPress={async () => {
-                  setForm({ ...form, pro_id: p.id, prestation_id: "", tarif_fcfa: 10000 });
-                  try {
-                    const r = await api.get(`/pros/${p.id}/prestations`);
-                    setPrestations(r.data || []);
-                  } catch { setPrestations([]); }
-                  try {
-                    const d = await api.get(`/professionnels/${p.id}/disponibilites`);
-                    setProDispos((d.data?.slots || []).filter((s: any) => s.actif));
-                  } catch { setProDispos([]); }
-                }} testID={`pro-${p.id}`}>
-                  <View style={styles.proAvatar}><Text style={styles.proAvatarText}>{p.name.charAt(0)}</Text></View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.proName}>{p.name}</Text>
-                    <Text style={styles.proSpec}>{p.specialite || "Professionnel"}</Text>
+              {lockedPro ? (
+                /* Affiche uniquement le pro pré-sélectionné depuis la recherche */
+                <View>
+                  <View style={[styles.proCard, styles.proCardActive]} testID={`pro-locked-${lockedPro.id}`}>
+                    <View style={styles.proAvatar}><Text style={styles.proAvatarText}>{(lockedPro.name || "?").charAt(0)}</Text></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.proName}>{lockedPro.name}</Text>
+                      <Text style={styles.proSpec}>{lockedPro.specialite || "Professionnel"}{lockedPro.ville ? ` · 📍 ${lockedPro.ville}` : ""}</Text>
+                    </View>
+                    <Ionicons name="checkmark-circle" size={22} color={COLORS.primary} />
                   </View>
-                  {form.pro_id === p.id && <Ionicons name="checkmark-circle" size={22} color={COLORS.primary} />}
-                </TouchableOpacity>
-              ))}
+                  <TouchableOpacity
+                    onPress={() => { closeModal(); router.push("/search"); }}
+                    style={styles.changeProBtn}
+                    testID="change-pro-btn"
+                  >
+                    <Ionicons name="swap-horizontal" size={14} color={COLORS.primary} />
+                    <Text style={styles.changeProText}>Choisir un autre professionnel</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                pros.map((p) => (
+                  <TouchableOpacity key={p.id} style={[styles.proCard, form.pro_id === p.id && styles.proCardActive]} onPress={async () => {
+                    setForm({ ...form, pro_id: p.id, prestation_id: "", tarif_fcfa: 10000 });
+                    try {
+                      const r = await api.get(`/professionnels/${p.id}/prestations`);
+                      setPrestations(r.data || []);
+                    } catch { setPrestations([]); }
+                    try {
+                      const d = await api.get(`/professionnels/${p.id}/disponibilites`);
+                      setProDispos((d.data?.slots || []).filter((s: any) => s.actif));
+                    } catch { setProDispos([]); }
+                  }} testID={`pro-${p.id}`}>
+                    <View style={styles.proAvatar}><Text style={styles.proAvatarText}>{p.name.charAt(0)}</Text></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.proName}>{p.name}</Text>
+                      <Text style={styles.proSpec}>{p.specialite || "Professionnel"}</Text>
+                    </View>
+                    {form.pro_id === p.id && <Ionicons name="checkmark-circle" size={22} color={COLORS.primary} />}
+                  </TouchableOpacity>
+                ))
+              )}
 
               {/* Récap des disponibilités du pro avec type+durée+prix */}
               {form.pro_id && proDispos.length > 0 && (
@@ -550,6 +595,8 @@ const styles = StyleSheet.create({
   proAvatarText: { color: "#fff", fontWeight: "800" },
   proName: { fontWeight: "700", color: COLORS.textPrimary },
   proSpec: { color: COLORS.textSecondary, fontSize: 12 },
+  changeProBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, marginTop: -2, marginBottom: 6 },
+  changeProText: { color: COLORS.primary, fontSize: 12, fontWeight: "700", textDecorationLine: "underline" },
   btnPrimary: { backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: RADIUS.pill, alignItems: "center", marginTop: 20 },
   btnPrimaryText: { color: "#fff", fontWeight: "700", fontSize: 15 },
   modeRow: { flexDirection: "row", gap: 10 },

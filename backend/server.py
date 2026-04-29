@@ -1482,6 +1482,19 @@ async def list_pros(user=Depends(get_current_user)):
     return [serialize_user(p) | {"specialite": p.get("specialite")} for p in pros]
 
 
+@api.get("/professionnels/{pro_id}")
+async def get_pro_public(pro_id: str, user=Depends(get_current_user)):
+    """Récupère les infos publiques d'un professionnel (sans password_hash)."""
+    p = await db.users.find_one({"id": pro_id, "role": "professionnel"}, {"_id": 0, "password_hash": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Professionnel introuvable")
+    return serialize_user(p) | {
+        "specialite": p.get("specialite"),
+        "ville": p.get("ville"),
+        "accepte_cmu": p.get("accepte_cmu", False),
+    }
+
+
 @api.get("/rdv")
 async def list_rdv(user=Depends(get_current_user)):
     q = {"maman_id": user["id"]} if user["role"] == "maman" else (
@@ -3932,19 +3945,65 @@ async def search_pros(
     if cmu_only:
         query["accepte_cmu"] = True
 
+    # Mapping intelligent : si l'utilisateur clique sur un "type de consultation"
+    # (chip rapide), on étend le terme aux mots-clés équivalents pour matcher à la
+    # fois les prestations (libre-texte) et les disponibilités (type_id structuré).
+    TYPE_KEYWORDS = {
+        "échographie": ["échographie", "echographie", "écho", "echo"],
+        "echographie": ["échographie", "echographie", "écho", "echo"],
+        "consultation": ["consultation", "generale", "prenatale", "postnatale", "pediatrie", "prénatale", "post-natale"],
+        "accouchement": ["accouchement", "travail", "naissance"],
+        "prénatal": ["prénatal", "prenatal", "prénatale", "prenatale"],
+        "prenatal": ["prénatal", "prenatal", "prénatale", "prenatale"],
+        "vaccin": ["vaccin", "vaccination", "vaccinations"],
+        "vaccination": ["vaccin", "vaccination", "vaccinations"],
+        "pédiatre": ["pédiatre", "pediatre", "pédiatrie", "pediatrie", "enfant"],
+        "pediatre": ["pédiatre", "pediatre", "pédiatrie", "pediatrie", "enfant"],
+        "pediatrie": ["pédiatre", "pediatre", "pédiatrie", "pediatrie", "enfant"],
+        "nutrition": ["nutrition", "nutritionnel", "diététique"],
+        "psychologie": ["psychologie", "psychologue", "soutien psy"],
+        "urgence": ["urgence", "garde"],
+        "contraception": ["contraception", "planning familial"],
+    }
+
+    def build_regex(term: str) -> dict:
+        keywords = TYPE_KEYWORDS.get(term.lower().strip(), [term])
+        # Construire un regex OR insensible à la casse (mots-clés multiples)
+        escaped = "|".join(__import__("re").escape(k) for k in keywords)
+        return {"$regex": escaped, "$options": "i"}
+
     # Si filtre par prestation/prix : on identifie d'abord les prestations matching
+    # ET les disponibilités (slots) matching, puis on prend l'union des pro_ids.
     matching_pro_ids: Optional[set] = None
     if prestation or (max_prix and max_prix > 0):
+        ids_set: set = set()
+
+        # 1) Prestations (nom/description)
         prest_query: dict = {"active": True}
         if prestation:
+            rgx = build_regex(prestation)
             prest_query["$or"] = [
-                {"nom": {"$regex": prestation, "$options": "i"}},
-                {"description": {"$regex": prestation, "$options": "i"}},
+                {"nom": rgx},
+                {"description": rgx},
             ]
         if max_prix and max_prix > 0:
             prest_query["prix_fcfa"] = {"$lte": int(max_prix)}
-        prestations = await db.prestations.find(prest_query, {"_id": 0, "pro_id": 1}).to_list(1000)
-        matching_pro_ids = {p["pro_id"] for p in prestations}
+        prestations_list = await db.prestations.find(prest_query, {"_id": 0, "pro_id": 1}).to_list(1000)
+        ids_set.update(p["pro_id"] for p in prestations_list)
+
+        # 2) Disponibilités (type_id / type_label) — uniquement si filtre prestation
+        #    (le filtre prix ne concerne que les prestations)
+        if prestation:
+            rgx = build_regex(prestation)
+            dispo_query = {"$or": [
+                {"slots.type_id": rgx},
+                {"slots.type_label": rgx},
+                {"slots.types": rgx},
+            ]}
+            dispos_list = await db.pro_disponibilites.find(dispo_query, {"_id": 0, "pro_id": 1}).to_list(1000)
+            ids_set.update(d["pro_id"] for d in dispos_list)
+
+        matching_pro_ids = ids_set
         if not matching_pro_ids:
             return []
         query["id"] = {"$in": list(matching_pro_ids)}
@@ -3956,9 +4015,10 @@ async def search_pros(
         for p in pros:
             prest_q: dict = {"pro_id": p["id"], "active": True}
             if prestation:
+                rgx = build_regex(prestation)
                 prest_q["$or"] = [
-                    {"nom": {"$regex": prestation, "$options": "i"}},
-                    {"description": {"$regex": prestation, "$options": "i"}},
+                    {"nom": rgx},
+                    {"description": rgx},
                 ]
             if max_prix and max_prix > 0:
                 prest_q["prix_fcfa"] = {"$lte": int(max_prix)}
