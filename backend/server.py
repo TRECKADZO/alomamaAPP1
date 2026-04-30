@@ -1597,13 +1597,44 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
     }
     await db.rdv.insert_one(doc)
     doc.pop("_id", None)
+    # 🔔 Push au Pro — notification riche avec heure et prestation
+    try:
+        rdv_dt = datetime.fromisoformat(payload.date.replace("Z", "+00:00"))
+        date_fr = rdv_dt.strftime("%d/%m à %Hh%M")
+    except Exception:
+        date_fr = payload.date[:10]
+    prest_label = (prestation.get("nom") if prestation else None) or (motif[:40] if motif else "Consultation")
     await push_notif(
         payload.pro_id,
-        "Nouveau rendez-vous",
-        f"{user['name']} demande un RDV le {payload.date[:10]} — {payload.motif[:60]}",
+        "📅 Nouvelle demande de RDV",
+        f"{user['name']} demande un RDV le {date_fr} — {prest_label}",
         "rdv",
     )
     return doc
+
+
+@api.patch("/rdv/{rid}/cancel")
+async def rdv_cancel_by_maman(rid: str, user=Depends(require_roles("maman"))):
+    """La maman annule son propre RDV (seulement si en_attente ou confirme).
+    Envoie une notif push au Pro."""
+    rdv = await db.rdv.find_one({"id": rid, "maman_id": user["id"]}, {"_id": 0})
+    if not rdv:
+        raise HTTPException(404, "RDV introuvable")
+    if rdv["status"] in ("annule", "termine"):
+        raise HTTPException(400, f"RDV déjà {rdv['status']}")
+    await db.rdv.update_one({"id": rid}, {"$set": {"status": "annule", "cancelled_at": datetime.now(timezone.utc).isoformat(), "cancelled_by": "maman"}})
+    try:
+        rdv_dt = datetime.fromisoformat(rdv["date"].replace("Z", "+00:00"))
+        date_fr = rdv_dt.strftime("%d/%m à %Hh%M")
+    except Exception:
+        date_fr = rdv["date"][:10]
+    await push_notif(
+        rdv["pro_id"],
+        "❌ RDV annulé par la patiente",
+        f"{user['name']} a annulé son RDV du {date_fr}",
+        "rdv",
+    )
+    return {"ok": True, "status": "annule"}
 
 
 @api.patch("/rdv/{rid}/status")
@@ -1613,12 +1644,34 @@ async def rdv_status(rid: str, status_val: str, user=Depends(require_roles("prof
     rdv = await db.rdv.find_one({"id": rid}, {"_id": 0})
     if not rdv:
         raise HTTPException(404, "RDV introuvable")
-    await db.rdv.update_one({"id": rid}, {"$set": {"status": status_val}})
-    label = {"confirme": "confirmé ✅", "annule": "annulé ❌", "termine": "terminé ✓", "en_attente": "remis en attente"}.get(status_val, status_val)
+    # Pro peut uniquement gérer ses propres RDV (admin contourne)
+    if user["role"] == "professionnel" and rdv.get("pro_id") != user["id"]:
+        raise HTTPException(403, "Ce RDV n'est pas à vous")
+    await db.rdv.update_one({"id": rid}, {"$set": {"status": status_val, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    # 🔔 Push enrichie à la maman — avec nom du pro + heure
+    pro = await db.users.find_one({"id": rdv["pro_id"]}, {"_id": 0, "name": 1, "specialite": 1})
+    pro_name = (pro or {}).get("name") or "Votre praticien"
+    try:
+        rdv_dt = datetime.fromisoformat(rdv["date"].replace("Z", "+00:00"))
+        date_fr = rdv_dt.strftime("%d/%m à %Hh%M")
+    except Exception:
+        date_fr = rdv["date"][:10]
+    title_map = {
+        "confirme": "✅ RDV confirmé !",
+        "annule": "❌ RDV annulé",
+        "termine": "✔️ RDV terminé",
+        "en_attente": "⏳ RDV remis en attente",
+    }
+    body_map = {
+        "confirme": f"{pro_name} a confirmé votre RDV du {date_fr}. À très vite !",
+        "annule": f"{pro_name} a annulé votre RDV du {date_fr}. Contactez le cabinet pour reporter.",
+        "termine": f"Votre consultation avec {pro_name} est terminée. N'oubliez pas de régler le paiement.",
+        "en_attente": f"Le statut de votre RDV avec {pro_name} a changé.",
+    }
     await push_notif(
         rdv["maman_id"],
-        "Rendez-vous mis à jour",
-        f"Votre RDV du {rdv['date'][:10]} a été {label}",
+        title_map.get(status_val, "Rendez-vous mis à jour"),
+        body_map.get(status_val, f"Votre RDV du {date_fr} : {status_val}"),
         "rdv",
     )
     return {"ok": True}

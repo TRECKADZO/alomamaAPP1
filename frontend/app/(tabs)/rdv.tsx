@@ -101,6 +101,23 @@ export default function Rdv() {
     try { await smartPatch(`/rdv/${rid}/status?status_val=${statusVal}`); load(); } catch (e) { Alert.alert("Erreur", formatError(e)); }
   };
 
+  const cancelByMaman = async (rid: string) => {
+    Alert.alert(
+      "Annuler ce rendez-vous ?",
+      "Le praticien sera prévenu par notification. Cette action est définitive.",
+      [
+        { text: "Non", style: "cancel" },
+        {
+          text: "Oui, annuler", style: "destructive",
+          onPress: async () => {
+            try { await smartPatch(`/rdv/${rid}/cancel`); load(); Alert.alert("✅ Annulé", "Votre demande a été annulée et le praticien notifié."); }
+            catch (e) { Alert.alert("Erreur", formatError(e)); }
+          }
+        }
+      ]
+    );
+  };
+
   if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
 
   // Filtrage
@@ -227,7 +244,7 @@ export default function Rdv() {
             {rdvsSelected.length === 0 ? (
               <Text style={styles.empty}>Aucun rendez-vous ce jour</Text>
             ) : (
-              rdvsSelected.map((r) => <RdvCard key={r.id} r={r} user={user} changeStatus={changeStatus} router={router} />)
+              rdvsSelected.map((r) => <RdvCard key={r.id} r={r} user={user} changeStatus={changeStatus} cancelByMaman={cancelByMaman} router={router} />)
             )}
           </>
         ) : (
@@ -240,7 +257,7 @@ export default function Rdv() {
           ) : (
             filtered
               .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-              .map((r) => <RdvCard key={r.id} r={r} user={user} changeStatus={changeStatus} router={router} />)
+              .map((r) => <RdvCard key={r.id} r={r} user={user} changeStatus={changeStatus} cancelByMaman={cancelByMaman} router={router} />)
           )
         )}
       </ScrollView>
@@ -433,7 +450,7 @@ export default function Rdv() {
   );
 }
 
-function RdvCard({ r, user, changeStatus, router }: any) {
+function RdvCard({ r, user, changeStatus, cancelByMaman, router }: any) {
   const c = STATUT_COLORS[r.status] || STATUT_COLORS.en_attente;
   const d = new Date(r.date);
   return (
@@ -468,13 +485,22 @@ function RdvCard({ r, user, changeStatus, router }: any) {
 
       {user?.role === "professionnel" && r.status === "en_attente" && (
         <View style={styles.actions}>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => changeStatus(r.id, "confirme")}>
-            <Ionicons name="checkmark" size={16} color={COLORS.success} />
-            <Text style={[styles.actionText, { color: COLORS.success }]}>Confirmer</Text>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => changeStatus(r.id, "confirme")} testID={`pro-confirm-${r.id}`}>
+            <Ionicons name="checkmark-circle" size={18} color={COLORS.success} />
+            <Text style={[styles.actionText, { color: COLORS.success, fontWeight: "800" }]}>Confirmer ce RDV</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => changeStatus(r.id, "annule")}>
-            <Ionicons name="close" size={16} color={COLORS.error} />
-            <Text style={[styles.actionText, { color: COLORS.error }]}>Annuler</Text>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => changeStatus(r.id, "annule")} testID={`pro-cancel-${r.id}`}>
+            <Ionicons name="close-circle" size={18} color={COLORS.error} />
+            <Text style={[styles.actionText, { color: COLORS.error }]}>Refuser</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {/* Maman peut annuler ses RDV en attente ou confirmés */}
+      {user?.role === "maman" && (r.status === "en_attente" || r.status === "confirme") && (
+        <View style={styles.actions}>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => cancelByMaman(r.id)} testID={`maman-cancel-${r.id}`}>
+            <Ionicons name="close-circle-outline" size={16} color={COLORS.error} />
+            <Text style={[styles.actionText, { color: COLORS.error }]}>Annuler ma demande</Text>
           </TouchableOpacity>
         </View>
       )}
