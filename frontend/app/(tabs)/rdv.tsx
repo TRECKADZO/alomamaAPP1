@@ -57,31 +57,11 @@ export default function Rdv() {
   };
   useFocusEffect(useCallback(() => { load(); }, [user]));
 
-  // Auto-open modal si on arrive depuis la recherche avec un pro_id pré-sélectionné
+  // Rediriger vers la nouvelle page plein écran si on arrive avec un pro_id pré-sélectionné
   useEffect(() => {
     const pid = params?.pro_id as string | undefined;
     if (pid && user?.role === "maman") {
-      (async () => {
-        setForm((f) => ({ ...f, pro_id: pid, prestation_id: "", tarif_fcfa: 10000 }));
-        // Charger l'objet Pro complet pour l'afficher seul (locked)
-        try {
-          const pInfo = await api.get(`/professionnels/${pid}`);
-          setLockedPro(pInfo.data || { id: pid, name: "Professionnel", specialite: "" });
-        } catch {
-          setLockedPro({ id: pid, name: "Professionnel", specialite: "" });
-        }
-        try {
-          const pr = await api.get(`/professionnels/${pid}/prestations`);
-          setPrestations(pr.data || []);
-        } catch { setPrestations([]); }
-        try {
-          const d = await api.get(`/professionnels/${pid}/disponibilites`);
-          setProDispos((d.data?.slots || []).filter((s: any) => s.actif));
-        } catch { setProDispos([]); }
-        setModal(true);
-        // nettoyer le paramètre pour éviter ré-ouverture au focus
-        router.setParams({ pro_id: undefined as any });
-      })();
+      router.replace({ pathname: "/rdv-nouveau", params: { pro_id: pid } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params?.pro_id, user?.role]);
@@ -146,7 +126,7 @@ export default function Rdv() {
       <View style={styles.header}>
         <Text style={styles.title}>Rendez-vous</Text>
         {user?.role === "maman" && (
-          <TouchableOpacity style={styles.addHeader} onPress={() => { setLockedPro(null); setModal(true); }} testID="add-rdv-btn">
+          <TouchableOpacity style={styles.addHeader} onPress={() => router.push("/rdv-nouveau")} testID="add-rdv-btn">
             <Ionicons name="add" size={22} color="#fff" />
           </TouchableOpacity>
         )}

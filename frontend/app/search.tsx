@@ -290,7 +290,7 @@ export default function Search() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.actionRdv}
-                  onPress={() => router.push({ pathname: "/(tabs)/rdv", params: { pro_id: item.id } })}
+                  onPress={() => router.push({ pathname: "/rdv-nouveau", params: { pro_id: item.id } })}
                   testID={`book-rdv-${item.id}`}
                 >
                   <Ionicons name="calendar" size={16} color="#fff" />
