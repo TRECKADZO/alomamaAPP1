@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking, Platform,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking, Platform, Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -93,27 +93,41 @@ export default function RessourceDetail() {
           </View>
         </LinearGradient>
 
-        {/* VIDEO */}
+        {/* VIDEO — preview card avec ouverture externe (évite erreurs 153 d'embedding YouTube) */}
         {r.type === "video" && r.video_url && (
           <View style={styles.videoWrap}>
             {(() => {
-              const embed = youtubeEmbedUrl(r.video_url);
-              if (!embed) return (
-                <View style={styles.videoFallback}>
-                  <Ionicons name="play-circle" size={56} color={COLORS.primary} />
-                  <TouchableOpacity style={styles.extBtn} onPress={() => openExternal(r.video_url)}>
-                    <Ionicons name="open-outline" size={16} color="#fff" />
-                    <Text style={styles.extBtnText}>Ouvrir la vidéo</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-              return Platform.OS === "web" ? (
-                // @ts-ignore
-                <iframe src={embed} style={{ width: "100%", height: 240, border: 0, borderRadius: 12 }} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
-              ) : (
-                <View style={{ height: 240, borderRadius: 12, overflow: "hidden" }}>
-                  <WebView source={{ uri: embed }} javaScriptEnabled allowsFullscreenVideo />
-                </View>
+              // Extract YouTube ID for thumbnail
+              let ytId: string | null = null;
+              try {
+                const u = new URL(r.video_url);
+                if (u.hostname.includes("youtu.be")) ytId = u.pathname.slice(1);
+                else if (u.hostname.includes("youtube.com")) ytId = u.searchParams.get("v");
+              } catch {}
+              const thumbUrl = ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : null;
+              return (
+                <TouchableOpacity style={styles.videoPreview} onPress={() => openExternal(r.video_url)} testID="open-video-btn" activeOpacity={0.85}>
+                  {thumbUrl ? (
+                    // @ts-ignore — Image import in scope via react-native default
+                    <Image source={{ uri: thumbUrl }} style={styles.thumb} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.thumb, { backgroundColor: "#000", alignItems: "center", justifyContent: "center" }]}>
+                      <Ionicons name="videocam" size={44} color="#fff" />
+                    </View>
+                  )}
+                  <View style={styles.playOverlay}>
+                    <View style={styles.playCircle}>
+                      <Ionicons name="play" size={28} color="#fff" style={{ marginLeft: 3 }} />
+                    </View>
+                  </View>
+                  <View style={styles.videoFooter}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.videoFooterTitle}>▶ Regarder la vidéo</Text>
+                      <Text style={styles.videoFooterSub}>S'ouvre dans YouTube</Text>
+                    </View>
+                    <Ionicons name="open-outline" size={18} color="#fff" />
+                  </View>
+                </TouchableOpacity>
               );
             })()}
             {r.duration_sec ? <Text style={styles.duration}>Durée : {Math.floor(r.duration_sec / 60)} min</Text> : null}
@@ -267,6 +281,13 @@ const styles = StyleSheet.create({
   authorText: { color: "rgba(255,255,255,0.85)", fontSize: 11 },
 
   videoWrap: { paddingHorizontal: SPACING.lg },
+  videoPreview: { borderRadius: 14, overflow: "hidden", backgroundColor: "#000" },
+  thumb: { width: "100%", height: 200, backgroundColor: "#222" },
+  playOverlay: { position: "absolute", top: 0, left: 0, right: 0, height: 200, alignItems: "center", justifyContent: "center" },
+  playCircle: { width: 68, height: 68, borderRadius: 34, backgroundColor: "rgba(220,38,38,0.92)", alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "rgba(255,255,255,0.9)" },
+  videoFooter: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, backgroundColor: COLORS.primary },
+  videoFooterTitle: { color: "#fff", fontWeight: "800", fontSize: 14 },
+  videoFooterSub: { color: "rgba(255,255,255,0.8)", fontSize: 11, marginTop: 2 },
   videoFallback: { height: 180, borderRadius: 12, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", gap: 10 },
   extBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: COLORS.primary, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 999 },
   extBtnText: { color: "#fff", fontWeight: "800", fontSize: 13 },
