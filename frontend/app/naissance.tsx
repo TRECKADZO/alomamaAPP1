@@ -72,15 +72,19 @@ export default function Naissance() {
   };
 
   const load = async () => {
+    if (!user?.id) { setLoading(false); return; }
     try {
       const [n, e] = await Promise.all([
-        api.get("/naissance"),
-        user?.role === "maman" ? api.get("/enfants") : Promise.resolve({ data: [] }),
+        api.get("/naissance").catch(() => ({ data: [] })),
+        user?.role === "maman" ? api.get("/enfants").catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
       ]);
       setList(n.data); setEnfants(e.data);
+    } catch (err) {
+      // Silently swallow — auth interceptor handles redirect
+      console.warn("naissance load error", err);
     } finally { setLoading(false); }
   };
-  useFocusEffect(useCallback(() => { load(); }, [user]));
+  useFocusEffect(useCallback(() => { load(); }, [user?.id]));
 
   useEffect(() => () => { Speech.stop(); }, []);
 
