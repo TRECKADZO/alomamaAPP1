@@ -70,7 +70,8 @@
           }
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "./plugins/with-remove-permissions.js"
     ],
     "experiments": {
       "typedRoutes": true
