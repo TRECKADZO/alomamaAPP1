@@ -2354,6 +2354,84 @@ async def create_agora_token(rdv_id: str, user=Depends(get_current_user)):
     }
 
 
+@api.post("/teleconsultation/ring/{rdv_id}")
+async def ring_other_party(rdv_id: str, user=Depends(get_current_user)):
+    """
+    Envoie une notification "appel entrant" à l'autre participant du RDV.
+    Usage typique : quand le Pro démarre la consultation, ça fait "sonner"
+    la Maman (push notification avec son + vibration + deep link).
+    
+    Sécurité : seuls la maman et le pro du RDV peuvent déclencher la sonnerie.
+    """
+    rdv = await db.rdv.find_one({"id": rdv_id})
+    if not rdv:
+        raise HTTPException(status_code=404, detail="RDV introuvable")
+    if user["id"] not in [rdv.get("maman_id"), rdv.get("pro_id")]:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
+    # Déterminer qui appelle et qui est appelé
+    caller_id = user["id"]
+    callee_id = rdv["maman_id"] if caller_id == rdv.get("pro_id") else rdv.get("pro_id")
+    if not callee_id:
+        raise HTTPException(status_code=400, detail="Autre participant introuvable")
+
+    # Récupérer les infos pour personnaliser le message
+    caller = await db.users.find_one({"id": caller_id}, {"_id": 0, "name": 1, "role": 1, "specialite": 1})
+    callee = await db.users.find_one({"id": callee_id}, {"_id": 0, "name": 1, "push_token": 1})
+    if not caller or not callee:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    caller_name = caller.get("name", "Un professionnel")
+    if caller.get("role") == "professionnel":
+        prefix = "Dr " if not caller_name.lower().startswith("dr") else ""
+        caller_display = f"{prefix}{caller_name}"
+    else:
+        caller_display = caller_name
+
+    title = f"📞 {caller_display} vous appelle"
+    body = "Téléconsultation en cours — Touchez pour rejoindre"
+
+    # Créer une notification in-app (visible dans la cloche)
+    notif_id = str(uuid.uuid4())
+    await db.notifications.insert_one({
+        "id": notif_id,
+        "user_id": callee_id,
+        "title": title,
+        "body": body,
+        "type": "incoming_call",
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "rdv_id": rdv_id,
+        "caller_id": caller_id,
+    })
+
+    # Envoyer push notification avec data spécifique appel entrant
+    if callee.get("push_token"):
+        await send_expo_push(
+            callee["push_token"],
+            title,
+            body,
+            {
+                "type": "incoming_call",
+                "rdv_id": rdv_id,
+                "caller_id": caller_id,
+                "caller_name": caller_display,
+                # Channel ID "calls" côté Android pour utiliser un canal HIGH PRIORITY dédié appels
+                "channelId": "calls",
+                # Indique au frontend de naviguer immédiatement vers /video-call/{rdv_id}
+                "deep_link": f"/video-call/{rdv_id}",
+            },
+        )
+
+    return {
+        "ok": True,
+        "called": callee_id,
+        "title": title,
+        "body": body,
+        "has_push_token": bool(callee.get("push_token")),
+    }
+
+
 # ----------------------------------------------------------------------
 
 
@@ -4703,7 +4781,8 @@ async def dossier_public(token: str):
 async def send_expo_push(token: str, title: str, body: str, data: Optional[dict] = None):
     """Send an Expo push via the public Expo Push API.
     - priority=high : déclenche FCM en mode HIGH → la notif réveille le téléphone et apparaît immédiatement
-    - channelId=default : utilise le canal HIGH configuré côté frontend (pop-up + son)
+    - channelId=default (par défaut) : utilise le canal HIGH configuré côté frontend (pop-up + son)
+    - Si data['channelId'] est défini (ex: "calls"), on utilise ce canal à la place
     - sound=default : son système Android
     Logs explicitement la réponse Expo pour debug.
     """
@@ -4712,6 +4791,9 @@ async def send_expo_push(token: str, title: str, body: str, data: Optional[dict]
         return
     try:
         import httpx  # type: ignore
+        data_dict = data or {}
+        # Si le canal spécifique est demandé dans les data, on l'utilise (ex: "calls" pour téléconsultation)
+        channel_id = data_dict.get("channelId", "default")
         async with httpx.AsyncClient(timeout=10.0) as http:
             r = await http.post(
                 "https://exp.host/--/api/v2/push/send",
@@ -4724,10 +4806,10 @@ async def send_expo_push(token: str, title: str, body: str, data: Optional[dict]
                     "to": token,
                     "title": title,
                     "body": body,
-                    "data": data or {},
+                    "data": data_dict,
                     "sound": "default",
                     "priority": "high",
-                    "channelId": "default",
+                    "channelId": channel_id,
                     "_displayInForeground": True,
                 },
             )

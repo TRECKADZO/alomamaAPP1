@@ -99,9 +99,14 @@ function getExpoProjectId(): string | undefined {
 /**
  * Crée le canal de notifications Android (REQUIS sur Android 8+).
  * Importance HIGH pour que la notif apparaisse en pop-up + sonne + vibre.
+ *
+ * On crée aussi un canal "calls" dédié aux appels entrants téléconsultation
+ * avec son continu + vibration prolongée (comme un appel téléphonique).
  */
 async function setupAndroidChannel() {
   if (Platform.OS !== "android") return;
+
+  // Canal par défaut : rappels, messages, etc.
   await Notifications.setNotificationChannelAsync("default", {
     name: "Notifications À lo Maman",
     description: "Rappels RDV, conseils santé, messages des Pros",
@@ -113,6 +118,21 @@ async function setupAndroidChannel() {
     enableLights: true,
     showBadge: true,
     bypassDnd: false,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+  });
+
+  // Canal "calls" : téléconsultation appels entrants — MAX priorité
+  await Notifications.setNotificationChannelAsync("calls", {
+    name: "Appels téléconsultation",
+    description: "Notifications sonores quand un Pro ou une patiente vous appelle en visio",
+    importance: Notifications.AndroidImportance.MAX, // full-screen heads-up + son continu
+    vibrationPattern: [0, 1000, 500, 1000, 500, 1000], // long ring pattern
+    lightColor: "#10B981",
+    sound: "default",
+    enableVibrate: true,
+    enableLights: true,
+    showBadge: true,
+    bypassDnd: true, // passe même en mode Ne-pas-déranger
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
   });
 }

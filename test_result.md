@@ -556,8 +556,8 @@ backend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.3"
-  test_sequence: 7
+  version: "1.4"
+  test_sequence: 8
   run_ui: false
 
 test_plan:
@@ -565,6 +565,66 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend:
+  - task: "Téléconsultation RING — POST /api/teleconsultation/ring/{rdv_id}"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          31/31 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_ring.py).
+
+          🅰 Pro rings Maman (11/11 PASS):
+          • Login pro.test@alomaman.dev / Test1234! → 200; login maman.test@alomaman.dev / Test1234! → 200.
+          • Existing RDV c0288555-…-74ce4 was NOT owned by this pair (pro rotated since Agora test), so script auto-created a fresh RDV (mode=teleconsultation, type_consultation=prenatale) via POST /rdv → rdv_id=67df8edc-….
+          • POST /teleconsultation/ring/{rdv_id} as Pro → 200 with body {ok:true, called:'<maman_id>', title:'📞 Dr Konan TestPro vous appelle', body:'Téléconsultation en cours — Touchez pour rejoindre', has_push_token:false}. Title includes the "Dr " prefix since pro's name does not already start with "dr" (regex-insensitive check at server.py L2386-2388 works). ✓
+          • Verified via GET /api/notifications as maman: a NEW notification of type='incoming_call' was inserted with rdv_id matching the request path, caller_id=<pro_id>, read=false, title matching the response body. ✓
+
+          🅱 Maman rings Pro — reverse (6/6 PASS):
+          • POST /teleconsultation/ring/{rdv_id} as Maman → 200 with body.called=<pro_id>. ✓
+          • GET /api/notifications as Pro shows a new incoming_call notif with caller_id=<maman_id>, rdv_id correct. ✓
+          • Confirms the "other party" logic at server.py L2372-2374 (callee = maman_id if caller==pro else pro_id) works in both directions.
+
+          🅲 Authorization — other user denied (1/1 PASS):
+          • Registered fresh maman_ring_<ts>@test.alomaman.dev (full RGPD consent) → POST ring on the RDV that doesn't belong to her → 403 {detail:"Accès refusé"}. ✓
+
+          🅳 RDV not found (1/1 PASS):
+          • POST /teleconsultation/ring/non-existent-id-xyz-99999 → 404 {detail:"RDV introuvable"}. ✓
+
+          🅴 Unauthenticated (1/1 PASS):
+          • POST without Bearer → 401 {detail:"Non authentifié"}. ✓
+
+          🅵 Push send verification with fake token (3/3 PASS):
+          • POST /push-token {token:'ExponentPushToken[FAKE-TEST-TOKEN-FOR-RING-SCENARIO-123]'} as Maman → 200.
+          • POST /teleconsultation/ring/{rdv_id} as Pro → 200 with has_push_token=true (the endpoint actually attempted to send via Expo).
+          • Backend logs confirmed the actual Expo call was made: "⚠️ Expo push ERROR: …ExponentPushToken[FAKE-TEST-TOKEN-FOR-RING-SCENARIO-123]… is not a valid Expo push token | details={'error':'DeviceNotRegistered',…}". This proves send_expo_push was invoked AND the endpoint still returned 200 despite the push failure (error is swallowed by server.py L4781-…). ✓
+
+          🅶 Backward compatibility (3/3 PASS):
+          • POST /teleconsultation/agora-token/{rdv_id} → 200 with full {app_id, channel, token, uid, expires_at} body. ✓
+          • POST /teleconsultation/room/{rdv_id} → 200 with room_url='https://meet.jit.si/alomaman-67df8edc'. ✓
+          • POST /push-token/test → 200 (returns {ok:true, sent_to:…}), no regression from the new ring endpoint. ✓
+
+          IMPLEMENTATION REVIEW (server.py L2357-2432):
+          • Auth+ownership guards are in place (401 no-bearer via get_current_user; 404 missing rdv; 403 user ∉ [maman_id, pro_id]).
+          • Caller/callee resolution correctly swaps maman↔pro.
+          • caller name prefixed with "Dr " when role=professionnel and name doesn't already start with "dr" (case-insensitive).
+          • Writes db.notifications doc with full expected shape: {id, user_id, title, body, type:'incoming_call', read:false, created_at, rdv_id, caller_id}.
+          • Calls send_expo_push ONLY when callee.push_token is truthy; push errors are logged but the endpoint still returns 200.
+          • Response includes {ok, called, title, body, has_push_token:bool} — matches spec exactly.
+
+          NO BUGS DETECTED. Endpoint is production-ready. Cleanup OK: third-party maman account deleted and maman push_token reset to empty string at end of run.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Teleconsultation RING endpoint (POST /api/teleconsultation/ring/{rdv_id}) fully validated — 31/31 scenarios PASS. Pro↔Maman bidirectional ring works, in-app notifications of type='incoming_call' created with rdv_id + caller_id, Expo push is invoked when callee has a token (verified in backend logs), 401/403/404 guards all correct, and backward compatibility with Agora/Jitsi/push-token-test endpoints confirmed. Test script: /app/backend_test_ring.py. No issues to fix.
 
 backend:
   - task: "Téléconsultation Agora.io — POST /api/teleconsultation/agora-token/{rdv_id}"

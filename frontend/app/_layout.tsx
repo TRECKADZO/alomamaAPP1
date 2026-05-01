@@ -35,7 +35,10 @@ function NotificationsBridge() {
       onNotificationTap: (response) => {
         const data: any = response.notification.request.content.data || {};
         // Routes ciblées selon le type
-        if (data.type === "rdv" || data.type === "rdv_confirmation" || data.type === "rdv_cancellation") {
+        if (data.type === "incoming_call" && data.rdv_id) {
+          // 📞 Appel entrant → ouvrir directement l'écran téléconsultation
+          router.push(`/video-call/${data.rdv_id}` as any);
+        } else if (data.type === "rdv" || data.type === "rdv_confirmation" || data.type === "rdv_cancellation") {
           router.push("/(tabs)/rdv" as any);
         } else if (data.type === "message") {
           if (data.conversation_id) router.push(`/chat/${data.conversation_id}` as any);

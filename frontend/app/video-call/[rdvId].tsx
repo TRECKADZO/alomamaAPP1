@@ -173,6 +173,10 @@ export default function VideoCall() {
 
       // 5. Rejoindre le canal
       engine.joinChannel(info.token, info.channel, info.uid, {});
+
+      // 6. Sonner l'autre participant (push notification avec deep link)
+      // Fire-and-forget : on ne bloque pas l'entrée dans la salle si ça échoue.
+      api.post(`/teleconsultation/ring/${rdvId}`).catch(() => {});
     } catch (e: any) {
       Alert.alert("Erreur Agora", formatError(e));
       setLoading(false);
@@ -186,6 +190,8 @@ export default function VideoCall() {
     setLoading(true);
     try {
       const { data } = await api.post(`/teleconsultation/room/${rdvId}`);
+      // Sonner l'autre participant en parallèle (fire-and-forget)
+      api.post(`/teleconsultation/ring/${rdvId}`).catch(() => {});
       await Linking.openURL(data.room_url);
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
