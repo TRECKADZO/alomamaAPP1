@@ -2259,3 +2259,69 @@ agent_communication:
       ACTION USER : Pour activer la vidéo HD Agora, il faut faire un EAS build :
         eas build --platform android --profile preview
       Sur Expo Go, l'app utilise automatiquement Jitsi en fallback.
+
+
+backend:
+  - task: "Push Notifications Debug & Test endpoints (/api/push-token/me, /api/push-token, /api/push-token/test)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          22/22 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_push.py).
+
+          🅰 GET /api/push-token/me (initial) — 4/4 PASS
+          • Login maman.test@alomaman.dev / Test1234! → OK.
+          • GET /api/push-token/me → 200 with {user_id, has_token:false, token_preview:null} initially.
+
+          🅱 POST /api/push-token (register fake) — 2/2 PASS
+          • POST body {"token":"ExponentPushToken[ABC123FAKE_TOKEN_XYZ]"} → 200 {"ok":true}.
+          • Backend log "📱 Push token enregistré pour user <id> : ExponentPushToken[ABC123FAKE_T..." seen.
+
+          🅲 GET /api/push-token/me (after register) — 3/3 PASS
+          • has_token=true.
+          • token_preview="ExponentPushToken[ABC123FAKE_TOKEN_X..." (first 40 chars + "...").
+
+          🅳 POST /api/push-token/test — 3/3 PASS + log verification
+          • Returns 200 {"ok":true, "sent_to":"ExponentPushToken[ABC123FAKE_T..."}.
+          • Backend log captured:
+            "2026-05-01 10:57:39 - WARNING - ⚠️  Expo push ERROR: \"ExponentPushToken[ABC123FAKE_TOKEN_XYZ]\" is not a valid Expo push token | details={'error': 'DeviceNotRegistered', 'expoPushToken': 'ExponentPushToken[ABC123FAKE_TOKEN_XYZ]'} | token=ExponentPushToken[ABC123FAKE_T..."
+          • Followed by "🗑️  Token Expo invalide supprimé de la DB" confirming auto-cleanup.
+          • In-app notification created in db.notifications (type="test").
+
+          🅴 Auto-clear on DeviceNotRegistered — 2/2 PASS
+          • Subsequent GET /api/push-token/me → has_token=false, token_preview=null (token wiped by $unset in send_expo_push L4747).
+
+          🅵 Edge case — POST /api/push-token/test without token — 3/3 PASS
+          • Registered fresh user push_test_<ts>@test.alomaman.dev (role=maman, full RGPD consents).
+          • POST /api/push-token/test → 400 detail="Aucun token push enregistré pour cet utilisateur. Connectez-vous depuis l'APK pour en générer un." ✓.
+          • Cleanup: fresh user DELETEd via /auth/me.
+
+          🅶 Backwards compat — push_notif() helper — 3/3 PASS
+          • Maman creates RDV with pro (pro_id, date=+14d, motif="Test notif push", tarif_fcfa=5000) → 200.
+          • db.notifications count for pro grew from 1 → 2 (pro received "Nouveau rendez-vous" notification via push_notif()).
+          • Cleanup: RDV deleted.
+
+          🅷 Implementation review (server.py L4700-4754)
+          ✓ send_expo_push builds the Expo payload with priority="high", channelId="default", sound="default", _displayInForeground=True (L4728-4731).
+          ✓ Logs "✅ Expo push OK" on success with id; "⚠️  Expo push ERROR" on error with details.
+          ✓ DeviceNotRegistered handler triggers `db.users.update_many({"push_token": token}, {"$unset": {"push_token": ""}})` + "🗑️  Token Expo invalide supprimé de la DB" (L4746-4748).
+          ✓ Guards invalid/empty token at L4710 (must start with "ExponentPushToken").
+          ✓ httpx async call with 10s timeout.
+
+          NO BUGS DETECTED. All 3 debug endpoints + auto-clear logic + backwards-compat push_notif() are production-ready.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      ✅ Push notification debug endpoints fully validated (22/22 PASS).
+      - /api/push-token/me, POST /api/push-token, POST /api/push-token/test all behave per spec.
+      - Auto-cleanup on DeviceNotRegistered Expo error confirmed via logs + DB (fake token was wiped after test call).
+      - send_expo_push uses priority="high" + channelId="default" + sound="default" as required.
+      - Backwards compat confirmed: RDV creation still pushes a notification to the pro via push_notif() → db.notifications row inserted.

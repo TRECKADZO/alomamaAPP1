@@ -4035,7 +4035,46 @@ async def mark_all_read(user=Depends(get_current_user)):
 @api.post("/push-token")
 async def save_push_token(payload: PushTokenIn, user=Depends(get_current_user)):
     await db.users.update_one({"id": user["id"]}, {"$set": {"push_token": payload.token}})
+    logger.info(f"📱 Push token enregistré pour user {user['id']} : {payload.token[:30]}...")
     return {"ok": True}
+
+
+@api.get("/push-token/me")
+async def get_my_push_token(user=Depends(get_current_user)):
+    """Diagnostic : retourne le token push enregistré pour l'utilisateur courant."""
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "push_token": 1})
+    return {
+        "user_id": user["id"],
+        "has_token": bool(u and u.get("push_token")),
+        "token_preview": (u.get("push_token", "")[:40] + "...") if u and u.get("push_token") else None,
+    }
+
+
+@api.post("/push-token/test")
+async def test_push_to_self(user=Depends(get_current_user)):
+    """Envoie une notification push de test à l'utilisateur courant.
+    Utile pour vérifier toute la chaîne (token → Expo → FCM → device).
+    """
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "push_token": 1, "name": 1})
+    if not u or not u.get("push_token"):
+        raise HTTPException(400, "Aucun token push enregistré pour cet utilisateur. Connectez-vous depuis l'APK pour en générer un.")
+    await send_expo_push(
+        u["push_token"],
+        "🔔 Test À lo Maman",
+        f"Bonjour {u.get('name', 'Maman')}, ceci est une notification de test. Si vous la voyez, tout fonctionne ! 🎉",
+        {"type": "test", "via": "manual_test"},
+    )
+    # Crée aussi une notif in-app pour la cloche
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "title": "🔔 Test À lo Maman",
+        "body": "Notification de test envoyée. Vérifiez votre barre de notifications.",
+        "type": "test",
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True, "sent_to": u["push_token"][:30] + "..."}
 
 
 # Helper to create in-app notification
@@ -4662,17 +4701,55 @@ async def dossier_public(token: str):
 # Send Expo Push (real push, best-effort)
 # ----------------------------------------------------------------------
 async def send_expo_push(token: str, title: str, body: str, data: Optional[dict] = None):
-    """Send an Expo push via the public Expo Push API. Silently no-ops on failure."""
+    """Send an Expo push via the public Expo Push API.
+    - priority=high : déclenche FCM en mode HIGH → la notif réveille le téléphone et apparaît immédiatement
+    - channelId=default : utilise le canal HIGH configuré côté frontend (pop-up + son)
+    - sound=default : son système Android
+    Logs explicitement la réponse Expo pour debug.
+    """
     if not token or not token.startswith("ExponentPushToken"):
+        logger.info(f"send_expo_push: token invalide ou vide ({token[:30] if token else 'None'}...)")
         return
     try:
         import httpx  # type: ignore
-        async with httpx.AsyncClient(timeout=5.0) as http:
-            await http.post(
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            r = await http.post(
                 "https://exp.host/--/api/v2/push/send",
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
-                json={"to": token, "title": title, "body": body, "data": data or {}, "sound": "default"},
+                headers={
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "to": token,
+                    "title": title,
+                    "body": body,
+                    "data": data or {},
+                    "sound": "default",
+                    "priority": "high",
+                    "channelId": "default",
+                    "_displayInForeground": True,
+                },
             )
+            try:
+                resp = r.json()
+                # Expo renvoie {"data": {"status": "ok", "id": "..."}} ou {"data": {"status": "error", "message": "..."}}
+                if isinstance(resp, dict):
+                    inner = resp.get("data", {})
+                    if isinstance(inner, dict):
+                        status_val = inner.get("status")
+                        if status_val == "error":
+                            err_msg = inner.get("message", "unknown")
+                            err_details = inner.get("details", {})
+                            logger.warning(f"⚠️  Expo push ERROR: {err_msg} | details={err_details} | token={token[:30]}...")
+                            # Si DeviceNotRegistered, on supprime le token de la DB
+                            if err_details.get("error") == "DeviceNotRegistered":
+                                await db.users.update_many({"push_token": token}, {"$unset": {"push_token": ""}})
+                                logger.info(f"🗑️  Token Expo invalide supprimé de la DB")
+                        else:
+                            logger.info(f"✅ Expo push OK: {title} → {token[:30]}... id={inner.get('id', '?')}")
+            except Exception:
+                logger.info(f"Expo push response non-json (status={r.status_code})")
     except Exception as e:  # noqa
         logger.info(f"Expo push skipped: {e}")
 
