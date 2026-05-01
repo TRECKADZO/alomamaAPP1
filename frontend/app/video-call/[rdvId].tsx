@@ -65,7 +65,6 @@ export default function VideoCall() {
   const [networkQuality, setNetworkQuality] = useState<number>(0); // 0=unknown 1=excellent 6=down
   const [callDuration, setCallDuration] = useState(0);
   const [agoraReady, setAgoraReady] = useState(false);
-  const [tokenInfo, setTokenInfo] = useState<AgoraToken | null>(null);
 
   const engineRef = useRef<any>(null);
   const timerRef = useRef<any>(null);
@@ -131,7 +130,6 @@ export default function VideoCall() {
       // 1. Récupérer le token sécurisé
       const { data } = await api.post(`/teleconsultation/agora-token/${rdvId}`);
       const info: AgoraToken = data;
-      setTokenInfo(info);
 
       // 2. Initialiser le moteur
       const engine = createAgoraRtcEngine();
@@ -392,14 +390,6 @@ export default function VideoCall() {
           {isMaman && <Tip icon="document-text" text="Préparez vos questions et votre carnet de santé" />}
           {isPro && <Tip icon="shield-checkmark" text="Confidentialité : aucun enregistrement par défaut" />}
         </View>
-
-        {tokenInfo && AgoraSDK && (
-          <View style={styles.diagBox}>
-            <Text style={styles.diagLabel}>Diagnostic</Text>
-            <Text style={styles.diagText}>Channel : {tokenInfo.channel}</Text>
-            <Text style={styles.diagText}>UID : {tokenInfo.uid}</Text>
-          </View>
-        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -438,9 +428,6 @@ const styles = StyleSheet.create({
   tipsTitle: { fontSize: 14, fontWeight: "800", color: "#1E40AF", marginBottom: 8 },
   tipRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },
   tipText: { flex: 1, fontSize: 12, color: "#1E40AF" },
-  diagBox: { width: "100%", marginTop: 16, padding: 10, backgroundColor: "#0F172A", borderRadius: 10 },
-  diagLabel: { fontSize: 10, color: "#06B6D4", fontWeight: "800", textTransform: "uppercase" },
-  diagText: { fontSize: 11, color: "#CBD5E1", marginTop: 3, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
 
   // ===== Call mode plein écran =====
   callContainer: { flex: 1, backgroundColor: "#000" },
