@@ -25,6 +25,15 @@ export default function DashboardHome() {
   const [data, setData] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [unreadNotif, setUnreadNotif] = useState(0);
+
+  const loadUnread = async () => {
+    try {
+      const r = await api.get("/notifications");
+      const cnt = (r.data || []).filter((n: any) => !n.read).length;
+      setUnreadNotif(cnt);
+    } catch {}
+  };
 
   const load = async () => {
     try {
@@ -60,7 +69,7 @@ export default function DashboardHome() {
     }
   };
 
-  useFocusEffect(useCallback(() => { load(); }, [user]));
+  useFocusEffect(useCallback(() => { load(); loadUnread(); }, [user]));
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -168,6 +177,11 @@ function MamanDash({ user, data, router }: any) {
               testID="notif-btn"
             >
               <Ionicons name="notifications-outline" size={18} color={COLORS.textPrimary} />
+              {unreadNotif > 0 && (
+                <View style={styles.notifBadge}>
+                  <Text style={styles.notifBadgeText}>{unreadNotif > 9 ? "9+" : unreadNotif}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -743,6 +757,27 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.7)",
     alignItems: "center",
     justifyContent: "center",
+    position: "relative",
+  },
+  notifBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: "#EF4444",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+  notifBadgeText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "800",
+    lineHeight: 12,
   },
 
   body: { padding: SPACING.lg, gap: SPACING.lg },
