@@ -1,6 +1,5 @@
-import { useEffect } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity, ActivityIndicator, ScrollView, Dimensions, Platform } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { useAuth } from "../lib/auth";
 import { COLORS, IMAGES, RADIUS, SPACING } from "../constants/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,12 +10,6 @@ export default function Landing() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  useEffect(() => {
-    if (!loading && user) {
-      router.replace("/(tabs)");
-    }
-  }, [loading, user]);
-
   if (loading) {
     return (
       <View style={styles.loading} testID="splash-loading">
@@ -25,7 +18,12 @@ export default function Landing() {
     );
   }
 
-  if (user) return null;
+  // Si l'utilisateur est connecté, on redirige immédiatement vers les onglets.
+  // L'usage de <Redirect> évite l'effet "page blanche" lors d'un appui sur le
+  // bouton retour matériel depuis l'accueil après login.
+  if (user) {
+    return <Redirect href="/(tabs)" />;
+  }
 
   // Hero adaptatif selon hauteur écran : 38% max 360, 240 min
   const screenH = Dimensions.get("window").height;

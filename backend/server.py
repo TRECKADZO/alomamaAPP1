@@ -3240,6 +3240,10 @@ async def list_resources(
     query: dict = {"published": True}
     if type in ("video", "fiche", "quiz"):
         query["type"] = type
+    else:
+        # Par défaut, on EXCLUT les vidéos (YouTube embeds bloqués Error 153 dans Expo WebView).
+        # Les vidéos seront réintroduites quand un hébergement MP4/CDN sera en place.
+        query["type"] = {"$ne": "video"}
     if category and category != "toutes":
         query["category"] = category
     if q:

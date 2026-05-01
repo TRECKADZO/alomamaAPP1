@@ -47,7 +47,7 @@ export default function RootLayout() {
                 <Stack.Screen name="(auth)" />
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="chat/[id]" options={{ presentation: "card" }} />
-                <Stack.Screen name="video-call/[rid]" options={{ presentation: "fullScreenModal", headerShown: false }} />
+                <Stack.Screen name="video-call/[rdvId]" options={{ presentation: "fullScreenModal", headerShown: false }} />
                 <Stack.Screen name="cycle" />
                 <Stack.Screen name="contraception" />
                 <Stack.Screen name="post-partum" />

@@ -9,6 +9,9 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  BackHandler,
+  ToastAndroid,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -26,6 +29,26 @@ export default function DashboardHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [unreadNotif, setUnreadNotif] = useState(0);
+
+  // Bouton retour matériel Android : double-tap pour quitter l'app
+  // (évite le saut vers une page blanche / Landing si l'historique est vide)
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== "android") return;
+      let lastBackPress = 0;
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        const now = Date.now();
+        if (now - lastBackPress < 2000) {
+          BackHandler.exitApp();
+          return true;
+        }
+        lastBackPress = now;
+        try { ToastAndroid.show("Appuyez à nouveau pour quitter", ToastAndroid.SHORT); } catch {}
+        return true; // bloque le retour par défaut
+      });
+      return () => sub.remove();
+    }, [])
+  );
 
   const loadUnread = async () => {
     try {

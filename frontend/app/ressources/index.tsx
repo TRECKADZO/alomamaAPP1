@@ -26,7 +26,6 @@ const CATS = [
 
 const TYPES = [
   { value: "", label: "Tous", icon: "layers" },
-  { value: "video", label: "Vidéos", icon: "play-circle" },
   { value: "fiche", label: "Fiches", icon: "document-text" },
   { value: "quiz", label: "Quiz", icon: "help-circle" },
 ];
