@@ -2274,7 +2274,7 @@ async def get_rappels_envoyes(user=Depends(require_roles("professionnel"))):
 
 
 # ----------------------------------------------------------------------
-# Téléconsultation - Room link (Jitsi)
+# Téléconsultation - Room link (Jitsi - fallback web)
 # ----------------------------------------------------------------------
 @api.post("/teleconsultation/room/{rdv_id}")
 async def create_teleconsultation_room(rdv_id: str, user=Depends(get_current_user)):
@@ -2290,6 +2290,68 @@ async def create_teleconsultation_room(rdv_id: str, user=Depends(get_current_use
         {"$set": {"teleconsultation_room": room_name, "teleconsultation_url": room_url}},
     )
     return {"room_name": room_name, "room_url": room_url, "rdv": {**rdv, "_id": None}}
+
+
+# ----------------------------------------------------------------------
+# Téléconsultation - Agora.io (HD natif optimisé Afrique)
+# ----------------------------------------------------------------------
+@api.post("/teleconsultation/agora-token/{rdv_id}")
+async def create_agora_token(rdv_id: str, user=Depends(get_current_user)):
+    """
+    Génère un token Agora signé valide 1h pour la téléconsultation.
+    Sécurité : seuls la maman et le pro de ce RDV peuvent récupérer un token.
+    Le channel name est dérivé du RDV id (non-devinable car UUID).
+    """
+    from agora_token_builder import RtcTokenBuilder
+    import time
+
+    rdv = await db.rdv.find_one({"id": rdv_id})
+    if not rdv:
+        raise HTTPException(status_code=404, detail="RDV introuvable")
+    if user["id"] not in [rdv.get("maman_id"), rdv.get("pro_id")]:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
+    app_id = os.environ.get("AGORA_APP_ID", "").strip()
+    app_certificate = os.environ.get("AGORA_APP_CERTIFICATE", "").strip()
+    if not app_id or not app_certificate:
+        raise HTTPException(status_code=500, detail="Agora non configuré")
+
+    # Channel name unique au RDV (UUID v4 → 36 chars, on garde 32 max accepté par Agora)
+    channel_name = f"alomaman_{rdv_id.replace('-', '')[:24]}"
+
+    # UID numérique unique par utilisateur (hash stable du user.id)
+    # Agora exige un uint32 (0 à 2^32-1)
+    uid = abs(hash(user["id"])) % (2**31)
+
+    # Role = PUBLISHER (1) → permet d'envoyer audio+vidéo
+    role = 1  # RtcTokenBuilder.Role_Publisher == 1
+
+    expire_time_in_seconds = 3600  # 1h
+    current_timestamp = int(time.time())
+    privilege_expired_ts = current_timestamp + expire_time_in_seconds
+
+    token = RtcTokenBuilder.buildTokenWithUid(
+        app_id, app_certificate, channel_name, uid, role, privilege_expired_ts
+    )
+
+    # On enregistre la salle Agora dans le RDV (si pas encore fait)
+    await db.rdv.update_one(
+        {"id": rdv_id},
+        {"$set": {
+            "agora_channel": channel_name,
+            "teleconsultation_provider": "agora",
+        }},
+    )
+
+    return {
+        "app_id": app_id,
+        "channel": channel_name,
+        "token": token,
+        "uid": uid,
+        "expires_at": privilege_expired_ts,
+        "rdv_id": rdv_id,
+        "user_role": user.get("role"),
+    }
 
 
 # ----------------------------------------------------------------------

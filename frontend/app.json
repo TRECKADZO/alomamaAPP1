@@ -62,7 +62,11 @@
           "android": {
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
-            "extraProguardRules": "-keep class com.alomaman.** { *; }\n-keepattributes SourceFile,LineNumberTable\n-renamesourcefileattribute SourceFile"
+            "extraProguardRules": "-keep class com.alomaman.** { *; }\n-keep class io.agora.** { *; }\n-dontwarn io.agora.**\n-keepattributes SourceFile,LineNumberTable\n-renamesourcefileattribute SourceFile",
+            "minSdkVersion": 24
+          },
+          "ios": {
+            "deploymentTarget": "15.1"
           }
         }
       ],

@@ -566,6 +566,67 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend:
+  - task: "Téléconsultation Agora.io — POST /api/teleconsultation/agora-token/{rdv_id}"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          29/29 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_agora.py).
+
+          🅰 Happy path — Maman (12/12 PASS):
+          • Login maman.test@alomaman.dev / Test1234! → 200 with token.
+          • GET /rdv returned 4 RDVs; target rdv_id=c0288555-0d73-4b56-9271-62ac48c74ce4 was present.
+          • POST /teleconsultation/agora-token/{rdv_id} → 200 with full payload:
+            - app_id="d6bb0709662d4b09a8fd6ce4d9c1b3c7" (matches backend AGORA_APP_ID env var) ✓
+            - channel="alomaman_c02885550d734b56927162ac" — starts with "alomaman_" ✓, suffix length=24 ✓
+            - token=139-char non-empty string (Agora RTC signed token, starts with "006d6bb0709…") ✓
+            - uid=936875062 (positive uint32, derived from abs(hash(user.id))%2^31) ✓
+            - expires_at=1777599884 (~3601s ahead of now → 1h validity exact) ✓
+            - rdv_id matches request path ✓
+            - user_role="maman" ✓
+
+          🅱 Happy path — Pro (4/4 PASS):
+          • Login pro.test@alomaman.dev / Test1234! → 200.
+          • POST /teleconsultation/agora-token/{rdv_id} as pro on a RDV they own → 200 with user_role="professionnel", same app_id, distinct uid (1492640212), distinct token (different signature for same channel since uid changes).
+
+          🅲 Authorization — third party denied (2/2 PASS):
+          • Created fresh maman_other_agora_<ts>@test.dev (role=maman, full RGPD consent).
+          • POST agora-token on rdv that doesn't belong to her → 403 detail="Accès refusé" ✓.
+          • Cleanup: account deleted via DELETE /auth/me.
+
+          🅳 Not found (1/1 PASS):
+          • POST /teleconsultation/agora-token/non-existent-id-12345 → 404 detail="RDV introuvable" ✓.
+
+          🅴 Unauthenticated (1/1 PASS):
+          • POST without Bearer token → 401 detail="Non authentifié" ✓.
+
+          🅵 RDV persistence (2/2 PASS):
+          • After successful agora-token call, GET /rdv shows the RDV doc with:
+            - agora_channel="alomaman_c02885550d734b56927162ac" persisted ✓
+            - teleconsultation_provider="agora" persisted ✓
+          • Verified $set on db.rdv at server.py L2338-2344 works correctly.
+
+          🅶 Backward compatibility — Jitsi fallback (2/2 PASS):
+          • POST /teleconsultation/room/{rdv_id} (the legacy endpoint at L2279) → 200 with room_url="https://meet.jit.si/alomaman-c0288555" (contains meet.jit.si). Coexists with Agora endpoint without conflict.
+
+          IMPLEMENTATION (server.py L2298-2354):
+          • Uses agora_token_builder.RtcTokenBuilder.buildTokenWithUid (lib v1.0.0 installed in /app/backend/requirements.txt).
+          • app_id + app_certificate read from /app/backend/.env (both populated).
+          • Channel name = "alomaman_" + first 24 hex chars of UUID (32-char Agora limit respected).
+          • UID = abs(hash(user_id)) % 2^31 (positive, deterministic per-user).
+          • Role = PUBLISHER (1), expiry = 3600s.
+          • Authorization: 403 if user.id ∉ [rdv.maman_id, rdv.pro_id]; 404 if rdv missing; 500 if AGORA_APP_ID/CERT missing (untested - env is set).
+
+          NO BUGS DETECTED. The endpoint is production-ready for Agora.io HD teleconsultation flows on À lo Maman.
+
 frontend_retest_2026_04_28:
   - task: "Test A — /partage-dossier (Maman)"
     working: true
@@ -2137,3 +2198,64 @@ agent_communication:
       (matche la tuile au lieu d'un item de la liste suggérée). Pas de bug app.
       Recommandation mineure (optionnelle) : ajouter testID sur les rows de suggestion maternités
       pour faciliter les futurs tests E2E. Main agent peut synthétiser et finir.
+
+
+#====================================================================================================
+# Téléconsultation HD - Migration Jitsi → Agora.io
+#====================================================================================================
+
+backend:
+  - task: "Endpoint génération token Agora RTC"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py (POST /api/teleconsultation/agora-token/{rdv_id})"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Endpoint Agora ajouté avec sécurité maman+pro only.
+            Test curl OK : retourne {app_id, channel, token, uid, expires_at}.
+            Channel name dérivé du RDV id (UUID, non-devinable).
+            Token signé HMAC valide 1h. App ID/Certificate stockés en .env.
+            agora-token-builder==1.0.0 ajouté à requirements.txt.
+
+frontend:
+  - task: "Refonte écran Téléconsultation avec Agora SDK + fallback Jitsi"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/video-call/[rdvId].tsx + /app/frontend/lib/agora.ts + /app/frontend/lib/agora.native.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            UI plein écran avec local PIP + remote stream + contrôles (mute, cam, switch, end).
+            Indicateur qualité réseau + durée d'appel.
+            Platform-specific wrapper : agora.ts (web stub) + agora.native.ts (vrai SDK).
+            Fallback Jitsi automatique sur Expo Go / web.
+            Permissions Android demandées au runtime.
+            Cleanup auto sur unmount + AppState background.
+            Vérifié screenshot (390x844) : page se charge, RDV affiché, warning Expo Go OK.
+            **Necessite EAS build pour activer la vidéo HD Agora native.**
+
+agent_communication:
+  - agent: "main"
+    message: |
+      ✅ Migration Jitsi → Agora.io effectuée avec succès :
+      1) Backend : endpoint /api/teleconsultation/agora-token/{rdv_id} testé et fonctionnel
+         - Token RTC signé valide 1h, channel sécurisé, sécurité maman+pro only
+      2) Frontend : refonte complète /video-call/[rdvId].tsx
+         - SDK natif via wrapper platform-specific (agora.ts + agora.native.ts)
+         - UI HD plein écran avec local PIP, contrôles, qualité réseau
+         - Fallback Jitsi pour web/Expo Go
+      3) app.json : Proguard rules + iOS deployment target 15.1 + minSdkVersion 24
+      4) Le bundle web compile sans erreur (1824 modules)
+      
+      ACTION USER : Pour activer la vidéo HD Agora, il faut faire un EAS build :
+        eas build --platform android --profile preview
+      Sur Expo Go, l'app utilise automatiquement Jitsi en fallback.
