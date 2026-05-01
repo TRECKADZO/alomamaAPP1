@@ -20,11 +20,11 @@
     },
     "android": {
       "package": "com.alomaman",
-      "versionCode": 2,
+      "versionCode": 3,
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#F4A754"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
@@ -50,9 +50,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 280,
           "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#F4A754"
         }
       ],
       "@react-native-community/datetimepicker",
