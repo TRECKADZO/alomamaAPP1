@@ -19,6 +19,68 @@ Notifications.setNotificationHandler({
 });
 
 /**
+ * Helpers de gestion du badge (le petit chiffre rouge sur l'icône de l'app).
+ * - iOS : natif
+ * - Android : la plupart des launchers (Pixel, Samsung, Xiaomi…) supportent via la notif channel
+ */
+export async function setBadgeCount(count: number): Promise<void> {
+  try {
+    if (Platform.OS === "web") return;
+    await Notifications.setBadgeCountAsync(Math.max(0, count));
+  } catch {
+    // ignore : pas critique
+  }
+}
+
+export async function clearBadge(): Promise<void> {
+  await setBadgeCount(0);
+}
+
+export async function getBadgeCount(): Promise<number> {
+  try {
+    if (Platform.OS === "web") return 0;
+    return await Notifications.getBadgeCountAsync();
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Setup des listeners pour :
+ *  1. Notifications reçues quand l'app est au premier plan (in-app banner)
+ *  2. Tap utilisateur sur une notif (depuis la barre système → ouvre l'app)
+ *
+ * Retourne une fonction de cleanup à appeler dans le useEffect parent.
+ */
+export function registerNotificationListeners(handlers: {
+  onForegroundReceive?: (n: Notifications.Notification) => void;
+  onNotificationTap?: (response: Notifications.NotificationResponse) => void;
+}): () => void {
+  const subs: Notifications.Subscription[] = [];
+
+  if (handlers.onForegroundReceive) {
+    subs.push(
+      Notifications.addNotificationReceivedListener((notif) => {
+        try { handlers.onForegroundReceive!(notif); } catch (e) { console.warn("onForegroundReceive error", e); }
+      })
+    );
+  }
+  if (handlers.onNotificationTap) {
+    subs.push(
+      Notifications.addNotificationResponseReceivedListener((response) => {
+        try { handlers.onNotificationTap!(response); } catch (e) { console.warn("onNotificationTap error", e); }
+      })
+    );
+  }
+
+  return () => {
+    subs.forEach((s) => {
+      try { s.remove(); } catch {}
+    });
+  };
+}
+
+/**
  * Récupère le projectId Expo (nécessaire pour Android FCM en production).
  * Source : app.json → extra.eas.projectId, OU constante Expo.
  */

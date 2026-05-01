@@ -156,6 +156,25 @@ export default function Profil() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Paramètres</Text>
             <MenuRow icon="notifications-outline" label="Notifications" onPress={() => router.push("/notifications")} />
+            <MenuRow
+              icon="paper-plane-outline"
+              iconColor="#10B981"
+              label="Tester une notification push"
+              onPress={async () => {
+                try {
+                  const r = await api.post("/push-token/test");
+                  Alert.alert(
+                    "Notification envoyée 🚀",
+                    "Une notification de test vient d'être envoyée. Si vous êtes dans une APK installée, elle apparaîtra dans la barre Android. Sinon, vous la verrez aussi dans la liste « Notifications »."
+                  );
+                } catch (e: any) {
+                  Alert.alert(
+                    "Aucun token push",
+                    "Vous n'avez pas encore de token push enregistré. Connectez-vous depuis l'APK installée et acceptez l'autorisation des notifications."
+                  );
+                }
+              }}
+            />
             <MenuRow icon="lock-closed-outline" label="Sécurité & Mot de passe" onPress={() => router.push("/changer-mot-de-passe")} />
             <MenuRow icon="language-outline" label="Langue" value="Français" />
             <MenuRow icon="help-circle-outline" label="Aide & Support" />

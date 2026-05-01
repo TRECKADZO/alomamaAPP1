@@ -20,15 +20,16 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../lib/auth";
 import { api } from "../../lib/api";
 import { cachedGet } from "../../lib/offline";
+import { useNotifications } from "../../lib/notifications-context";
 import { COLORS, IMAGES, RADIUS, SHADOW, SPACING } from "../../constants/theme";
 
 export default function DashboardHome() {
   const { user } = useAuth();
   const router = useRouter();
+  const { unreadCount: unreadNotif } = useNotifications();
   const [data, setData] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [unreadNotif, setUnreadNotif] = useState(0);
 
   // Bouton retour matériel Android : double-tap pour quitter l'app
   // (évite le saut vers une page blanche / Landing si l'historique est vide)
@@ -51,11 +52,7 @@ export default function DashboardHome() {
   );
 
   const loadUnread = async () => {
-    try {
-      const r = await api.get("/notifications");
-      const cnt = (r.data || []).filter((n: any) => !n.read).length;
-      setUnreadNotif(cnt);
-    } catch {}
+    // Géré globalement par NotificationsProvider — gardé en compat pour ne rien casser
   };
 
   const load = async () => {
