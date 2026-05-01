@@ -90,7 +90,7 @@ export default function DashboardHome() {
         contentContainerStyle={{ paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
       >
-        {user?.role === "maman" && <MamanDash user={user} data={data} router={router} />}
+        {user?.role === "maman" && <MamanDash user={user} data={data} router={router} unreadNotif={unreadNotif} />}
         {user?.role === "professionnel" && <ProDash user={user} data={data} router={router} />}
         {user?.role === "admin" && <AdminDash user={user} data={data} router={router} />}
         {user?.role === "centre_sante" && <CentreDash user={user} router={router} />}
@@ -103,7 +103,7 @@ export default function DashboardHome() {
 /* ===========================================================
    DASHBOARD MAMAN — aligné sur src/pages/DashboardMaman.jsx
    =========================================================== */
-function MamanDash({ user, data, router }: any) {
+function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
   const g = data.grossesse;
   const enfants = data.enfants || [];
   const rdvList = (data.rdv || []).filter((r: any) => r.status !== "termine" && r.statut !== "termine");
