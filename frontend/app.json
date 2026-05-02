@@ -71,7 +71,7 @@
           "android": {
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
-            "extraProguardRules": "-keep class com.alomaman.** { *; }\n-keep class io.agora.** { *; }\n-dontwarn io.agora.**\n-keepattributes SourceFile,LineNumberTable\n-renamesourcefileattribute SourceFile",
+            "extraProguardRules": "-keep class com.alomaman.** { *; }\n-keep class io.agora.** { *; }\n-dontwarn io.agora.**\n-keepattributes SourceFile,LineNumberTable\n-renamesourcefileattribute SourceFile\n-keep class expo.modules.** { *; }\n-dontwarn expo.modules.**\n-keep class expo.modules.kotlin.** { *; }\n-dontwarn expo.modules.kotlin.**\n-keep class expo.modules.filesystem.** { *; }\n-dontwarn expo.modules.filesystem.**",
             "minSdkVersion": 24
           },
           "ios": {
