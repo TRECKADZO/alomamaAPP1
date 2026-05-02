@@ -1,14 +1,16 @@
 /**
- * Écran Pro — Vue du dossier patient après validation
+ * Écran Pro — Vue du dossier patient (maman ou enfant)
+ * - Clic sur un enfant de la maman → affiche son dossier dynamique
+ * - Affiche le dossier de grossesse en cours si la maman est enceinte
  */
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Image } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api, formatError } from "../../lib/api";
-import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 function ageOf(date_naissance?: string) {
   if (!date_naissance) return "";
@@ -18,9 +20,20 @@ function ageOf(date_naissance?: string) {
   return r > 0 ? `${a} an${a > 1 ? "s" : ""} ${r} m` : `${a} an${a > 1 ? "s" : ""}`;
 }
 
+function semaineGrossesse(date_debut?: string) {
+  if (!date_debut) return null;
+  const days = Math.floor((Date.now() - new Date(date_debut).getTime()) / 86400000);
+  const sa = Math.floor(days / 7);
+  const j = days % 7;
+  return `${sa} SA + ${j}j`;
+}
+
 export default function DossierPatient() {
   const router = useRouter();
-  const { id, type, token, nom } = useLocalSearchParams<{ id?: string; type?: string; token?: string; nom?: string }>();
+  const params = useLocalSearchParams<{ id?: string; type?: string; token?: string; nom?: string; via_parent?: string }>();
+  const { id, token, nom } = params;
+  const viaParent = params.via_parent;
+
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -29,18 +42,21 @@ export default function DossierPatient() {
     if (!id || !token) return;
     (async () => {
       try {
-        const r = await api.get(`/pro/patient/${id}/carnet`, { headers: { "X-Access-Token": token } });
+        const url = viaParent
+          ? `/pro/patient/${id}/carnet?via_parent=${viaParent}`
+          : `/pro/patient/${id}/carnet`;
+        const r = await api.get(url, { headers: { "X-Access-Token": token } });
         setData(r.data);
       } catch (e: any) { setErr(formatError(e)); }
       finally { setLoading(false); }
     })();
-  }, [id, token]);
+  }, [id, token, viaParent]);
 
   if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
   if (err) return (
     <SafeAreaView style={styles.loading}>
       <Ionicons name="close-circle" size={48} color="#EF4444" />
-      <Text style={{ color: "#EF4444", fontWeight: "700", marginTop: 8 }}>{err}</Text>
+      <Text style={{ color: "#EF4444", fontWeight: "700", marginTop: 8, textAlign: "center" }}>{err}</Text>
       <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 12 }}>
         <Text style={{ color: COLORS.primary, fontWeight: "700" }}>Retour</Text>
       </TouchableOpacity>
@@ -50,6 +66,23 @@ export default function DossierPatient() {
   const isEnfant = data?.type === "enfant";
   const subject = isEnfant ? data?.enfant : data?.maman;
   const enfants = data?.enfants || [];
+  const grossesse = data?.grossesse;
+  const rdvRecents = data?.rdv_recents || [];
+
+  // Helper pour ouvrir le dossier d'un enfant en utilisant le même token
+  const openChildFolder = (child: any) => {
+    if (!id || !token) return;
+    router.push({
+      pathname: "/pro/dossier-patient",
+      params: {
+        id: child.id,
+        type: "enfant",
+        token: token,
+        via_parent: id, // l'id de la maman
+        nom: child.nom,
+      },
+    } as any);
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -71,6 +104,7 @@ export default function DossierPatient() {
             {isEnfant && <Text style={styles.heroMeta}>{ageOf(subject?.date_naissance)} · {subject?.sexe === "F" ? "Fille" : "Garçon"}</Text>}
             {subject?.groupe_sanguin && <Text style={styles.heroMeta}>🩸 Groupe sanguin : {subject.groupe_sanguin}</Text>}
             {subject?.numero_cmu && <Text style={styles.heroMeta}>🏥 CMU : {subject.numero_cmu}</Text>}
+            {viaParent && <Text style={styles.heroMeta}>📋 Accès via le partage de la maman</Text>}
           </View>
         </LinearGradient>
 
@@ -92,6 +126,42 @@ export default function DossierPatient() {
           </View>
         )}
 
+        {/* 🤰 GROSSESSE EN COURS - visible uniquement pour la maman */}
+        {!isEnfant && grossesse && (
+          <View style={styles.grossesseCard}>
+            <View style={styles.grossesseHeader}>
+              <Text style={{ fontSize: 28 }}>🤰</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.grossesseTitle}>Grossesse en cours</Text>
+                {grossesse.date_debut && (
+                  <Text style={styles.grossesseSub}>
+                    {semaineGrossesse(grossesse.date_debut)}
+                    {grossesse.date_terme && ` · Terme prévu le ${new Date(grossesse.date_terme).toLocaleDateString("fr-FR")}`}
+                  </Text>
+                )}
+              </View>
+            </View>
+            <View style={styles.grossesseGrid}>
+              {grossesse.poids_initial && <Stat label="Poids initial" value={`${grossesse.poids_initial} kg`} />}
+              {grossesse.taille && <Stat label="Taille" value={`${grossesse.taille} cm`} />}
+              {grossesse.parite !== undefined && <Stat label="Parité" value={String(grossesse.parite)} />}
+              {grossesse.gestite !== undefined && <Stat label="Gestité" value={String(grossesse.gestite)} />}
+            </View>
+            {grossesse.antecedents && (
+              <View style={styles.grossesseRow}>
+                <Text style={styles.grossesseLabel}>Antécédents :</Text>
+                <Text style={styles.grossesseValue}>{grossesse.antecedents}</Text>
+              </View>
+            )}
+            {grossesse.notes && (
+              <View style={styles.grossesseRow}>
+                <Text style={styles.grossesseLabel}>Notes :</Text>
+                <Text style={styles.grossesseValue}>{grossesse.notes}</Text>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Infos de base */}
         <Text style={styles.sectionTitle}>Informations</Text>
         <View style={styles.card}>
@@ -100,6 +170,8 @@ export default function DossierPatient() {
           {subject?.poids_kg && <Row label="Poids" value={`${subject.poids_kg} kg`} />}
           {subject?.taille_cm && <Row label="Taille" value={`${subject.taille_cm} cm`} />}
           {subject?.ville && <Row label="Ville" value={subject.ville} />}
+          {subject?.phone && <Row label="Téléphone" value={subject.phone} />}
+          {subject?.email && <Row label="Email" value={subject.email} />}
         </View>
 
         {/* Vaccins pour enfant */}
@@ -122,26 +194,53 @@ export default function DossierPatient() {
           <>
             <Text style={styles.sectionTitle}>📏 Mesures ({subject.mesures.length})</Text>
             <View style={styles.card}>
-              {subject.mesures.slice(-5).map((m: any, i: number) => (
+              {subject.mesures.slice(-5).reverse().map((m: any, i: number) => (
                 <View key={i} style={styles.measureRow}>
                   <Text style={styles.measureDate}>{m.date ? new Date(m.date).toLocaleDateString("fr-FR") : "—"}</Text>
-                  <Text style={styles.measureVal}>{m.poids_kg ? `${m.poids_kg} kg` : ""} {m.taille_cm ? `· ${m.taille_cm} cm` : ""}</Text>
+                  <Text style={styles.measureVal}>{m.poids_kg ? `${m.poids_kg} kg` : ""} {m.taille_cm ? `· ${m.taille_cm} cm` : ""} {m.perimetre_cranien_cm ? `· PC ${m.perimetre_cranien_cm} cm` : ""}</Text>
                 </View>
               ))}
             </View>
           </>
         )}
 
-        {/* Enfants de la maman */}
+        {/* RDV récents avec ce pro */}
+        {rdvRecents.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>📅 Vos RDV avec {isEnfant ? "cet enfant" : "cette patiente"} ({rdvRecents.length})</Text>
+            <View style={styles.card}>
+              {rdvRecents.slice(0, 5).map((r: any, i: number) => (
+                <View key={i} style={styles.rdvRow}>
+                  <Text style={styles.rdvDate}>{new Date(r.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</Text>
+                  <Text style={styles.rdvMotif} numberOfLines={1}>{r.motif || "Consultation"}</Text>
+                  <Text style={[styles.rdvStatus, r.status === "confirme" ? styles.rdvOk : styles.rdvPending]}>{r.status === "confirme" ? "✓" : r.status === "annule" ? "✕" : "⏳"}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+
+        {/* Enfants de la maman - cliquables ! */}
         {!isEnfant && enfants.length > 0 && (
           <>
             <Text style={styles.sectionTitle}>👶 Enfants ({enfants.length})</Text>
+            <Text style={styles.tip}>Touchez un enfant pour ouvrir son dossier complet</Text>
             {enfants.map((e: any) => (
-              <View key={e.id} style={styles.childCard}>
-                <Text style={styles.childName}>{e.nom}</Text>
-                <Text style={styles.childMeta}>{ageOf(e.date_naissance)} · {e.sexe === "F" ? "Fille" : "Garçon"}</Text>
-                {e.allergies && <Text style={[styles.childMeta, { color: "#B45309" }]}>⚠️ {Array.isArray(e.allergies) ? e.allergies.join(", ") : e.allergies}</Text>}
-              </View>
+              <TouchableOpacity
+                key={e.id}
+                style={styles.childCard}
+                onPress={() => openChildFolder(e)}
+                activeOpacity={0.6}
+                testID={`child-${e.id}`}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.childName}>{e.nom}</Text>
+                  <Text style={styles.childMeta}>{ageOf(e.date_naissance)} · {e.sexe === "F" ? "Fille" : "Garçon"}</Text>
+                  {e.groupe_sanguin && <Text style={styles.childMeta}>🩸 {e.groupe_sanguin}</Text>}
+                  {e.allergies && <Text style={[styles.childMeta, { color: "#B45309", fontWeight: "700" }]}>⚠️ Allergies : {Array.isArray(e.allergies) ? e.allergies.join(", ") : e.allergies}</Text>}
+                </View>
+                <Ionicons name="chevron-forward" size={22} color={COLORS.primary} />
+              </TouchableOpacity>
             ))}
           </>
         )}
@@ -155,6 +254,15 @@ function Row({ label, value }: { label: string; value: string }) {
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
       <Text style={styles.rowValue}>{value}</Text>
+    </View>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statBox}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={styles.statValue}>{value}</Text>
     </View>
   );
 }
@@ -175,7 +283,22 @@ const styles = StyleSheet.create({
   alertCard: { flexDirection: "row", gap: 10, alignItems: "flex-start", padding: 12, backgroundColor: "#FEF3C7", borderWidth: 2, borderColor: "#F59E0B", borderRadius: RADIUS.md, marginBottom: 12 },
   alertTitle: { color: "#B45309", fontWeight: "800", fontSize: 12 },
   alertText: { color: "#92400E", fontSize: 13, marginTop: 4, lineHeight: 18 },
-  sectionTitle: { fontSize: 14, fontWeight: "800", color: COLORS.textPrimary, marginTop: 10, marginBottom: 8 },
+
+  // 🤰 Grossesse
+  grossesseCard: { padding: 14, borderRadius: RADIUS.lg, backgroundColor: "#FCE7F3", borderWidth: 1, borderColor: "#F9A8D4", marginBottom: 14 },
+  grossesseHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 10 },
+  grossesseTitle: { fontSize: 16, fontWeight: "800", color: "#9D174D" },
+  grossesseSub: { fontSize: 12, color: "#BE185D", marginTop: 2, fontWeight: "600" },
+  grossesseGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  grossesseRow: { marginTop: 8 },
+  grossesseLabel: { fontSize: 11, color: "#9D174D", fontWeight: "700", textTransform: "uppercase" },
+  grossesseValue: { fontSize: 13, color: "#831843", marginTop: 2, lineHeight: 18 },
+  statBox: { flex: 1, minWidth: "45%", padding: 8, backgroundColor: "rgba(255,255,255,0.6)", borderRadius: 8 },
+  statLabel: { fontSize: 10, color: "#9D174D", fontWeight: "700", textTransform: "uppercase" },
+  statValue: { fontSize: 14, color: "#831843", fontWeight: "800", marginTop: 2 },
+
+  sectionTitle: { fontSize: 14, fontWeight: "800", color: COLORS.textPrimary, marginTop: 14, marginBottom: 6 },
+  tip: { fontSize: 11, color: COLORS.textMuted, marginBottom: 8, fontStyle: "italic" },
   card: { backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: 12, borderWidth: 1, borderColor: COLORS.border, marginBottom: 6 },
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   rowLabel: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "600" },
@@ -186,7 +309,15 @@ const styles = StyleSheet.create({
   measureRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
   measureDate: { color: COLORS.textSecondary, fontSize: 12 },
   measureVal: { color: COLORS.textPrimary, fontWeight: "700", fontSize: 13 },
-  childCard: { padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 6 },
+  rdvRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  rdvDate: { fontSize: 11, color: COLORS.textSecondary, fontWeight: "700", width: 56 },
+  rdvMotif: { flex: 1, fontSize: 13, color: COLORS.textPrimary, fontWeight: "600" },
+  rdvStatus: { fontSize: 14, fontWeight: "800" },
+  rdvOk: { color: "#10B981" },
+  rdvPending: { color: "#F59E0B" },
+
+  // Cartes enfant cliquables
+  childCard: { flexDirection: "row", alignItems: "center", padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
   childName: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 14 },
   childMeta: { color: COLORS.textSecondary, fontSize: 12, marginTop: 2 },
 });

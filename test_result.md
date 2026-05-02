@@ -2385,3 +2385,107 @@ agent_communication:
       - Auto-cleanup on DeviceNotRegistered Expo error confirmed via logs + DB (fake token was wiped after test call).
       - send_expo_push uses priority="high" + channelId="default" + sound="default" as required.
       - Backwards compat confirmed: RDV creation still pushes a notification to the pro via push_notif() → db.notifications row inserted.
+
+backend:
+  - task: "Pro carnet upgrade — grossesse + via_parent drilldown (GET /api/pro/patient/{patient_id}/carnet)"
+    implemented: true
+    working: false
+    file: "/app/backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          36/37 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_carnet_via_parent.py). 1 CRITICAL BUG.
+
+          IMPORTANT NOTE — endpoint naming: the review request mentions
+          POST /api/pro/demandes and POST /api/maman/demandes/{id}/validate, but those
+          endpoints DO NOT EXIST in /app/backend/server.py. The actual flow uses:
+            • POST /api/pro/patient/recherche  (creates demande)
+            • POST /api/partage/demande/{id}/valider  (maman validates)
+            • GET  /api/pro/demandes/mes-demandes  (pro retrieves access_token)
+          Tests were run against the actual endpoints.
+
+          ❌ CRITICAL BUG — Scenario 1 grossesse field returns null
+          server.py L7034 queries `db.grossesse` (SINGULAR). All maman pregnancy data is
+          stored in `db.grossesses` (PLURAL — see L1138, 1147, 1160, 1171, etc.).
+          Consequence: the new `grossesse` field in the carnet maman response is ALWAYS null,
+          even when the maman has an active grossesse (verified : POST /grossesse returned
+          id=a453621f-… and /grossesse retrieves it; the same maman_id called via
+          /pro/patient/{maman_id}/carnet returned `grossesse: null`).
+          FIX: change L7034 from `db.grossesse.find_one(` to `db.grossesses.find_one(`.
+          (Same bug pattern fixed earlier on /pro/patients & /pro/dossier — same root cause.)
+          Also recommend matching the existing convention used at L1138/2150 :
+            await db.grossesses.find_one({"user_id": patient_id, "active": True}, {"_id": 0})
+          (existing rows use `active: bool` flag, not a `statut` field — so the current
+          `$or: [{"statut": {"$ne": "terminee"}}, {"statut": {"$exists": False}}]` filter
+          is also unnecessary — it would match any document since `statut` does not exist
+          on grossesses created via POST /grossesse).
+
+          ✅ SCENARIO 1 — Maman dossier (6/7 PASS) — only the `grossesse` field fails.
+          • HTTP 200 ; type='maman' ; maman dict with correct id ; enfants list ; rdv_recents list ; access_expires_at present.
+          • grossesse: null  ❌ (expected dict with date_debut='2025-12-01', date_terme='2026-09-08').
+
+          ✅ SCENARIO 2 — Drill-down via_parent (6/6 PASS).
+          GET /pro/patient/{child_id}/carnet?via_parent={maman_id} with maman's token →
+          200 with type='enfant', enfant dict with correct id, via_parent=maman_id,
+          rdv_recents list, accordee_par='parent'.
+
+          ✅ SCENARIO 3 — Cross-maman security (3/3 PASS).
+          Registered maman2 + child2; called /pro/patient/{child2_id}/carnet?via_parent=maman1_id
+          with maman1's token → 403 "Accès invalide ou expiré." Code at L6948
+          correctly checks `db.enfants.find_one({"id": patient_id, "user_id": allow_child_of})`.
+
+          ✅ SCENARIO 4 — Direct child without via_parent (1/1 PASS).
+          GET /pro/patient/{child_id}/carnet (no via_parent) with maman's token → 403.
+
+          ✅ SCENARIO 5 — Token expired (3/3 PASS).
+          Force-expired access_expires_at in Mongo (set 5 minutes in the past) :
+          • Direct call /pro/patient/{maman_id}/carnet → 403 "Accès expiré."
+          • Drill-down /pro/patient/{child_id}/carnet?via_parent={maman_id} → 403.
+          The expiry check at L6955-6958 fires even when going through via_parent path
+          (the parent's demande row is the one whose expiry is checked).
+
+          ✅ SCENARIO 6 — Audit log (4/4 PASS).
+          After successful drill-down, db.access_audit_log contains rows with the expected shape :
+          { id, pro_id, pro_name, patient_id (=child_id), patient_type='enfant',
+            via_parent (=maman_id), action='view_carnet', demande_id, timestamp, ip }.
+          Verified via direct MongoDB query on the alomaman db, 2 audit rows found
+          for the test pro/child/maman triple.
+
+          ✅ SCENARIO 7a — Direct enfant token, no via_parent (4/4 PASS).
+          Pro called /pro/patient/recherche with the enfant's AM code → demande
+          created with patient_type='enfant' ; maman validated → access_token returned ;
+          GET /pro/patient/{child_id}/carnet (no via_parent) → 200 with type='enfant',
+          via_parent=null. Backward compat OK.
+
+          ✅ SCENARIO 7b — Direct maman token, no via_parent.
+          Already validated in Scenario 1 (HTTP path is identical — minus the missing
+          grossesse field).
+
+          Test data : kept the test grossesse + enfants since the test mamans are
+          long-lived seeds. Created test maman2_<rnd>@test.alomaman.dev for cross-maman
+          security check (still in DB). Audit log rows accumulated normally.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Pro carnet endpoint fully tested — 36/37 scenarios PASS.
+      ❌ ONE CRITICAL BUG to fix in /app/backend/server.py L7034 :
+         `db.grossesse.find_one(...)` → `db.grossesses.find_one(...)` (singular → plural).
+         This collection-name typo causes the new `grossesse` field in the maman carnet
+         response to ALWAYS be null even when an active pregnancy exists. Same bug pattern
+         that was previously fixed in /pro/patients and /pro/dossier (the rest of the codebase
+         consistently uses `db.grossesses` plural — verified at L1138, 1147, 1160, 1171, 2150).
+      Also note: the existing filter `$or: [{"statut": {"$ne": "terminee"}}, {"statut": {"$exists": False}}]`
+      is fine but doesn't match the actual schema (grossesses use the boolean `active` flag,
+      not a `statut` field). Recommend aligning with the rest of the codebase :
+         await db.grossesses.find_one({"user_id": patient_id, "active": True}, {"_id": 0})
+      All other scenarios (drill-down via_parent, security guards, token expiry,
+      audit log with via_parent, backward compat for direct enfant + direct maman tokens)
+      are working correctly. Endpoint naming differs from the review request — actual flow
+      uses /pro/patient/recherche + /partage/demande/{id}/valider instead of
+      /pro/demandes + /maman/demandes/{id}/validate.

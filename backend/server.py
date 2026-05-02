@@ -6920,16 +6920,34 @@ async def refuser_demande_partage(demande_id: str, user=Depends(require_roles("m
     return {"status": "refused"}
 
 
-async def _verify_access_token(pro_id: str, patient_id: str, token: Optional[str]) -> dict:
-    """Valide le token d'accès d'un pro sur un patient. Retourne la demande ou lève 403."""
+async def _verify_access_token(pro_id: str, patient_id: str, token: Optional[str], allow_child_of: Optional[str] = None) -> dict:
+    """Valide le token d'accès d'un pro sur un patient. Retourne la demande ou lève 403.
+    
+    - Si `allow_child_of` est passé, on accepte aussi un token délivré pour ce parent
+      (cas où le pro accède à un enfant via le partage de la maman).
+    """
     if not token:
         raise HTTPException(403, "Token d'accès requis. Demandez l'autorisation à la patiente.")
+    # 1. Match direct sur le patient
     demande = await db.access_requests.find_one({
         "pro_id": pro_id,
         "patient_id": patient_id,
         "access_token": token,
         "status": "validated",
     })
+    # 2. Sinon, on autorise via parent si l'enfant appartient bien à ce parent
+    if not demande and allow_child_of:
+        parent_demande = await db.access_requests.find_one({
+            "pro_id": pro_id,
+            "patient_id": allow_child_of,
+            "access_token": token,
+            "status": "validated",
+        })
+        if parent_demande:
+            # On vérifie que cet enfant appartient bien au parent
+            child = await db.enfants.find_one({"id": patient_id, "user_id": allow_child_of}, {"_id": 0, "id": 1})
+            if child:
+                demande = parent_demande
     if not demande:
         raise HTTPException(403, "Accès invalide ou expiré. Demandez une nouvelle autorisation.")
     # Check expiry
@@ -6959,7 +6977,9 @@ async def list_mes_demandes_pro(user=Depends(require_roles("professionnel"))):
 async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends(require_roles("professionnel"))):
     """Le pro accède au carnet complet d'une patiente ou enfant via son access_token."""
     token = request.headers.get("X-Access-Token") or request.query_params.get("access_token")
-    demande = await _verify_access_token(user["id"], patient_id, token)
+    # via_parent : ID de la maman quand on consulte un enfant via le token de la maman
+    via_parent = request.query_params.get("via_parent")
+    demande = await _verify_access_token(user["id"], patient_id, token, allow_child_of=via_parent)
 
     # Audit log
     try:
@@ -6968,7 +6988,8 @@ async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends
             "pro_id": user["id"],
             "pro_name": user.get("name"),
             "patient_id": patient_id,
-            "patient_type": demande.get("patient_type"),
+            "patient_type": "enfant" if via_parent else demande.get("patient_type"),
+            "via_parent": via_parent,
             "action": "view_carnet",
             "demande_id": demande.get("id"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -6977,8 +6998,11 @@ async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends
     except Exception:
         pass
 
+    # Si via_parent → forcement type enfant
+    is_enfant = bool(via_parent) or demande.get("patient_type") == "enfant"
+
     # Prépare la réponse
-    if demande["patient_type"] == "enfant":
+    if is_enfant:
         enfant = await db.enfants.find_one({"id": patient_id}, {"_id": 0})
         if not enfant:
             raise HTTPException(404, "Enfant introuvable")
@@ -6988,21 +7012,41 @@ async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends
                 enfant["allergies"] = decrypt_str(enfant["allergies"])
         except Exception:
             pass
+        # Récupère les RDV récents avec ce pro pour cet enfant
+        rdv_recents = await db.rdv.find(
+            {"enfant_id": patient_id, "pro_id": user["id"]},
+            {"_id": 0}
+        ).sort("date", -1).limit(10).to_list(10)
         return {
             "type": "enfant",
             "enfant": enfant,
+            "rdv_recents": rdv_recents,
             "access_expires_at": demande["access_expires_at"],
             "accordee_par": "parent",
+            "via_parent": via_parent,
         }
     else:
         maman = await db.users.find_one({"id": patient_id}, {"_id": 0, "password_hash": 0})
         if not maman:
             raise HTTPException(404, "Patiente introuvable")
         enfants = await db.enfants.find({"user_id": patient_id}, {"_id": 0}).to_list(50)
+        # Grossesse en cours (si elle est enceinte)
+        grossesse = await db.grossesse.find_one(
+            {"user_id": patient_id, "$or": [{"statut": {"$ne": "terminee"}}, {"statut": {"$exists": False}}]},
+            {"_id": 0},
+            sort=[("date_debut", -1)],
+        )
+        # RDV récents avec ce pro
+        rdv_recents = await db.rdv.find(
+            {"maman_id": patient_id, "pro_id": user["id"]},
+            {"_id": 0}
+        ).sort("date", -1).limit(10).to_list(10)
         return {
             "type": "maman",
             "maman": maman,
             "enfants": enfants,
+            "grossesse": grossesse,
+            "rdv_recents": rdv_recents,
             "access_expires_at": demande["access_expires_at"],
         }
 
