@@ -69,7 +69,7 @@ export default function CGU() {
         </Text>
 
         <Text style={styles.h2}>10. Contact</Text>
-        <Text style={styles.p}>Pour toute question : support@alomaman.ci</Text>
+        <Text style={styles.p}>Pour toute question : infos@e-medicare.co</Text>
       </ScrollView>
     </SafeAreaView>
   );

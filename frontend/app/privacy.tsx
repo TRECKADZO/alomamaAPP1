@@ -85,7 +85,7 @@ export default function Privacy() {
 
         <Text style={styles.h2}>9. Contact & Réclamations</Text>
         <Text style={styles.p}>
-          DPO (Délégué Protection Données) : dpo@alomaman.ci
+          DPO (Délégué Protection Données) : infos@e-medicare.co
           {"\n"}Vous pouvez également saisir l'Autorité de Régulation des Télécommunications de Côte d'Ivoire (ARTCI).
         </Text>
       </ScrollView>
