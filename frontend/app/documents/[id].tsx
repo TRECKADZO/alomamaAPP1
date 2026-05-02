@@ -1,0 +1,221 @@
+/**
+ * Visionneuse de document — affiche un PDF, une image, ou télécharge le fichier.
+ * - PDF : affiché via un iframe (web) ou en partage natif (mobile)
+ * - Image : <Image>
+ * - Autre : bouton de téléchargement
+ */
+import { useEffect, useState } from "react";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Image, Platform } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
+import { WebView } from "react-native-webview";
+import { api, formatError } from "../../lib/api";
+import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+
+const formatSize = (bytes?: number) => {
+  if (!bytes) return "—";
+  if (bytes < 1024) return `${bytes} o`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} Ko`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+};
+
+export default function DocumentViewer() {
+  const router = useRouter();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const [doc, setDoc] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!id) return;
+    (async () => {
+      try {
+        const r = await api.get(`/documents/${id}`);
+        setDoc(r.data);
+      } catch (e: any) {
+        Alert.alert("Erreur", formatError(e));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [id]);
+
+  // Téléchargement / partage natif
+  const downloadOrShare = async () => {
+    if (!doc?.file_base64) return;
+    try {
+      if (Platform.OS === "web") {
+        // Web : créer un blob et télécharger
+        const byteChars = atob(doc.file_base64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([new Uint8Array(byteNumbers)], { type: doc.mime_type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = doc.file_name || "document";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+      } else {
+        // Natif : sauvegarder dans le cache + partager
+        const FileSystem = require("expo-file-system");
+        const Sharing = require("expo-sharing");
+        const localUri = FileSystem.cacheDirectory + (doc.file_name || `document_${doc.id}`);
+        await FileSystem.writeAsStringAsync(localUri, doc.file_base64, { encoding: FileSystem.EncodingType.Base64 });
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(localUri, {
+            mimeType: doc.mime_type,
+            dialogTitle: doc.titre,
+            UTI: doc.mime_type === "application/pdf" ? "com.adobe.pdf" : undefined,
+          });
+        } else {
+          Alert.alert("Partage indisponible", "Le fichier a été sauvegardé dans le cache.");
+        }
+      }
+    } catch (e: any) {
+      Alert.alert("Erreur", "Impossible de télécharger le fichier.");
+    }
+  };
+
+  if (loading)
+    return (
+      <SafeAreaView style={styles.loading}>
+        <ActivityIndicator color={COLORS.primary} />
+      </SafeAreaView>
+    );
+
+  if (!doc)
+    return (
+      <SafeAreaView style={styles.loading}>
+        <Ionicons name="alert-circle" size={48} color="#EF4444" />
+        <Text style={{ color: "#EF4444", fontWeight: "700", marginTop: 8 }}>Document introuvable</Text>
+        <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 12 }}>
+          <Text style={{ color: COLORS.primary, fontWeight: "700" }}>Retour</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+
+  const isPdf = (doc.mime_type || "").includes("pdf");
+  const isImage = (doc.mime_type || "").startsWith("image");
+  const dataUri = `data:${doc.mime_type};base64,${doc.file_base64}`;
+
+  return (
+    <SafeAreaView style={styles.container} edges={["top"]}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title} numberOfLines={1}>{doc.titre}</Text>
+          <Text style={styles.sub}>
+            {doc.file_name} · {formatSize(doc.size_bytes)}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={downloadOrShare} style={styles.dlBtn}>
+          <Ionicons name={Platform.OS === "web" ? "download" : "share-outline"} size={20} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Métadonnées */}
+      <View style={styles.metaCard}>
+        <View style={styles.metaRow}>
+          <Ionicons name="folder" size={14} color={COLORS.textMuted} />
+          <Text style={styles.metaText}>{doc.categorie}</Text>
+        </View>
+        <View style={styles.metaRow}>
+          <Ionicons name="calendar" size={14} color={COLORS.textMuted} />
+          <Text style={styles.metaText}>{new Date(doc.date).toLocaleDateString("fr-FR")}</Text>
+        </View>
+        {doc.notes ? (
+          <View style={styles.notesBox}>
+            <Text style={styles.notesLabel}>Notes</Text>
+            <Text style={styles.notesText}>{doc.notes}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Visionneuse */}
+      <View style={styles.viewer}>
+        {isImage ? (
+          <ScrollView contentContainerStyle={{ padding: SPACING.lg, alignItems: "center" }} maximumZoomScale={3} minimumZoomScale={1}>
+            <Image source={{ uri: dataUri }} style={styles.image} resizeMode="contain" />
+          </ScrollView>
+        ) : isPdf ? (
+          Platform.OS === "web" ? (
+            // Sur web : iframe avec viewer PDF du navigateur
+            <iframe
+              src={dataUri}
+              style={{ flex: 1, border: 0, width: "100%", height: "100%" }}
+              title={doc.titre}
+            />
+          ) : (
+            // Sur natif : WebView (avec PDF inline support iOS, Google Docs viewer Android fallback)
+            <WebView
+              source={Platform.OS === "ios" ? { uri: dataUri } : { html: pdfViewerHTML(dataUri) }}
+              style={{ flex: 1 }}
+              originWhitelist={["*"]}
+              startInLoadingState
+              renderLoading={() => <ActivityIndicator color={COLORS.primary} style={{ marginTop: 30 }} />}
+            />
+          )
+        ) : (
+          // Type inconnu : carte de téléchargement
+          <View style={styles.unknownCard}>
+            <Ionicons name="document-attach" size={64} color={COLORS.textMuted} />
+            <Text style={styles.unknownTitle}>{doc.file_name || "Fichier"}</Text>
+            <Text style={styles.unknownText}>Ce type de fichier ne peut pas être affiché directement.</Text>
+            <TouchableOpacity onPress={downloadOrShare} style={{ marginTop: 16 }}>
+              <LinearGradient colors={["#14B8A6", "#06B6D4"]} style={styles.unknownBtn}>
+                <Ionicons name={Platform.OS === "web" ? "download" : "share-outline"} size={18} color="#fff" />
+                <Text style={styles.unknownBtnText}>{Platform.OS === "web" ? "Télécharger" : "Partager / Ouvrir"}</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
+  );
+}
+
+// HTML simple qui affiche un PDF en base64 (Android)
+function pdfViewerHTML(dataUri: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;">
+  <embed src="${dataUri}" type="application/pdf" width="100%" height="100%" style="height:100vh;">
+  <p style="text-align:center;padding:20px;color:#666;">
+    Si le PDF ne s'affiche pas, utilisez le bouton « Partager » en haut à droite pour l'ouvrir dans une autre application.
+  </p>
+</body>
+</html>`;
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: COLORS.bgPrimary },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.bgPrimary, padding: 24 },
+  header: { flexDirection: "row", alignItems: "center", gap: 10, padding: SPACING.lg },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
+  title: { fontSize: 16, fontWeight: "800", color: COLORS.textPrimary },
+  sub: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
+  dlBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+
+  metaCard: { marginHorizontal: SPACING.lg, padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8, gap: 6 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  metaText: { fontSize: 12, color: COLORS.textSecondary, fontWeight: "600" },
+  notesBox: { marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: COLORS.border },
+  notesLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "800", textTransform: "uppercase" },
+  notesText: { fontSize: 12, color: COLORS.textPrimary, marginTop: 2, lineHeight: 16 },
+
+  viewer: { flex: 1, backgroundColor: "#f3f4f6", marginTop: 4 },
+  image: { width: "100%", aspectRatio: 0.7, maxWidth: 600 },
+
+  unknownCard: { flex: 1, alignItems: "center", justifyContent: "center", padding: 30 },
+  unknownTitle: { fontSize: 16, fontWeight: "800", color: COLORS.textPrimary, marginTop: 16, textAlign: "center" },
+  unknownText: { fontSize: 12, color: COLORS.textSecondary, marginTop: 8, textAlign: "center" },
+  unknownBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 24, paddingVertical: 12, borderRadius: RADIUS.pill },
+  unknownBtnText: { color: "#fff", fontWeight: "800", fontSize: 14 },
+});

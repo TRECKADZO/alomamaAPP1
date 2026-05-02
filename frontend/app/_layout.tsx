@@ -115,6 +115,7 @@ export default function RootLayout() {
                   <Stack.Screen name="suppression-compte" options={{ headerShown: false }} />
                   <Stack.Screen name="aide-support" options={{ headerShown: false }} />
                   <Stack.Screen name="about" options={{ headerShown: false }} />
+                  <Stack.Screen name="documents/[id]" options={{ headerShown: false, presentation: "card" }} />
                   <Stack.Screen name="admin/[section]" options={{ headerShown: false }} />
                   <Stack.Screen name="admin/annuaire" options={{ headerShown: false }} />
                   <Stack.Screen name="admin/user/[id]" options={{ headerShown: false }} />

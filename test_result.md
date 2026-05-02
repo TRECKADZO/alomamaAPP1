@@ -2584,3 +2584,95 @@ agent_communication:
       Auth ordering (401 > 403 > 404 > window) is preserved on all 4 endpoints. No bugs to fix —
       implementation in /app/backend/server.py L4781-4926 + L2279/2299/2359 is production-ready.
       Test script: /app/backend_test_telewindow.py.
+
+
+backend:
+  - task: "Mes Documents — cloud storage (POST/GET/DELETE /api/documents)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          49/49 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_documents.py).
+
+          🅰 Auth required (4/4): GET /documents, POST /documents, GET /documents/{id}, DELETE /documents/{id}
+          all return 401 "Non authentifié" without Bearer token. ✓
+
+          🅱 Scenario 1 — Upload fake PDF (11/11):
+            • POST /documents {titre:"Test Échographie 22 SA", categorie:"echographie", date:"2026-05-01",
+              notes:"Contrôle morphologique", file_base64:<PDF header>, file_name:"echo_22sa.pdf",
+              mime_type:"application/pdf"} as maman.test → 200.
+            • Response contains id (UUID), titre, categorie="echographie", date="2026-05-01",
+              mime_type="application/pdf", size_bytes>0 (computed as ~3/4 of base64 length).
+            • Response correctly OMITS file_base64 (bandwidth optimization confirmed).
+
+          🅲 Scenario 2 — Upload image (3/3):
+            • POST /documents with mime_type="image/jpeg", categorie="analyse" + valid 1x1 jpeg base64 → 200.
+            • Response stores mime_type="image/jpeg" and categorie="analyse" verbatim.
+
+          🅳 Scenario 3 — List documents (5/5):
+            • GET /documents → 200 array. Both newly uploaded docs (PDF+JPEG) appear in the list.
+            • file_base64 is NOT present in any list item (verified by all() check).
+            • Items sorted by created_at descending — most recent (image) appears before older (pdf). ✓
+
+          🅴 Scenario 4 — Filter by category (4/4):
+            • GET /documents?category=echographie → 200; every item has categorie="echographie";
+              pdf doc included, image doc (categorie=analyse) excluded.
+
+          🅵 Scenario 5 — Get full document (5/5):
+            • GET /documents/{pdf_id} as owner → 200 with file_base64 EXACTLY equal to upload payload
+              (lossless storage). titre + notes preserved.
+
+          🅶 Scenario 6 — GDPR isolation (4/4):
+            • Pro (pro.test@alomaman.dev) GET /documents/{maman_doc_id} → 404 "Document introuvable"
+              (server.py L2501 filters by user_id, returning 404 instead of 403 to avoid leaking existence).
+            • Pro DELETE /documents/{maman_doc_id} → 404 (same isolation, server.py L2510-2512).
+            • After pro's failed delete attempt, maman's doc is still GET-able by maman → 200.
+            • Pro's own GET /documents list does NOT contain any of maman's doc ids.
+
+          🅷 Scenario 7 — Validation errors (5/5):
+            • POST without titre → 400 with detail "Titre requis" (server.py L2444-2445). ✓
+            • POST without file_base64 → 400 with detail "Fichier manquant" (L2452-2453). ✓
+            • POST with file_base64 of 12_000_001 chars → 413 "Fichier trop volumineux (max 9 Mo)"
+              (L2454-2455). ✓
+            • POST with categorie="wibble_invalid" → 200 ; the response defaults categorie to "autre"
+              silently (L2447-2448). DOC_CATEGORIES = {echographie, analyse, ordonnance, vaccin,
+              naissance, autre}.
+
+          🅸 Scenario 8 — DELETE (own) (3/3):
+            • DELETE /documents/{image_id} as maman → 200 with body {"ok": true}.
+            • Subsequent GET /documents/{image_id} → 404. ✓
+
+          IMPLEMENTATION REVIEW (server.py L2432-2513):
+            • All 4 endpoints use get_current_user (no role restriction → centre_sante & famille
+              also have access — appropriate since each user only sees their own docs).
+            • Storage: db.user_documents collection, doc structure {id, user_id, titre, categorie,
+              date, notes, file_base64, file_name, mime_type, size_bytes, created_at}.
+            • size_bytes computed as int(len(file_base64) * 3 / 4) — server-side estimation.
+            • categorie validation is silent (defaults to "autre" instead of 400).
+            • DELETE returns 404 if deleted_count == 0 (covers both not-found AND not-owner cases —
+              good GDPR pattern, no enumeration leak).
+            • Note: function names list_documents, get_document, delete_document are reused from the
+              older /enfants/{eid}/documents endpoints (L1331/1342/1353) but FastAPI registers each
+              by route, no conflict observed.
+
+          CLEANUP: all test docs (PDF, image, invalid-category) deleted from db.user_documents
+          after the run (idempotent script). No state pollution.
+
+          NO BUGS DETECTED. The Mes Documents cloud-storage feature is production-ready.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Mes Documents endpoints (POST/GET/DELETE /api/documents) fully validated — 49/49 PASS.
+      Happy path PDF + image upload, list with no base64 leak + correct sort, category filter,
+      full GET with file_base64 round-trip, GDPR cross-user isolation (pro→404 on maman's doc),
+      all 4 validation cases (missing titre/fichier, >12MB, invalid category default), and
+      delete-then-404 flow all work. 401 auth guard on every endpoint. No bugs to fix.
+      Test script: /app/backend_test_documents.py.

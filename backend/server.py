@@ -2407,9 +2407,7 @@ async def teleconsultation_diagnostic(rdv_id: str, user=Depends(get_current_user
 
 @api.post("/support/contact")
 async def support_contact(payload: dict, user=Depends(get_current_user)):
-    """Réception de message support depuis l'app. Stocke en DB pour traitement.
-    Future intégration : forward par email vers support@alomaman.ci via Resend/SendGrid.
-    """
+    """Réception de message support depuis l'app. Stocke en DB pour traitement."""
     subject = (payload.get("subject") or "").strip()[:200]
     message = (payload.get("message") or "").strip()[:2000]
     if not subject or not message:
@@ -2428,6 +2426,91 @@ async def support_contact(payload: dict, user=Depends(get_current_user)):
     await db.support_tickets.insert_one(ticket)
     logger.info(f"📨 Nouveau ticket support de {user.get('email')} : {subject[:50]}...")
     return {"ok": True, "ticket_id": ticket["id"]}
+
+
+# ----------------------------------------------------------------------
+# Mes Documents (carnets, analyses, ordonnances) — stockage cloud
+# ----------------------------------------------------------------------
+DOC_CATEGORIES = {"echographie", "analyse", "ordonnance", "vaccin", "naissance", "autre"}
+MAX_DOC_SIZE_BASE64 = 12_000_000  # ~9 MB de fichier décodé (base64 ≈ 4/3)
+
+
+@api.post("/documents")
+async def create_document(payload: dict, user=Depends(get_current_user)):
+    """Upload d'un document (PDF, image) en base64 dans le cloud.
+    Le contenu est associé à l'utilisateur courant (sécurité GDPR).
+    """
+    titre = (payload.get("titre") or "").strip()[:200]
+    if not titre:
+        raise HTTPException(400, "Titre requis")
+    categorie = payload.get("categorie") or "autre"
+    if categorie not in DOC_CATEGORIES:
+        categorie = "autre"
+    file_base64 = payload.get("file_base64") or ""
+    mime_type = (payload.get("mime_type") or "application/octet-stream").lower()[:80]
+    file_name = (payload.get("file_name") or "document")[:200]
+    if not file_base64:
+        raise HTTPException(400, "Fichier manquant")
+    if len(file_base64) > MAX_DOC_SIZE_BASE64:
+        raise HTTPException(413, "Fichier trop volumineux (max 9 Mo)")
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "titre": titre,
+        "categorie": categorie,
+        "date": payload.get("date") or datetime.now(timezone.utc).date().isoformat(),
+        "notes": (payload.get("notes") or "")[:1000],
+        "file_base64": file_base64,
+        "file_name": file_name,
+        "mime_type": mime_type,
+        "size_bytes": int(len(file_base64) * 3 / 4),  # estimation décodée
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.user_documents.insert_one(doc)
+    # Réponse sans le base64 (économie bande passante)
+    return {
+        "id": doc["id"],
+        "titre": doc["titre"],
+        "categorie": doc["categorie"],
+        "date": doc["date"],
+        "notes": doc["notes"],
+        "file_name": doc["file_name"],
+        "mime_type": doc["mime_type"],
+        "size_bytes": doc["size_bytes"],
+        "created_at": doc["created_at"],
+    }
+
+
+@api.get("/documents")
+async def list_documents(user=Depends(get_current_user), category: Optional[str] = None):
+    """Liste les documents de l'utilisateur (sans le base64)."""
+    query: dict = {"user_id": user["id"]}
+    if category and category in DOC_CATEGORIES:
+        query["categorie"] = category
+    cursor = db.user_documents.find(
+        query,
+        {"_id": 0, "file_base64": 0},  # on exclut le contenu pour la liste
+    ).sort("created_at", -1)
+    return await cursor.to_list(500)
+
+
+@api.get("/documents/{doc_id}")
+async def get_document(doc_id: str, user=Depends(get_current_user)):
+    """Récupère un document complet (avec le base64 pour visualisation/téléchargement)."""
+    doc = await db.user_documents.find_one({"id": doc_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Document introuvable")
+    return doc
+
+
+@api.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str, user=Depends(get_current_user)):
+    """Supprime un document de l'utilisateur."""
+    res = await db.user_documents.delete_one({"id": doc_id, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Document introuvable")
+    return {"ok": True}
 
 
 @api.post("/teleconsultation/ring/{rdv_id}")
