@@ -113,14 +113,8 @@ export default function AideSupport() {
     }
   };
 
-  const callSupport = () => {
-    Linking.openURL("tel:+22507070707").catch(() => {});
-  };
   const emailSupport = () => {
-    Linking.openURL("mailto:support@alomaman.ci?subject=Aide À lo Maman").catch(() => {});
-  };
-  const whatsappSupport = () => {
-    Linking.openURL("https://wa.me/22507070707?text=Bonjour, j'ai besoin d'aide avec l'app À lo Maman").catch(() => {});
+    Linking.openURL("mailto:infos@e-medicare.co?subject=Aide À lo Maman").catch(() => {});
   };
 
   return (
@@ -146,31 +140,19 @@ export default function AideSupport() {
             </View>
           </LinearGradient>
 
-          {/* Contact rapide */}
-          <Text style={styles.sectionTitle}>Contact rapide</Text>
-          <View style={styles.quickRow}>
-            <TouchableOpacity style={styles.quickCard} onPress={callSupport}>
-              <View style={[styles.quickIcon, { backgroundColor: "#D1FAE5" }]}>
-                <Ionicons name="call" size={22} color="#10B981" />
-              </View>
-              <Text style={styles.quickLabel}>Appeler</Text>
-              <Text style={styles.quickSub}>+225 07 07 07 07</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickCard} onPress={whatsappSupport}>
-              <View style={[styles.quickIcon, { backgroundColor: "#DCFCE7" }]}>
-                <Ionicons name="logo-whatsapp" size={22} color="#16A34A" />
-              </View>
-              <Text style={styles.quickLabel}>WhatsApp</Text>
-              <Text style={styles.quickSub}>Réponse rapide</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickCard} onPress={emailSupport}>
-              <View style={[styles.quickIcon, { backgroundColor: "#DBEAFE" }]}>
-                <Ionicons name="mail" size={22} color="#3B82F6" />
-              </View>
-              <Text style={styles.quickLabel}>Email</Text>
-              <Text style={styles.quickSub}>support@alomaman.ci</Text>
-            </TouchableOpacity>
-          </View>
+          {/* Contact rapide - Email uniquement */}
+          <Text style={styles.sectionTitle}>Nous contacter</Text>
+          <TouchableOpacity style={styles.emailCard} onPress={emailSupport} activeOpacity={0.85}>
+            <View style={[styles.emailIcon]}>
+              <Ionicons name="mail" size={26} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.emailLabel}>Envoyez-nous un email</Text>
+              <Text style={styles.emailAddr}>infos@e-medicare.co</Text>
+              <Text style={styles.emailHint}>Tap pour ouvrir votre messagerie</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#fff" />
+          </TouchableOpacity>
 
           {/* FAQ */}
           <Text style={styles.sectionTitle}>Questions fréquentes</Text>
@@ -307,6 +289,12 @@ const styles = StyleSheet.create({
   quickIcon: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", marginBottom: 6 },
   quickLabel: { color: COLORS.textPrimary, fontWeight: "800", fontSize: 13 },
   quickSub: { color: COLORS.textMuted, fontSize: 10, marginTop: 2 },
+
+  emailCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, backgroundColor: "#3B82F6", borderRadius: RADIUS.lg },
+  emailIcon: { width: 50, height: 50, borderRadius: 25, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
+  emailLabel: { color: "#fff", fontWeight: "700", fontSize: 12, opacity: 0.9 },
+  emailAddr: { color: "#fff", fontWeight: "800", fontSize: 16, marginTop: 2 },
+  emailHint: { color: "rgba(255,255,255,0.85)", fontSize: 10, marginTop: 4 },
 
   searchBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: COLORS.surface, borderRadius: RADIUS.pill, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: COLORS.border, marginBottom: 12 },
   searchInput: { flex: 1, paddingVertical: 6, color: COLORS.textPrimary, fontSize: 13 },

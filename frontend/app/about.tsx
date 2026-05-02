@@ -70,33 +70,11 @@ export default function AboutScreen() {
         {/* Equipe / Editeur */}
         <Text style={styles.sectionTitle}>🏢 Éditeur</Text>
         <View style={styles.editorCard}>
-          <Text style={styles.editorName}>À lo Maman SAS</Text>
+          <Text style={styles.editorName}>e-Medicare</Text>
           <Text style={styles.editorAddr}>Abidjan, Côte d'Ivoire</Text>
-          <Text style={styles.editorAddr}>RCCM : CI-ABJ-2025-B-XXXXX</Text>
-          <TouchableOpacity style={styles.editorRow} onPress={() => openLink("mailto:contact@alomaman.ci")}>
+          <TouchableOpacity style={styles.editorRow} onPress={() => openLink("mailto:infos@e-medicare.co")}>
             <Ionicons name="mail" size={16} color={COLORS.primary} />
-            <Text style={styles.editorLink}>contact@alomaman.ci</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.editorRow} onPress={() => openLink("https://alomaman.ci")}>
-            <Ionicons name="globe" size={16} color={COLORS.primary} />
-            <Text style={styles.editorLink}>www.alomaman.ci</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Réseaux sociaux */}
-        <Text style={styles.sectionTitle}>📱 Suivez-nous</Text>
-        <View style={styles.socialRow}>
-          <TouchableOpacity style={[styles.socialBtn, { backgroundColor: "#1877F2" }]} onPress={() => openLink("https://facebook.com/alomaman")}>
-            <Ionicons name="logo-facebook" size={22} color="#fff" />
-            <Text style={styles.socialText}>Facebook</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.socialBtn, { backgroundColor: "#E4405F" }]} onPress={() => openLink("https://instagram.com/alomaman")}>
-            <Ionicons name="logo-instagram" size={22} color="#fff" />
-            <Text style={styles.socialText}>Instagram</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.socialBtn, { backgroundColor: "#25D366" }]} onPress={() => openLink("https://wa.me/22507070707")}>
-            <Ionicons name="logo-whatsapp" size={22} color="#fff" />
-            <Text style={styles.socialText}>WhatsApp</Text>
+            <Text style={styles.editorLink}>infos@e-medicare.co</Text>
           </TouchableOpacity>
         </View>
 
