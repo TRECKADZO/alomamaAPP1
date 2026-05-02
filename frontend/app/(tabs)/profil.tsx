@@ -177,8 +177,8 @@ export default function Profil() {
             />
             <MenuRow icon="lock-closed-outline" label="Sécurité & Mot de passe" onPress={() => router.push("/changer-mot-de-passe")} />
             <MenuRow icon="language-outline" label="Langue" value="Français" />
-            <MenuRow icon="help-circle-outline" label="Aide & Support" />
-            <MenuRow icon="information-circle-outline" label="À propos" />
+            <MenuRow icon="help-circle-outline" label="Aide & Support" onPress={() => router.push("/aide-support" as any)} />
+            <MenuRow icon="information-circle-outline" label="À propos" onPress={() => router.push("/about" as any)} />
           </View>
 
           {/* Logout */}

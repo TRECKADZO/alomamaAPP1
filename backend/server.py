@@ -2131,8 +2131,15 @@ async def pro_patients(user=Depends(require_roles("professionnel"))):
         u["has_grossesse"] = bool(gross)
         u["grossesse_sa"] = None
         if gross and gross.get("date_debut"):
-            weeks = int((datetime.now(timezone.utc) - datetime.fromisoformat(gross["date_debut"].replace("Z", "+00:00"))).total_seconds() / (7 * 24 * 3600))
-            u["grossesse_sa"] = max(0, min(weeks, 42))
+            try:
+                dt_str = str(gross["date_debut"]).replace("Z", "+00:00")
+                dt = datetime.fromisoformat(dt_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                weeks = int((datetime.now(timezone.utc) - dt).total_seconds() / (7 * 24 * 3600))
+                u["grossesse_sa"] = max(0, min(weeks, 42))
+            except Exception:
+                u["grossesse_sa"] = None
         u["enfants_count"] = enfants_count
         u["last_rdv_date"] = last_rdv.get("date") if last_rdv else None
     return users
@@ -2396,6 +2403,31 @@ async def teleconsultation_diagnostic(rdv_id: str, user=Depends(get_current_user
             (user["id"] == rdv.get("maman_id") and pro and pro.get("push_token"))
         ),
     }
+
+
+@api.post("/support/contact")
+async def support_contact(payload: dict, user=Depends(get_current_user)):
+    """Réception de message support depuis l'app. Stocke en DB pour traitement.
+    Future intégration : forward par email vers support@alomaman.ci via Resend/SendGrid.
+    """
+    subject = (payload.get("subject") or "").strip()[:200]
+    message = (payload.get("message") or "").strip()[:2000]
+    if not subject or not message:
+        raise HTTPException(400, "Sujet et message requis")
+    ticket = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user.get("name"),
+        "user_email": user.get("email"),
+        "user_role": user.get("role"),
+        "subject": subject,
+        "message": message,
+        "status": "new",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.support_tickets.insert_one(ticket)
+    logger.info(f"📨 Nouveau ticket support de {user.get('email')} : {subject[:50]}...")
+    return {"ok": True, "ticket_id": ticket["id"]}
 
 
 @api.post("/teleconsultation/ring/{rdv_id}")

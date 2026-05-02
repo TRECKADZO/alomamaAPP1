@@ -113,6 +113,8 @@ export default function RootLayout() {
                   <Stack.Screen name="supprimer-compte" options={{ title: "Supprimer mon compte" }} />
                   <Stack.Screen name="changer-mot-de-passe" options={{ title: "Changer mot de passe" }} />
                   <Stack.Screen name="suppression-compte" options={{ headerShown: false }} />
+                  <Stack.Screen name="aide-support" options={{ headerShown: false }} />
+                  <Stack.Screen name="about" options={{ headerShown: false }} />
                   <Stack.Screen name="admin/[section]" options={{ headerShown: false }} />
                   <Stack.Screen name="admin/annuaire" options={{ headerShown: false }} />
                   <Stack.Screen name="admin/user/[id]" options={{ headerShown: false }} />
