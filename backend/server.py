@@ -2356,6 +2356,48 @@ async def create_agora_token(rdv_id: str, user=Depends(get_current_user)):
     }
 
 
+@api.get("/teleconsultation/diagnostic/{rdv_id}")
+async def teleconsultation_diagnostic(rdv_id: str, user=Depends(get_current_user)):
+    """Diagnostic complet pour la téléconsultation : retourne l'état des push tokens
+    des deux participants + statut du RDV. Utile pour comprendre pourquoi la sonnerie
+    n'arrive pas chez l'autre participant.
+    """
+    rdv = await db.rdv.find_one({"id": rdv_id})
+    if not rdv:
+        raise HTTPException(status_code=404, detail="RDV introuvable")
+    if user["id"] not in [rdv.get("maman_id"), rdv.get("pro_id")]:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
+    maman = await db.users.find_one({"id": rdv.get("maman_id")}, {"_id": 0, "name": 1, "push_token": 1, "role": 1})
+    pro = await db.users.find_one({"id": rdv.get("pro_id")}, {"_id": 0, "name": 1, "push_token": 1, "role": 1})
+    win = _compute_teleconsult_window(rdv)
+
+    return {
+        "rdv_id": rdv_id,
+        "rdv_status": rdv.get("status"),
+        "rdv_mode": rdv.get("mode"),
+        "rdv_date": rdv.get("date"),
+        "window": win,
+        "maman": {
+            "id": rdv.get("maman_id"),
+            "name": maman.get("name") if maman else None,
+            "has_push_token": bool(maman and maman.get("push_token")),
+            "push_token_preview": (maman.get("push_token", "")[:30] + "...") if maman and maman.get("push_token") else None,
+        },
+        "pro": {
+            "id": rdv.get("pro_id"),
+            "name": pro.get("name") if pro else None,
+            "has_push_token": bool(pro and pro.get("push_token")),
+            "push_token_preview": (pro.get("push_token", "")[:30] + "...") if pro and pro.get("push_token") else None,
+        },
+        "you": user.get("role"),
+        "other_party_will_receive_ring": bool(
+            (user["id"] == rdv.get("pro_id") and maman and maman.get("push_token")) or
+            (user["id"] == rdv.get("maman_id") and pro and pro.get("push_token"))
+        ),
+    }
+
+
 @api.post("/teleconsultation/ring/{rdv_id}")
 async def ring_other_party(rdv_id: str, user=Depends(get_current_user)):
     """

@@ -69,6 +69,8 @@ export default function VideoCall() {
   // Fenêtre temporelle (statut & countdown)
   const [windowInfo, setWindowInfo] = useState<any>(null);
   const [windowLoaded, setWindowLoaded] = useState(false);
+  // Diagnostic des push tokens (savoir si la maman/pro recevra la sonnerie)
+  const [diagInfo, setDiagInfo] = useState<any>(null);
 
   const engineRef = useRef<any>(null);
   const timerRef = useRef<any>(null);
@@ -100,26 +102,37 @@ export default function VideoCall() {
         setWindowLoaded(true);
       }
     };
+    // Diagnostic une seule fois (push tokens des 2 participants)
+    const fetchDiag = async () => {
+      try {
+        const r = await api.get(`/teleconsultation/diagnostic/${rdvId}`);
+        setDiagInfo(r.data);
+      } catch {}
+    };
     fetchStatus();
+    fetchDiag();
     statusPollRef.current = setInterval(fetchStatus, 5000); // refresh chaque 5s
     return () => {
       if (statusPollRef.current) clearInterval(statusPollRef.current);
     };
   }, [rdvId]);
 
-  // Cleanup auto à la sortie
+  // Cleanup uniquement à l'unmount du composant (pas à chaque inCall change !)
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state === "background" && inCall) {
-        // En arrière-plan : couper la caméra mais garder l'audio (mode appel)
-        try { engineRef.current?.muteLocalVideoStream(true); } catch {}
-      }
-    });
     return () => {
-      sub.remove();
       cleanupCall();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Gestion AppState background : couper la caméra mais garder l'audio
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "background" && inCall) {
+        try { engineRef.current?.muteLocalVideoStream(true); } catch {}
+      }
+    });
+    return () => sub.remove();
   }, [inCall]);
 
   // Compteur de durée d'appel
@@ -399,6 +412,25 @@ export default function VideoCall() {
           <WindowStatusCard info={windowInfo} />
         )}
 
+        {/* Avertissement push tokens : l'autre participant ne recevra pas la sonnerie */}
+        {diagInfo && diagInfo.window?.available && !diagInfo.other_party_will_receive_ring && (
+          <View style={styles.warnPushBox}>
+            <Ionicons name="warning" size={18} color="#B45309" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.warnPushTitle}>
+                {isPro
+                  ? `${diagInfo.maman?.name || "La patiente"} ne recevra pas la sonnerie`
+                  : `${diagInfo.pro?.name || "Le professionnel"} ne recevra pas la sonnerie`}
+              </Text>
+              <Text style={styles.warnPushText}>
+                {isPro
+                  ? "Sa notification push n'est pas active. Contactez-la par téléphone et demandez-lui d'ouvrir l'application avant le RDV pour activer les notifications."
+                  : "Sa notification push n'est pas active. Vous pouvez quand même rejoindre la salle directement."}
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Bouton conditionnel selon la fenêtre */}
         {windowInfo?.available ? (
           <TouchableOpacity
@@ -569,6 +601,9 @@ const styles = StyleSheet.create({
   windowSub: { fontSize: 11, marginTop: 4, opacity: 0.85 },
   warningBox: { flexDirection: "row", gap: 8, marginTop: 16, padding: 12, backgroundColor: "#FEF3C7", borderRadius: 12, borderWidth: 1, borderColor: "#FDE68A" },
   warningText: { flex: 1, fontSize: 12, color: "#78350F", lineHeight: 17 },
+  warnPushBox: { flexDirection: "row", gap: 10, marginTop: 12, padding: 12, backgroundColor: "#FED7AA", borderRadius: 12, borderWidth: 1, borderColor: "#FB923C", alignItems: "flex-start", alignSelf: "stretch" },
+  warnPushTitle: { fontSize: 13, fontWeight: "800", color: "#7C2D12" },
+  warnPushText: { fontSize: 12, color: "#9A3412", marginTop: 4, lineHeight: 17 },
   tipsBox: { width: "100%", padding: 14, backgroundColor: "#EFF6FF", borderRadius: 14, borderWidth: 1, borderColor: "#BFDBFE", marginTop: 24 },
   tipsTitle: { fontSize: 14, fontWeight: "800", color: "#1E40AF", marginBottom: 8 },
   tipRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },
