@@ -2178,14 +2178,44 @@ class ConsultationNoteIn(BaseModel):
 
 @api.post("/pro/consultation-notes")
 async def create_consultation_note(payload: ConsultationNoteIn, user=Depends(require_roles("professionnel"))):
-    has_rdv = await db.rdv.count_documents({"pro_id": user["id"], "maman_id": payload.patient_id})
+    """
+    Le Pro ajoute une note de consultation. Le `patient_id` peut être :
+      - Un maman_id (consultation gynéco/grossesse)
+      - Un enfant_id (consultation pédiatrique) → la note apparaîtra dans le carnet de l'enfant
+    
+    Sécurité : le Pro doit avoir un RDV avec ce patient/enfant.
+    """
+    pid = payload.patient_id
+    is_enfant = False
+    enfant_doc = None
+
+    # On regarde d'abord si c'est un enfant_id
+    enfant_doc = await db.enfants.find_one({"id": pid}, {"_id": 0, "id": 1, "user_id": 1, "nom": 1})
+    if enfant_doc:
+        is_enfant = True
+        # Vérifier qu'il y a un RDV pour cet enfant avec ce pro, OU pour la maman parent
+        has_rdv = await db.rdv.count_documents({
+            "pro_id": user["id"],
+            "$or": [
+                {"enfant_id": pid},
+                {"maman_id": enfant_doc["user_id"]},
+            ],
+        })
+    else:
+        # Sinon c'est un maman_id
+        has_rdv = await db.rdv.count_documents({"pro_id": user["id"], "maman_id": pid})
+
     if has_rdv == 0:
-        raise HTTPException(status_code=403, detail="Vous n'avez pas accès à ce patient")
+        raise HTTPException(status_code=403, detail="Vous n'avez pas accès à ce patient (aucun RDV en commun)")
+
     doc = {
         "id": str(uuid.uuid4()),
         "pro_id": user["id"],
         "pro_name": user.get("name"),
-        "patient_id": payload.patient_id,
+        "patient_id": pid,
+        "patient_type": "enfant" if is_enfant else "maman",
+        "enfant_id": pid if is_enfant else None,
+        "maman_id": enfant_doc["user_id"] if is_enfant else pid,
         "date": payload.date or datetime.now(timezone.utc).isoformat(),
         # 🔐 Chiffrement AES-256-GCM
         "diagnostic": encrypt_str(payload.diagnostic) if payload.diagnostic else payload.diagnostic,
@@ -2195,7 +2225,60 @@ async def create_consultation_note(payload: ConsultationNoteIn, user=Depends(req
     }
     await db.consultation_notes.insert_one(doc)
     doc.pop("_id", None)
+
+    # Notif maman (visible immédiatement dans la cloche)
+    try:
+        target_maman_id = enfant_doc["user_id"] if is_enfant else pid
+        target_label = f"de {enfant_doc.get('nom', 'votre enfant')}" if is_enfant else "de votre dossier"
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": target_maman_id,
+            "title": "📝 Nouvelle note médicale",
+            "body": f"Dr {user.get('name', '')} a ajouté une note {target_label}.",
+            "type": "consultation_note",
+            "read": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        # Push si possible
+        target_user = await db.users.find_one({"id": target_maman_id}, {"_id": 0, "push_token": 1})
+        if target_user and target_user.get("push_token"):
+            await send_expo_push(
+                target_user["push_token"],
+                "📝 Nouvelle note médicale",
+                f"Dr {user.get('name', '')} a ajouté une note {target_label}.",
+                {"type": "consultation_note", "patient_id": pid},
+            )
+    except Exception:
+        pass
+
     return decrypt_consultation_note(doc)
+
+
+@api.get("/enfants/{eid}/consultation-notes")
+async def list_enfant_consultation_notes(eid: str, user=Depends(get_current_user)):
+    """
+    Liste les notes médicales associées à un enfant.
+    Accessible par :
+      - La maman propriétaire de l'enfant
+      - Le Pro qui a écrit la note (filtré par pro_id)
+    """
+    enfant = await db.enfants.find_one({"id": eid}, {"_id": 0, "id": 1, "user_id": 1})
+    if not enfant:
+        raise HTTPException(404, "Enfant introuvable")
+
+    # Filtre selon le rôle
+    role = user.get("role")
+    if role == "maman":
+        if enfant["user_id"] != user["id"]:
+            raise HTTPException(403, "Cet enfant n'est pas le vôtre")
+        query = {"patient_id": eid, "patient_type": "enfant"}
+    elif role == "professionnel":
+        query = {"patient_id": eid, "patient_type": "enfant", "pro_id": user["id"]}
+    else:
+        raise HTTPException(403, "Accès refusé")
+
+    notes_raw = await db.consultation_notes.find(query, {"_id": 0}).sort("date", -1).to_list(200)
+    return [decrypt_consultation_note(n) for n in notes_raw]
 
 
 @api.delete("/pro/consultation-notes/{note_id}")

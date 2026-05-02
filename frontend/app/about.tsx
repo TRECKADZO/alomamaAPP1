@@ -76,6 +76,10 @@ export default function AboutScreen() {
             <Ionicons name="mail" size={16} color={COLORS.primary} />
             <Text style={styles.editorLink}>infos@e-medicare.co</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.editorRow} onPress={() => openLink("https://www.alomaman.com")}>
+            <Ionicons name="globe" size={16} color={COLORS.primary} />
+            <Text style={styles.editorLink}>www.alomaman.com</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Liens légaux */}

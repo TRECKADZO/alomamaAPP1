@@ -4,7 +4,7 @@
  * - Affiche le dossier de grossesse en cours si la maman est enceinte
  */
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -68,6 +68,48 @@ export default function DossierPatient() {
   const enfants = data?.enfants || [];
   const grossesse = data?.grossesse;
   const rdvRecents = data?.rdv_recents || [];
+
+  // Notes médicales associées à un enfant (charge auto)
+  const [enfantNotes, setEnfantNotes] = useState<any[]>([]);
+  const [showAddNote, setShowAddNote] = useState(false);
+  const [noteDiag, setNoteDiag] = useState("");
+  const [noteTrait, setNoteTrait] = useState("");
+  const [noteText, setNoteText] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+
+  useEffect(() => {
+    if (isEnfant && id) {
+      api.get(`/enfants/${id}/consultation-notes`)
+        .then((r) => setEnfantNotes(r.data || []))
+        .catch(() => {});
+    }
+  }, [isEnfant, id]);
+
+  const saveNote = async () => {
+    if (!id) return;
+    if (!noteDiag.trim() && !noteTrait.trim() && !noteText.trim()) {
+      Alert.alert("Note vide", "Renseignez au moins un diagnostic, un traitement, ou une observation.");
+      return;
+    }
+    setSavingNote(true);
+    try {
+      const r = await api.post("/pro/consultation-notes", {
+        patient_id: id,
+        diagnostic: noteDiag.trim() || undefined,
+        traitement: noteTrait.trim() || undefined,
+        notes: noteText.trim() || undefined,
+        date: new Date().toISOString(),
+      });
+      setEnfantNotes((prev) => [r.data, ...prev]);
+      setNoteDiag(""); setNoteTrait(""); setNoteText("");
+      setShowAddNote(false);
+      Alert.alert("✓ Note ajoutée", "La note médicale a été enregistrée. La maman a été notifiée.");
+    } catch (e: any) {
+      Alert.alert("Erreur", formatError(e));
+    } finally {
+      setSavingNote(false);
+    }
+  };
 
   // Helper pour ouvrir le dossier d'un enfant en utilisant le même token
   const openChildFolder = (child: any) => {
@@ -220,6 +262,34 @@ export default function DossierPatient() {
           </>
         )}
 
+        {/* 📝 Notes médicales (visibles seulement pour les enfants) */}
+        {isEnfant && (
+          <>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
+              <Text style={[styles.sectionTitle, { marginTop: 0 }]}>📝 Notes médicales ({enfantNotes.length})</Text>
+              <TouchableOpacity onPress={() => setShowAddNote(true)} style={styles.addNoteBtn}>
+                <Ionicons name="add" size={16} color="#fff" />
+                <Text style={styles.addNoteBtnText}>Ajouter</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.tip}>Vos notes sont chiffrées et visibles par la maman dans le carnet de l'enfant.</Text>
+            {enfantNotes.length === 0 ? (
+              <View style={[styles.card, { alignItems: "center", padding: 16 }]}>
+                <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>Aucune note pour le moment</Text>
+              </View>
+            ) : (
+              enfantNotes.map((n: any) => (
+                <View key={n.id} style={styles.noteCard}>
+                  <Text style={styles.noteDate}>{new Date(n.date || n.created_at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}</Text>
+                  {n.diagnostic && <Row label="Diagnostic" value={n.diagnostic} />}
+                  {n.traitement && <Row label="Traitement" value={n.traitement} />}
+                  {n.notes && <Row label="Observations" value={n.notes} />}
+                </View>
+              ))
+            )}
+          </>
+        )}
+
         {/* Enfants de la maman - cliquables ! */}
         {!isEnfant && enfants.length > 0 && (
           <>
@@ -245,6 +315,38 @@ export default function DossierPatient() {
           </>
         )}
       </ScrollView>
+
+      {/* Modal Ajouter une note */}
+      <Modal visible={showAddNote} animationType="slide" transparent onRequestClose={() => setShowAddNote(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: "flex-end" }}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHead}>
+                <Text style={styles.modalTitle}>📝 Nouvelle note médicale</Text>
+                <TouchableOpacity onPress={() => setShowAddNote(false)}>
+                  <Ionicons name="close" size={24} color={COLORS.textPrimary} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.formLabel}>Diagnostic</Text>
+              <TextInput style={styles.formInput} value={noteDiag} onChangeText={setNoteDiag} placeholder="Ex : Bronchiolite légère" placeholderTextColor={COLORS.textMuted} />
+              <Text style={styles.formLabel}>Traitement / Prescription</Text>
+              <TextInput style={[styles.formInput, { height: 70, textAlignVertical: "top" }]} multiline value={noteTrait} onChangeText={setNoteTrait} placeholder="Médicaments, posologie, durée…" placeholderTextColor={COLORS.textMuted} />
+              <Text style={styles.formLabel}>Observations / Conseils</Text>
+              <TextInput style={[styles.formInput, { height: 80, textAlignVertical: "top" }]} multiline value={noteText} onChangeText={setNoteText} placeholder="Conseils à la maman, suivi à prévoir…" placeholderTextColor={COLORS.textMuted} />
+              <TouchableOpacity onPress={saveNote} disabled={savingNote} style={{ marginTop: 16 }}>
+                <LinearGradient colors={savingNote ? ["#94A3B8", "#94A3B8"] : ["#EC4899", "#F472B6"]} style={styles.saveNoteBtn}>
+                  {savingNote ? <ActivityIndicator color="#fff" /> : (
+                    <>
+                      <Ionicons name="lock-closed" size={18} color="#fff" />
+                      <Text style={styles.saveNoteText}>Enregistrer (chiffré)</Text>
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
