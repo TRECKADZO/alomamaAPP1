@@ -14,7 +14,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import * as DocumentPicker from "expo-document-picker";
-import { pickImageBase64 } from "../lib/imagePicker";
+import * as FileSystem from "expo-file-system/legacy";
+import { pickImageBase64, takePhotoBase64 } from "../lib/imagePicker";
 import { api, formatError } from "../lib/api";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
 import DateField from "../components/DateField";
@@ -109,12 +110,12 @@ export default function MesDocuments() {
             reader.readAsDataURL(blob);
           });
         } else {
-          // Natif : lire en base64 via FileSystem
-          const FileSystem = require("expo-file-system");
+          // Natif : lire en base64 via expo-file-system (legacy API pour SDK 54)
           b64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
         }
       } catch (e: any) {
-        Alert.alert("Erreur de lecture", "Impossible de lire le fichier sélectionné.");
+        console.warn("File read error", e?.message || e);
+        Alert.alert("Erreur de lecture", "Impossible de lire le fichier sélectionné. Réessayez ou choisissez un autre fichier.");
         return;
       }
       // Validation taille (max ~9 Mo)
@@ -132,12 +133,39 @@ export default function MesDocuments() {
   };
 
   const pickFromGallery = async () => {
-    const b64 = await pickImageBase64();
-    if (b64) {
-      setFileBase64(b64);
-      setFileName(`photo_${Date.now()}.jpg`);
-      setMimeType("image/jpeg");
-    }
+    // Permet à l'utilisateur de choisir entre l'appareil photo et la galerie
+    Alert.alert(
+      "Ajouter une photo",
+      "Choisissez la source",
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Appareil photo",
+          onPress: async () => {
+            const b64 = await takePhotoBase64();
+            if (b64) {
+              const raw = b64.startsWith("data:") ? b64.split(",")[1] : b64;
+              setFileBase64(raw);
+              setFileName(`photo_${Date.now()}.jpg`);
+              setMimeType("image/jpeg");
+            }
+          },
+        },
+        {
+          text: "Galerie",
+          onPress: async () => {
+            const b64 = await pickImageBase64();
+            if (b64) {
+              const raw = b64.startsWith("data:") ? b64.split(",")[1] : b64;
+              setFileBase64(raw);
+              setFileName(`photo_${Date.now()}.jpg`);
+              setMimeType("image/jpeg");
+            }
+          },
+        },
+      ],
+      { cancelable: true },
+    );
   };
 
   const save = async () => {
