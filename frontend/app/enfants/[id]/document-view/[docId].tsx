@@ -113,7 +113,7 @@ export default function ChildDocumentViewer() {
     );
   }
 
-  const { mime } = parseBase64(doc.file_base64 || "");
+  const { mime, raw } = parseBase64(doc.file_base64 || "");
   const isPdf = mime.includes("pdf");
   const isImage = mime.startsWith("image");
   // Pour affichage : on garantit un data URI complet
@@ -167,10 +167,14 @@ export default function ChildDocumentViewer() {
           Platform.OS === "web" ? (
             <iframe src={dataUri} style={{ flex: 1, border: 0, width: "100%", height: "100%" }} title={doc.nom} />
           ) : (
+            // Sur natif : rendu PDF via PDF.js (Mozilla) — fonctionne sur iOS et Android
             <WebView
-              source={Platform.OS === "ios" ? { uri: dataUri } : { html: pdfViewerHTML(dataUri) }}
+              source={{ html: pdfViewerHTML(raw) }}
               style={{ flex: 1 }}
               originWhitelist={["*"]}
+              javaScriptEnabled
+              domStorageEnabled
+              mixedContentMode="always"
               startInLoadingState
               renderLoading={() => <ActivityIndicator color={COLORS.primary} style={{ marginTop: 30 }} />}
             />
@@ -193,16 +197,53 @@ export default function ChildDocumentViewer() {
   );
 }
 
-function pdfViewerHTML(dataUri: string): string {
-  return `
-<!DOCTYPE html>
+// HTML qui affiche un PDF via PDF.js (Mozilla) — fonctionne sur Android & iOS
+// On reçoit le base64 brut (sans préfixe data:) et on le décode dans la WebView
+function pdfViewerHTML(rawBase64: string): string {
+  const safe = (rawBase64 || "").replace(/\s+/g, "");
+  return `<!doctype html>
 <html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f3f4f6;">
-  <embed src="${dataUri}" type="application/pdf" width="100%" height="100%" style="height:100vh;">
-  <p style="text-align:center;padding:20px;color:#666;">
-    Si le PDF ne s'affiche pas, utilisez le bouton « Partager » en haut à droite pour l'ouvrir dans une autre application.
-  </p>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>
+  body { margin:0; padding:0; background:#525659; }
+  #viewer { padding: 8px 0; }
+  canvas { display:block; margin: 6px auto; max-width: 98%; box-shadow: 0 2px 4px rgba(0,0,0,0.4); background: white; }
+  .err { color:white; padding:24px; text-align:center; font-family:sans-serif; font-size:14px; }
+  .loading { color:white; text-align:center; padding:30px; font-family:sans-serif; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+<div id="viewer"><div class="loading">Chargement du PDF…</div></div>
+<script>
+  (function() {
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      var b64 = "${safe}";
+      var bin = atob(b64);
+      var arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      pdfjsLib.getDocument({ data: arr }).promise.then(async function(pdf) {
+        var viewer = document.getElementById('viewer');
+        viewer.innerHTML = '';
+        for (var p = 1; p <= pdf.numPages; p++) {
+          var page = await pdf.getPage(p);
+          var vp = page.getViewport({ scale: 1.5 });
+          var canvas = document.createElement('canvas');
+          canvas.width = vp.width;
+          canvas.height = vp.height;
+          viewer.appendChild(canvas);
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+        }
+      }).catch(function(e) {
+        document.body.innerHTML = '<div class="err">❌ Erreur de lecture du PDF<br><br>' + (e && e.message ? e.message : e) + '<br><br>Utilisez le bouton « Partager » en haut à droite.</div>';
+      });
+    } catch (e) {
+      document.body.innerHTML = '<div class="err">❌ Erreur: ' + (e && e.message ? e.message : e) + '</div>';
+    }
+  })();
+</script>
 </body>
 </html>`;
 }
