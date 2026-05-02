@@ -78,17 +78,49 @@ export default function DocumentsEnfant() {
     }
   };
 
-  const pickPhoto = async () => {
+  const launchCamera = async () => {
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) return Alert.alert("Permission refusée");
-      const r = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, base64: true, quality: 0.6 });
+      if (!perm.granted) return Alert.alert("Permission refusée", "Activez l'accès à la caméra dans les paramètres de votre téléphone.");
+      const r = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], base64: true, quality: 0.6 });
       if (r.canceled || !r.assets?.[0]?.base64) return;
       const dataUri = `data:image/jpeg;base64,${r.assets[0].base64}`;
       setPickedFile({ name: `photo_${Date.now()}.jpg`, base64: dataUri });
       setForm({ ...form, nom: "Photo " + new Date().toLocaleDateString("fr-FR") });
       setModal(true);
-    } catch (e) { Alert.alert("Erreur", String(e)); }
+    } catch (e) {
+      console.warn("Camera error", e);
+      Alert.alert("Erreur appareil photo", formatError(e));
+    }
+  };
+
+  const launchGallery = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return Alert.alert("Permission refusée", "Activez l'accès aux photos dans les paramètres.");
+      const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], base64: true, quality: 0.6 });
+      if (r.canceled || !r.assets?.[0]?.base64) return;
+      const dataUri = `data:image/jpeg;base64,${r.assets[0].base64}`;
+      setPickedFile({ name: `photo_${Date.now()}.jpg`, base64: dataUri });
+      setForm({ ...form, nom: "Photo " + new Date().toLocaleDateString("fr-FR") });
+      setModal(true);
+    } catch (e) {
+      console.warn("Gallery error", e);
+      Alert.alert("Erreur galerie", formatError(e));
+    }
+  };
+
+  const pickPhoto = () => {
+    Alert.alert(
+      "Ajouter une photo",
+      "Choisissez la source",
+      [
+        { text: "Annuler", style: "cancel" },
+        { text: "Appareil photo", onPress: launchCamera },
+        { text: "Galerie", onPress: launchGallery },
+      ],
+      { cancelable: true },
+    );
   };
 
   const upload = async () => {
