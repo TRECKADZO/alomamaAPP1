@@ -2489,3 +2489,98 @@ agent_communication:
       are working correctly. Endpoint naming differs from the review request — actual flow
       uses /pro/patient/recherche + /partage/demande/{id}/valider instead of
       /pro/demandes + /maman/demandes/{id}/validate.
+
+
+backend:
+  - task: "Téléconsultation TIME-WINDOW logic (status / agora-token / ring / room)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          42/42 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_telewindow.py).
+
+          Test setup: created 5 RDVs (mode=teleconsultation, duree_minutes=30) with custom
+          dates and statuses via direct Mongo $set (cluster mongodb+srv:// alomaman db).
+            • rdv_2h    : date = now+2h, status='confirme'  → window state SCHEDULED
+            • rdv_now   : date = now+5min, status='confirme' → window state OPEN
+                          (opens_at = now-10min, closes_at = now+65min)
+            • rdv_past  : date = now-3h, status='confirme'  → window state CLOSED
+                          (closes_at = now-2h, well past)
+            • rdv_cancelled : date = now+5min, status='annule' → CANCELLED
+            • rdv_pending   : date = now+5min, status='en_attente' → NOT_CONFIRMED
+
+          🅰 GET /teleconsultation/status/{rdv_id} (5/5 scenarios, 17/17 assertions):
+          (1) RDV in 2h confirmed → 200 with status="scheduled", available=false,
+              seconds_until_open=6294 (≈6300 expected), opens_at=rdv-15min, closes_at=rdv+60min,
+              duree_minutes=30, human="La salle ouvre dans 1h 44min". ✓
+          (2) RDV in 5 min confirmed → 200 with status="open", available=true,
+              human="La salle est ouverte — vous pouvez rejoindre maintenant". ✓
+          (3) RDV 3h ago confirmed → 200 with status="closed", available=false,
+              human="La fenêtre de téléconsultation est terminée. Reprenez RDV si nécessaire.". ✓
+          (4) RDV cancelled → 200 with status="cancelled", available=false,
+              human="Ce RDV a été annulé. La téléconsultation n'est plus accessible.". ✓
+          (5) RDV en_attente → 200 with status="not_confirmed", available=false,
+              human="Ce RDV doit être confirmé par le professionnel avant de pouvoir démarrer
+              la téléconsultation.". ✓
+
+          🅱 POST /teleconsultation/agora-token/{rdv_id} window enforcement (5/5):
+          • Scheduled (2h future) → 423 Locked, detail="La salle ouvre dans 1h 44min" ✓
+          • Open (now+5min)        → 200 OK with full {app_id, channel, token, uid, expires_at}
+                                     channel="alomaman_ba6dc68195bc41eab0ff1187" (32-char limit OK) ✓
+          • Cancelled              → 410 Gone, detail="Ce RDV a été annulé…" ✓
+          • Not_confirmed (en_attente) → 412 Precondition Failed, detail="Ce RDV doit être confirmé…" ✓
+          • Closed (3h ago)        → 410 Gone, detail="La fenêtre de téléconsultation est terminée." ✓
+
+          🅲 POST /teleconsultation/ring/{rdv_id} window enforcement (5/5):
+          • Scheduled → 423 ✓ ; Open → 200 ok=true ✓ ; Cancelled → 410 ✓ ;
+            Not_confirmed → 412 ✓ ; Closed → 410 ✓
+
+          🅳 POST /teleconsultation/room/{rdv_id} (Jitsi) window enforcement (4/4):
+          • Scheduled → 423 ✓ ; Open → 200 with room_url="https://meet.jit.si/alomaman-ba6dc681" ✓ ;
+            Cancelled → 410 ✓ ; Not_confirmed → 412 ✓
+
+          🅴 Auth + authorization (12/12):
+          • No Bearer on status / agora-token / ring / room → 401 (4/4) ✓
+          • Third-party fresh maman (full RGPD consent) accessing rdv_now on all 4 endpoints → 403 (4/4) ✓
+          • Non-existent rdv_id on all 4 endpoints → 404 (4/4) ✓
+
+          IMPLEMENTATION REVIEW (server.py L4781-4926, L2279-2435):
+          • TELECONSULT_OPEN_BEFORE_MIN = 15 (correct).
+          • TELECONSULT_GRACE_AFTER_MIN = 30 (correct).
+          • _compute_teleconsult_window correctly handles: status check → date parse → tz default UTC →
+            duree_minutes from rdv (default 30) → opens_at = rdv - 15min, closes_at = rdv + duree + 30min.
+          • Status priority order (server.py L4803-4815): "annule" → cancelled (410) BEFORE
+            status-not-in-confirme/en_cours/termine → not_confirmed (412). Correct.
+          • _enforce_teleconsult_window status→HTTP code map matches spec exactly:
+            scheduled→423, closed→410, cancelled→410, not_confirmed→412, error→400.
+          • Status endpoint NEVER raises (returns 200 with descriptive payload), as spec required.
+          • All 3 mutating endpoints (agora-token, ring, room) call _enforce_teleconsult_window AFTER
+            ownership/auth checks (correct: 401>403>404>window).
+          • Status endpoint also has 401>403>404 ordering then computes window unconditionally.
+
+          NO BUGS DETECTED. Cleanup OK: 5 test RDVs and the third-party maman account were deleted at
+          end of run. Idempotent.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      Téléconsultation TIME-WINDOW logic fully validated — 42/42 scenarios PASS on the production
+      preview URL. The new GET /api/teleconsultation/status/{rdv_id} endpoint never errors and
+      returns the full window payload (status / available / opens_at / closes_at / now / rdv_at /
+      seconds_until_open / seconds_until_close / duree_minutes / human) for all 5 states (scheduled,
+      open, closed, cancelled, not_confirmed). The 3 existing endpoints (agora-token, ring, room)
+      now correctly reject requests outside the window:
+        • 423 Locked   when scheduled (with countdown in detail)
+        • 410 Gone     when closed or cancelled
+        • 412 Precond  when not_confirmed (en_attente)
+        • 200 OK       when in window AND status=confirme
+      Auth ordering (401 > 403 > 404 > window) is preserved on all 4 endpoints. No bugs to fix —
+      implementation in /app/backend/server.py L4781-4926 + L2279/2299/2359 is production-ready.
+      Test script: /app/backend_test_telewindow.py.

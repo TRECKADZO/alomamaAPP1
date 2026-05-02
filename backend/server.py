@@ -2283,6 +2283,7 @@ async def create_teleconsultation_room(rdv_id: str, user=Depends(get_current_use
         raise HTTPException(status_code=404, detail="RDV introuvable")
     if user["id"] not in [rdv.get("maman_id"), rdv.get("pro_id")]:
         raise HTTPException(status_code=403, detail="Accès refusé")
+    _enforce_teleconsult_window(rdv)
     room_name = f"alomaman-{rdv_id[:8]}"
     room_url = f"https://meet.jit.si/{room_name}"
     await db.rdv.update_one(
@@ -2310,6 +2311,7 @@ async def create_agora_token(rdv_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="RDV introuvable")
     if user["id"] not in [rdv.get("maman_id"), rdv.get("pro_id")]:
         raise HTTPException(status_code=403, detail="Accès refusé")
+    _enforce_teleconsult_window(rdv)
 
     app_id = os.environ.get("AGORA_APP_ID", "").strip()
     app_certificate = os.environ.get("AGORA_APP_CERTIFICATE", "").strip()
@@ -2368,6 +2370,7 @@ async def ring_other_party(rdv_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="RDV introuvable")
     if user["id"] not in [rdv.get("maman_id"), rdv.get("pro_id")]:
         raise HTTPException(status_code=403, detail="Accès refusé")
+    _enforce_teleconsult_window(rdv)
 
     # Déterminer qui appelle et qui est appelé
     caller_id = user["id"]
@@ -4778,6 +4781,151 @@ async def dossier_public(token: str):
 # ----------------------------------------------------------------------
 # Send Expo Push (real push, best-effort)
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Téléconsultation - Helper fenêtre temporelle (pré/post RDV)
+# ----------------------------------------------------------------------
+TELECONSULT_OPEN_BEFORE_MIN = 15  # ouverture 15 min avant l'heure
+TELECONSULT_GRACE_AFTER_MIN = 30  # clôture 30 min après la fin du RDV
+
+
+def _compute_teleconsult_window(rdv: dict) -> dict:
+    """Calcule la fenêtre temporelle d'accès à la salle vidéo pour un RDV.
+
+    Retourne un dict :
+      - status : "scheduled" | "open" | "closed" | "not_confirmed" | "cancelled" | "error"
+      - opens_at, closes_at (ISO strings UTC)
+      - now (ISO string UTC)
+      - seconds_until_open (négatif si déjà ouvert)
+      - seconds_until_close
+      - human : message lisible
+    """
+    try:
+        if rdv.get("status") == "annule":
+            return {
+                "status": "cancelled",
+                "human": "Ce RDV a été annulé. La téléconsultation n'est plus accessible.",
+                "available": False,
+            }
+        if rdv.get("status") not in ("confirme", "en_cours", "termine"):
+            # en_attente ou autres → pas encore confirmé
+            return {
+                "status": "not_confirmed",
+                "human": "Ce RDV doit être confirmé par le professionnel avant de pouvoir démarrer la téléconsultation.",
+                "available": False,
+            }
+
+        date_str = rdv.get("date")
+        if not date_str:
+            return {"status": "error", "human": "Date du RDV manquante", "available": False}
+
+        # Parse date
+        try:
+            rdv_dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        except Exception:
+            return {"status": "error", "human": "Date du RDV illisible", "available": False}
+        if rdv_dt.tzinfo is None:
+            rdv_dt = rdv_dt.replace(tzinfo=timezone.utc)
+
+        duree_min = int(rdv.get("duree_minutes") or 30)
+        opens_at = rdv_dt - timedelta(minutes=TELECONSULT_OPEN_BEFORE_MIN)
+        closes_at = rdv_dt + timedelta(minutes=duree_min + TELECONSULT_GRACE_AFTER_MIN)
+        now = datetime.now(timezone.utc)
+
+        seconds_until_open = int((opens_at - now).total_seconds())
+        seconds_until_close = int((closes_at - now).total_seconds())
+
+        if now < opens_at:
+            # Pas encore ouvert
+            mins = max(1, seconds_until_open // 60)
+            if mins < 60:
+                human = f"La salle ouvre dans {mins} min"
+            elif mins < 1440:
+                h = mins // 60
+                m = mins % 60
+                human = f"La salle ouvre dans {h}h {m:02d}min"
+            else:
+                d = mins // 1440
+                human = f"La salle ouvre dans {d} jour{'s' if d > 1 else ''}"
+            return {
+                "status": "scheduled",
+                "available": False,
+                "opens_at": opens_at.isoformat(),
+                "closes_at": closes_at.isoformat(),
+                "now": now.isoformat(),
+                "rdv_at": rdv_dt.isoformat(),
+                "seconds_until_open": seconds_until_open,
+                "seconds_until_close": seconds_until_close,
+                "duree_minutes": duree_min,
+                "human": human,
+            }
+        if now > closes_at:
+            return {
+                "status": "closed",
+                "available": False,
+                "opens_at": opens_at.isoformat(),
+                "closes_at": closes_at.isoformat(),
+                "now": now.isoformat(),
+                "rdv_at": rdv_dt.isoformat(),
+                "human": "La fenêtre de téléconsultation est terminée. Reprenez RDV si nécessaire.",
+            }
+        # Ouvert
+        return {
+            "status": "open",
+            "available": True,
+            "opens_at": opens_at.isoformat(),
+            "closes_at": closes_at.isoformat(),
+            "now": now.isoformat(),
+            "rdv_at": rdv_dt.isoformat(),
+            "seconds_until_close": seconds_until_close,
+            "duree_minutes": duree_min,
+            "human": "La salle est ouverte — vous pouvez rejoindre maintenant",
+        }
+    except Exception as e:
+        logger.warning(f"_compute_teleconsult_window error: {e}")
+        return {"status": "error", "available": False, "human": "Erreur de calcul de la fenêtre"}
+
+
+def _enforce_teleconsult_window(rdv: dict) -> None:
+    """Lève une HTTPException si la fenêtre n'est pas ouverte. Bypass admin."""
+    win = _compute_teleconsult_window(rdv)
+    if win.get("available"):
+        return
+    status = win.get("status")
+    if status == "scheduled":
+        # 423 Locked = ressource verrouillée temporairement
+        raise HTTPException(status_code=423, detail=win.get("human", "Salle pas encore ouverte"))
+    if status == "closed":
+        raise HTTPException(status_code=410, detail=win.get("human", "Fenêtre terminée"))
+    if status == "cancelled":
+        raise HTTPException(status_code=410, detail=win.get("human", "RDV annulé"))
+    if status == "not_confirmed":
+        raise HTTPException(status_code=412, detail=win.get("human", "RDV non confirmé"))
+    raise HTTPException(status_code=400, detail=win.get("human", "Salle indisponible"))
+
+
+# ----------------------------------------------------------------------
+# Téléconsultation - Statut fenêtre (utilisé par le frontend pour le countdown)
+# ----------------------------------------------------------------------
+@api.get("/teleconsultation/status/{rdv_id}")
+async def teleconsultation_status(rdv_id: str, user=Depends(get_current_user)):
+    """Retourne l'état de la fenêtre temporelle pour un RDV (sans erreur).
+    Utilisé par le frontend pour afficher un compte à rebours en temps réel.
+    """
+    rdv = await db.rdv.find_one({"id": rdv_id})
+    if not rdv:
+        raise HTTPException(status_code=404, detail="RDV introuvable")
+    if user["id"] not in [rdv.get("maman_id"), rdv.get("pro_id")]:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+    win = _compute_teleconsult_window(rdv)
+    return {
+        **win,
+        "rdv_id": rdv_id,
+        "rdv_status": rdv.get("status"),
+        "rdv_motif": rdv.get("motif"),
+        "mode": rdv.get("mode"),
+    }
+
+
 async def send_expo_push(token: str, title: str, body: str, data: Optional[dict] = None):
     """Send an Expo push via the public Expo Push API.
     - priority=high : déclenche FCM en mode HIGH → la notif réveille le téléphone et apparaît immédiatement
@@ -6223,6 +6371,68 @@ async def _reminders_scheduler():
                     logger.warning(f"Push reminder {r.get('id')} failed: {e}")
             if count:
                 logger.info(f"📲 Sent {count} reminder push(es)")
+
+            # === Rappels téléconsultation : push 15 min avant le RDV ===
+            try:
+                now_dt = datetime.now(timezone.utc)
+                window_start = (now_dt + timedelta(minutes=12)).isoformat()  # 12-18 min ahead
+                window_end = (now_dt + timedelta(minutes=18)).isoformat()
+                rdv_cursor = db.rdv.find({
+                    "mode": "teleconsultation",
+                    "status": "confirme",
+                    "date": {"$gte": window_start, "$lte": window_end},
+                    "teleconsult_reminder_sent": {"$ne": True},
+                })
+                tcount = 0
+                async for rdv in rdv_cursor:
+                    rdv_id = rdv.get("id")
+                    rdv_date = rdv.get("date", "")
+                    try:
+                        rdv_dt = datetime.fromisoformat(rdv_date.replace("Z", "+00:00"))
+                        time_str = rdv_dt.strftime("%H:%M")
+                    except Exception:
+                        time_str = "bientôt"
+                    motif = rdv.get("motif") or "consultation"
+
+                    for participant_id in [rdv.get("maman_id"), rdv.get("pro_id")]:
+                        if not participant_id:
+                            continue
+                        try:
+                            u = await db.users.find_one({"id": participant_id}, {"_id": 0, "push_token": 1, "name": 1})
+                            if not u:
+                                continue
+                            await db.notifications.insert_one({
+                                "id": str(uuid.uuid4()),
+                                "user_id": participant_id,
+                                "title": "📞 Téléconsultation dans 15 min",
+                                "body": f"Votre RDV ({motif}) à {time_str} approche. Préparez-vous à rejoindre la salle.",
+                                "type": "teleconsultation_soon",
+                                "rdv_id": rdv_id,
+                                "read": False,
+                                "created_at": datetime.now(timezone.utc).isoformat(),
+                            })
+                            if u.get("push_token"):
+                                await send_expo_push(
+                                    u["push_token"],
+                                    "📞 Téléconsultation dans 15 min",
+                                    f"Votre RDV ({motif}) à {time_str} approche. Préparez-vous.",
+                                    {
+                                        "type": "teleconsultation_soon",
+                                        "rdv_id": rdv_id,
+                                        "deep_link": f"/video-call/{rdv_id}",
+                                    },
+                                )
+                        except Exception as e:
+                            logger.warning(f"Reminder téléconsult to user {participant_id} failed: {e}")
+                    await db.rdv.update_one(
+                        {"id": rdv_id},
+                        {"$set": {"teleconsult_reminder_sent": True}},
+                    )
+                    tcount += 1
+                if tcount:
+                    logger.info(f"📞 Sent {tcount} téléconsultation reminder(s) (15 min ahead)")
+            except Exception as e:
+                logger.warning(f"Téléconsultation reminders job failed: {e}")
         except Exception as e:
             logger.warning(f"Reminders scheduler iteration failed: {e}")
         await asyncio.sleep(300)  # 5 minutes

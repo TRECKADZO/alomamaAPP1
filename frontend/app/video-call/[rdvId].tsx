@@ -66,8 +66,13 @@ export default function VideoCall() {
   const [callDuration, setCallDuration] = useState(0);
   const [agoraReady, setAgoraReady] = useState(false);
 
+  // Fenêtre temporelle (statut & countdown)
+  const [windowInfo, setWindowInfo] = useState<any>(null);
+  const [windowLoaded, setWindowLoaded] = useState(false);
+
   const engineRef = useRef<any>(null);
   const timerRef = useRef<any>(null);
+  const statusPollRef = useRef<any>(null);
 
   const isPro = user?.role === "professionnel";
   const isMaman = user?.role === "maman";
@@ -81,6 +86,25 @@ export default function VideoCall() {
         setRdv(found || null);
       } catch {}
     })();
+  }, [rdvId]);
+
+  // Polling du statut de la fenêtre temporelle (toutes les 5s)
+  useEffect(() => {
+    if (!rdvId) return;
+    const fetchStatus = async () => {
+      try {
+        const r = await api.get(`/teleconsultation/status/${rdvId}`);
+        setWindowInfo(r.data);
+      } catch {
+      } finally {
+        setWindowLoaded(true);
+      }
+    };
+    fetchStatus();
+    statusPollRef.current = setInterval(fetchStatus, 5000); // refresh chaque 5s
+    return () => {
+      if (statusPollRef.current) clearInterval(statusPollRef.current);
+    };
   }, [rdvId]);
 
   // Cleanup auto à la sortie
@@ -370,21 +394,40 @@ export default function VideoCall() {
           </View>
         )}
 
-        <TouchableOpacity
-          onPress={AgoraSDK ? startAgoraCall : startJitsiCall}
-          disabled={loading}
-          style={{ marginTop: 24, alignSelf: "stretch" }}
-          testID="start-call-btn"
-        >
-          <LinearGradient colors={["#2DD4BF", "#06B6D4"]} style={styles.btn}>
-            {loading ? <ActivityIndicator color="#fff" /> : (
-              <>
-                <Ionicons name="videocam" size={20} color="#fff" />
-                <Text style={styles.btnText}>{isPro ? "Démarrer la consultation" : "Rejoindre la salle"}</Text>
-              </>
-            )}
-          </LinearGradient>
-        </TouchableOpacity>
+        {/* État de la fenêtre temporelle */}
+        {windowLoaded && windowInfo && (
+          <WindowStatusCard info={windowInfo} />
+        )}
+
+        {/* Bouton conditionnel selon la fenêtre */}
+        {windowInfo?.available ? (
+          <TouchableOpacity
+            onPress={AgoraSDK ? startAgoraCall : startJitsiCall}
+            disabled={loading}
+            style={{ marginTop: 24, alignSelf: "stretch" }}
+            testID="start-call-btn"
+          >
+            <LinearGradient colors={["#2DD4BF", "#06B6D4"]} style={styles.btn}>
+              {loading ? <ActivityIndicator color="#fff" /> : (
+                <>
+                  <Ionicons name="videocam" size={20} color="#fff" />
+                  <Text style={styles.btnText}>{isPro ? "Démarrer la consultation" : "Rejoindre la salle"}</Text>
+                </>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+        ) : (
+          <View style={[styles.btn, styles.btnDisabled]}>
+            <Ionicons name="lock-closed" size={20} color="#94A3B8" />
+            <Text style={styles.btnDisabledText}>
+              {windowInfo?.status === "scheduled" ? "Salle pas encore ouverte" :
+               windowInfo?.status === "closed" ? "Fenêtre terminée" :
+               windowInfo?.status === "cancelled" ? "RDV annulé" :
+               windowInfo?.status === "not_confirmed" ? "Non confirmé" :
+               "Indisponible"}
+            </Text>
+          </View>
+        )}
 
         {/* Conseils */}
         <View style={styles.tipsBox}>
@@ -410,6 +453,94 @@ function Tip({ icon, text }: { icon: any; text: string }) {
   );
 }
 
+/**
+ * Carte de statut de la fenêtre temporelle.
+ * Affiche un compte à rebours en temps réel quand la salle n'est pas encore ouverte.
+ */
+function WindowStatusCard({ info }: { info: any }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (info?.status !== "scheduled") return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [info?.status]);
+
+  if (!info) return null;
+
+  const status = info.status;
+  if (status === "open") {
+    return (
+      <View style={[styles.windowCard, { backgroundColor: "#D1FAE5", borderColor: "#10B981" }]}>
+        <Ionicons name="checkmark-circle" size={22} color="#059669" />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.windowTitle, { color: "#065F46" }]}>Salle ouverte</Text>
+          <Text style={[styles.windowText, { color: "#047857" }]}>{info.human}</Text>
+        </View>
+      </View>
+    );
+  }
+  if (status === "scheduled") {
+    // Compte à rebours en temps réel
+    let secs = info.opens_at ? Math.max(0, Math.floor((new Date(info.opens_at).getTime() - now) / 1000)) : 0;
+    const d = Math.floor(secs / 86400); secs -= d * 86400;
+    const h = Math.floor(secs / 3600); secs -= h * 3600;
+    const m = Math.floor(secs / 60); secs -= m * 60;
+    const s = secs;
+    let countdown = "";
+    if (d > 0) countdown = `${d}j ${h}h ${m}min`;
+    else if (h > 0) countdown = `${h}h ${m.toString().padStart(2, "0")}min`;
+    else if (m > 0) countdown = `${m}min ${s.toString().padStart(2, "0")}s`;
+    else countdown = `${s}s`;
+    return (
+      <View style={[styles.windowCard, { backgroundColor: "#FEF3C7", borderColor: "#F59E0B" }]}>
+        <Ionicons name="time" size={22} color="#B45309" />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.windowTitle, { color: "#78350F" }]}>Salle pas encore ouverte</Text>
+          <Text style={[styles.windowText, { color: "#92400E" }]}>Ouverture dans {countdown}</Text>
+          <Text style={[styles.windowSub, { color: "#92400E" }]}>
+            Vous pourrez rejoindre 15 minutes avant le RDV
+          </Text>
+        </View>
+      </View>
+    );
+  }
+  if (status === "closed") {
+    return (
+      <View style={[styles.windowCard, { backgroundColor: "#FEE2E2", borderColor: "#EF4444" }]}>
+        <Ionicons name="close-circle" size={22} color="#B91C1C" />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.windowTitle, { color: "#7F1D1D" }]}>Fenêtre terminée</Text>
+          <Text style={[styles.windowText, { color: "#991B1B" }]}>{info.human}</Text>
+        </View>
+      </View>
+    );
+  }
+  if (status === "cancelled") {
+    return (
+      <View style={[styles.windowCard, { backgroundColor: "#FEE2E2", borderColor: "#EF4444" }]}>
+        <Ionicons name="ban" size={22} color="#B91C1C" />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.windowTitle, { color: "#7F1D1D" }]}>RDV annulé</Text>
+          <Text style={[styles.windowText, { color: "#991B1B" }]}>{info.human}</Text>
+        </View>
+      </View>
+    );
+  }
+  if (status === "not_confirmed") {
+    return (
+      <View style={[styles.windowCard, { backgroundColor: "#FEF3C7", borderColor: "#F59E0B" }]}>
+        <Ionicons name="hourglass" size={22} color="#B45309" />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.windowTitle, { color: "#78350F" }]}>En attente de confirmation</Text>
+          <Text style={[styles.windowText, { color: "#92400E" }]}>{info.human}</Text>
+        </View>
+      </View>
+    );
+  }
+  return null;
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bgPrimary },
   header: { flexDirection: "row", alignItems: "center", gap: 10, padding: SPACING.lg },
@@ -428,6 +559,14 @@ const styles = StyleSheet.create({
   bigSub: { fontSize: 13, color: COLORS.textSecondary, textAlign: "center", marginTop: 8, paddingHorizontal: 10 },
   btn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 24, paddingVertical: 16, borderRadius: RADIUS.pill },
   btnText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  btnDisabled: { backgroundColor: "#E2E8F0", borderRadius: RADIUS.pill, marginTop: 12, alignSelf: "stretch" },
+  btnDisabledText: { color: "#94A3B8", fontWeight: "800", fontSize: 14 },
+
+  // Carte de statut fenêtre temporelle
+  windowCard: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 14, borderRadius: 14, borderWidth: 1, marginTop: 12, alignSelf: "stretch" },
+  windowTitle: { fontSize: 14, fontWeight: "800" },
+  windowText: { fontSize: 13, marginTop: 4, fontWeight: "600" },
+  windowSub: { fontSize: 11, marginTop: 4, opacity: 0.85 },
   warningBox: { flexDirection: "row", gap: 8, marginTop: 16, padding: 12, backgroundColor: "#FEF3C7", borderRadius: 12, borderWidth: 1, borderColor: "#FDE68A" },
   warningText: { flex: 1, fontSize: 12, color: "#78350F", lineHeight: 17 },
   tipsBox: { width: "100%", padding: 14, backgroundColor: "#EFF6FF", borderRadius: 14, borderWidth: 1, borderColor: "#BFDBFE", marginTop: 24 },
