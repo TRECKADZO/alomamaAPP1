@@ -1,8 +1,5 @@
 /**
- * Visionneuse de document — affiche un PDF, une image, ou télécharge le fichier.
- * - PDF : affiché via un iframe (web) ou en partage natif (mobile)
- * - Image : <Image>
- * - Autre : bouton de téléchargement
+ * Visionneuse de document du carnet enfant — affiche PDF/Image, partage natif sinon.
  */
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Image, Platform } from "react-native";
@@ -11,27 +8,42 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { WebView } from "react-native-webview";
-import { api, formatError } from "../../lib/api";
-import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import { api, formatError } from "../../../../lib/api";
+import { COLORS, RADIUS, SPACING } from "../../../../constants/theme";
 
-const formatSize = (bytes?: number) => {
-  if (!bytes) return "—";
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} Ko`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+const TYPES: Record<string, { label: string; color: string; icon: string }> = {
+  ordonnance: { label: "Ordonnance", color: "#3B82F6", icon: "📄" },
+  analyse: { label: "Analyse / Bilan", color: "#10B981", icon: "🧪" },
+  echo: { label: "Échographie", color: "#A855F7", icon: "🩻" },
+  vaccin: { label: "Vaccins", color: "#F472B6", icon: "💉" },
+  autre: { label: "Autre", color: "#6B7280", icon: "📁" },
 };
 
-export default function DocumentViewer() {
+const formatKb = (kb?: number) => {
+  if (!kb) return "—";
+  if (kb < 1024) return `${kb} ko`;
+  return `${(kb / 1024).toFixed(1)} Mo`;
+};
+
+// Extrait { mime, raw } depuis un data URI ou une string base64 brute
+function parseBase64(input: string): { mime: string; raw: string } {
+  if (!input) return { mime: "application/octet-stream", raw: "" };
+  const m = input.match(/^data:([^;]+);base64,(.+)$/);
+  if (m) return { mime: m[1], raw: m[2] };
+  return { mime: "application/octet-stream", raw: input };
+}
+
+export default function ChildDocumentViewer() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, docId } = useLocalSearchParams<{ id: string; docId: string }>();
   const [doc, setDoc] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !docId) return;
     (async () => {
       try {
-        const r = await api.get(`/documents/${id}`);
+        const r = await api.get(`/enfants/${id}/documents/${docId}`);
         setDoc(r.data);
       } catch (e: any) {
         Alert.alert("Erreur", formatError(e));
@@ -39,54 +51,57 @@ export default function DocumentViewer() {
         setLoading(false);
       }
     })();
-  }, [id]);
+  }, [id, docId]);
 
-  // Téléchargement / partage natif
   const downloadOrShare = async () => {
     if (!doc?.file_base64) return;
+    const { mime, raw } = parseBase64(doc.file_base64);
     try {
       if (Platform.OS === "web") {
-        // Web : créer un blob et télécharger
-        const byteChars = atob(doc.file_base64);
+        const byteChars = atob(raw);
         const byteNumbers = new Array(byteChars.length);
         for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-        const blob = new Blob([new Uint8Array(byteNumbers)], { type: doc.mime_type });
+        const blob = new Blob([new Uint8Array(byteNumbers)], { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = doc.file_name || "document";
+        const ext = mime.includes("pdf") ? "pdf" : mime.split("/")[1] || "bin";
+        a.download = `${doc.nom || "document"}.${ext}`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 100);
       } else {
-        // Natif : sauvegarder dans le cache + partager
         const FileSystem = await import("expo-file-system/legacy");
         const Sharing = await import("expo-sharing");
-        const localUri = (FileSystem.cacheDirectory || "") + (doc.file_name || `document_${doc.id}`);
-        await FileSystem.writeAsStringAsync(localUri, doc.file_base64, { encoding: FileSystem.EncodingType.Base64 });
+        const ext = mime.includes("pdf") ? "pdf" : (mime.split("/")[1] || "bin");
+        const fileName = `${(doc.nom || "document").replace(/\s+/g, "_")}.${ext}`;
+        const localUri = (FileSystem.cacheDirectory || "") + fileName;
+        await FileSystem.writeAsStringAsync(localUri, raw, { encoding: FileSystem.EncodingType.Base64 });
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) {
           await Sharing.shareAsync(localUri, {
-            mimeType: doc.mime_type,
-            dialogTitle: doc.titre,
-            UTI: doc.mime_type === "application/pdf" ? "com.adobe.pdf" : undefined,
+            mimeType: mime,
+            dialogTitle: doc.nom,
+            UTI: mime.includes("pdf") ? "com.adobe.pdf" : undefined,
           });
         } else {
           Alert.alert("Partage indisponible", "Le fichier a été sauvegardé dans le cache.");
         }
       }
     } catch (e: any) {
-      Alert.alert("Erreur", "Impossible de télécharger le fichier.");
+      console.warn("Download/share error", e);
+      Alert.alert("Erreur", "Impossible d'ouvrir/partager le fichier.");
     }
   };
 
-  if (loading)
+  if (loading) {
     return (
       <SafeAreaView style={styles.loading}>
         <ActivityIndicator color={COLORS.primary} />
       </SafeAreaView>
     );
+  }
 
-  if (!doc)
+  if (!doc) {
     return (
       <SafeAreaView style={styles.loading}>
         <Ionicons name="alert-circle" size={48} color="#EF4444" />
@@ -96,10 +111,16 @@ export default function DocumentViewer() {
         </TouchableOpacity>
       </SafeAreaView>
     );
+  }
 
-  const isPdf = (doc.mime_type || "").includes("pdf");
-  const isImage = (doc.mime_type || "").startsWith("image");
-  const dataUri = `data:${doc.mime_type};base64,${doc.file_base64}`;
+  const { mime } = parseBase64(doc.file_base64 || "");
+  const isPdf = mime.includes("pdf");
+  const isImage = mime.startsWith("image");
+  // Pour affichage : on garantit un data URI complet
+  const dataUri = doc.file_base64?.startsWith("data:")
+    ? doc.file_base64
+    : `data:${mime};base64,${doc.file_base64 || ""}`;
+  const t = TYPES[doc.type] || TYPES.autre;
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -108,10 +129,8 @@ export default function DocumentViewer() {
           <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title} numberOfLines={1}>{doc.titre}</Text>
-          <Text style={styles.sub}>
-            {doc.file_name} · {formatSize(doc.size_bytes)}
-          </Text>
+          <Text style={styles.title} numberOfLines={1}>{doc.nom}</Text>
+          <Text style={styles.sub}>{t.label} · {formatKb(doc.size_kb)}</Text>
         </View>
         <TouchableOpacity onPress={downloadOrShare} style={styles.dlBtn}>
           <Ionicons name={Platform.OS === "web" ? "download" : "share-outline"} size={20} color="#fff" />
@@ -121,17 +140,19 @@ export default function DocumentViewer() {
       {/* Métadonnées */}
       <View style={styles.metaCard}>
         <View style={styles.metaRow}>
-          <Ionicons name="folder" size={14} color={COLORS.textMuted} />
-          <Text style={styles.metaText}>{doc.categorie}</Text>
+          <Text style={{ fontSize: 18 }}>{t.icon}</Text>
+          <Text style={[styles.metaText, { color: t.color, fontWeight: "800" }]}>{t.label}</Text>
         </View>
-        <View style={styles.metaRow}>
-          <Ionicons name="calendar" size={14} color={COLORS.textMuted} />
-          <Text style={styles.metaText}>{new Date(doc.date).toLocaleDateString("fr-FR")}</Text>
-        </View>
-        {doc.notes ? (
+        {doc.created_at ? (
+          <View style={styles.metaRow}>
+            <Ionicons name="calendar" size={14} color={COLORS.textMuted} />
+            <Text style={styles.metaText}>{new Date(doc.created_at).toLocaleDateString("fr-FR")}</Text>
+          </View>
+        ) : null}
+        {doc.description ? (
           <View style={styles.notesBox}>
-            <Text style={styles.notesLabel}>Notes</Text>
-            <Text style={styles.notesText}>{doc.notes}</Text>
+            <Text style={styles.notesLabel}>Description</Text>
+            <Text style={styles.notesText}>{doc.description}</Text>
           </View>
         ) : null}
       </View>
@@ -144,14 +165,8 @@ export default function DocumentViewer() {
           </ScrollView>
         ) : isPdf ? (
           Platform.OS === "web" ? (
-            // Sur web : iframe avec viewer PDF du navigateur
-            <iframe
-              src={dataUri}
-              style={{ flex: 1, border: 0, width: "100%", height: "100%" }}
-              title={doc.titre}
-            />
+            <iframe src={dataUri} style={{ flex: 1, border: 0, width: "100%", height: "100%" }} title={doc.nom} />
           ) : (
-            // Sur natif : WebView (avec PDF inline support iOS, Google Docs viewer Android fallback)
             <WebView
               source={Platform.OS === "ios" ? { uri: dataUri } : { html: pdfViewerHTML(dataUri) }}
               style={{ flex: 1 }}
@@ -161,10 +176,9 @@ export default function DocumentViewer() {
             />
           )
         ) : (
-          // Type inconnu : carte de téléchargement
           <View style={styles.unknownCard}>
             <Ionicons name="document-attach" size={64} color={COLORS.textMuted} />
-            <Text style={styles.unknownTitle}>{doc.file_name || "Fichier"}</Text>
+            <Text style={styles.unknownTitle}>{doc.nom || "Fichier"}</Text>
             <Text style={styles.unknownText}>Ce type de fichier ne peut pas être affiché directement.</Text>
             <TouchableOpacity onPress={downloadOrShare} style={{ marginTop: 16 }}>
               <LinearGradient colors={["#14B8A6", "#06B6D4"]} style={styles.unknownBtn}>
@@ -179,7 +193,6 @@ export default function DocumentViewer() {
   );
 }
 
-// HTML simple qui affiche un PDF en base64 (Android)
 function pdfViewerHTML(dataUri: string): string {
   return `
 <!DOCTYPE html>

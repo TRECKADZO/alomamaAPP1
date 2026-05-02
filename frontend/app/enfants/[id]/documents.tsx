@@ -180,7 +180,12 @@ export default function DocumentsEnfant() {
         ) : docs.map((d) => {
           const t = TYPES.find((x) => x.id === d.type) || TYPES[TYPES.length - 1];
           return (
-            <View key={d.id} style={[styles.card, { borderLeftColor: t.color, borderLeftWidth: 4 }]}>
+            <TouchableOpacity
+              key={d.id}
+              onPress={() => router.push(`/enfants/${id}/document-view/${d.id}`)}
+              activeOpacity={0.7}
+              style={[styles.card, { borderLeftColor: t.color, borderLeftWidth: 4 }]}
+            >
               <View style={[styles.docIcon, { backgroundColor: t.color + "20" }]}>
                 <Text style={{ fontSize: 24 }}>{t.icon}</Text>
               </View>
@@ -189,10 +194,13 @@ export default function DocumentsEnfant() {
                 <Text style={styles.docMeta}>{t.label} · {d.size_kb} ko · {d.created_at ? new Date(d.created_at).toLocaleDateString("fr-FR") : ""}</Text>
                 {d.description && <Text style={styles.docMeta}>{d.description}</Text>}
               </View>
-              <TouchableOpacity onPress={() => supprimer(d.id)}>
-                <Ionicons name="trash-outline" size={18} color="#EF4444" />
-              </TouchableOpacity>
-            </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <Ionicons name="eye-outline" size={18} color={COLORS.primary} />
+                <TouchableOpacity onPress={(e) => { e.stopPropagation(); supprimer(d.id); }}>
+                  <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
           );
         })}
       </ScrollView>
