@@ -7031,10 +7031,9 @@ async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends
             raise HTTPException(404, "Patiente introuvable")
         enfants = await db.enfants.find({"user_id": patient_id}, {"_id": 0}).to_list(50)
         # Grossesse en cours (si elle est enceinte)
-        grossesse = await db.grossesse.find_one(
-            {"user_id": patient_id, "$or": [{"statut": {"$ne": "terminee"}}, {"statut": {"$exists": False}}]},
+        grossesse = await db.grossesses.find_one(
+            {"user_id": patient_id, "active": True},
             {"_id": 0},
-            sort=[("date_debut", -1)],
         )
         # RDV récents avec ce pro
         rdv_recents = await db.rdv.find(
