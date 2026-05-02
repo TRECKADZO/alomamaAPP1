@@ -2,7 +2,7 @@
  * Documents médicaux d'un enfant (PDF, échographies, ordonnances...)
  */
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, Modal } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, Modal, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -42,18 +42,40 @@ export default function DocumentsEnfant() {
 
   const pickPdf = async () => {
     try {
-      const r = await DocumentPicker.getDocumentAsync({ type: ["application/pdf", "image/*"], copyToCacheDirectory: true });
+      const r = await DocumentPicker.getDocumentAsync({ type: ["application/pdf", "image/*"], copyToCacheDirectory: true, multiple: false });
       if (r.canceled || !r.assets?.[0]) return;
       const asset = r.assets[0];
-      const b64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
-      const mime = asset.mimeType || "application/pdf";
+      // Lecture en base64 (web vs natif)
+      let b64 = "";
+      try {
+        if (Platform.OS === "web") {
+          const fr = await fetch(asset.uri);
+          const blob = await fr.blob();
+          b64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve((reader.result as string).split(",")[1] || "");
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } else {
+          b64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+        }
+      } catch (readErr) {
+        return Alert.alert("Erreur de lecture", "Impossible de lire le fichier sélectionné. Réessayez.");
+      }
+      // Limite 9 MB (taille des octets réels ≈ 3/4 de la longueur base64)
+      const sizeBytes = asset.size || Math.round((b64.length * 3) / 4);
+      if (sizeBytes > 9 * 1024 * 1024) {
+        return Alert.alert("Fichier trop volumineux", "La taille maximale est de 9 Mo. Compressez ou choisissez un autre fichier.");
+      }
+      const mime = asset.mimeType || (asset.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
       const dataUri = `data:${mime};base64,${b64}`;
-      // Limite 4MB
-      if (b64.length > 4 * 1024 * 1024) return Alert.alert("Fichier trop volumineux", "Limite 4 Mo");
-      setPickedFile({ name: asset.name, base64: dataUri });
-      setForm({ ...form, nom: asset.name.replace(/\.[^.]+$/, "") });
+      setPickedFile({ name: asset.name || "document", base64: dataUri });
+      setForm({ ...form, nom: (asset.name || "document").replace(/\.[^.]+$/, "") });
       setModal(true);
-    } catch (e) { Alert.alert("Erreur", String(e)); }
+    } catch (e) {
+      Alert.alert("Erreur", formatError(e));
+    }
   };
 
   const pickPhoto = async () => {

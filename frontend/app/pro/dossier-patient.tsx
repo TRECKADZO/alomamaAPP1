@@ -422,4 +422,20 @@ const styles = StyleSheet.create({
   childCard: { flexDirection: "row", alignItems: "center", padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
   childName: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 14 },
   childMeta: { color: COLORS.textSecondary, fontSize: 12, marginTop: 2 },
+
+  // 📝 Notes médicales
+  addNoteBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#EC4899", borderRadius: 999 },
+  addNoteBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  noteCard: { padding: 12, backgroundColor: "#FCE7F3", borderRadius: RADIUS.md, borderLeftWidth: 4, borderLeftColor: "#EC4899", borderWidth: 1, borderColor: "#FBCFE8", marginBottom: 8 },
+  noteDate: { fontSize: 11, color: "#9D174D", fontWeight: "800", textTransform: "uppercase", marginBottom: 6 },
+
+  // Modal note
+  modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
+  modalCard: { backgroundColor: COLORS.bgPrimary, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: SPACING.xl, maxHeight: "92%" },
+  modalHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: COLORS.textPrimary },
+  formLabel: { fontSize: 12, color: COLORS.textSecondary, fontWeight: "800", marginTop: 12, marginBottom: 6, textTransform: "uppercase" },
+  formInput: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: 12, fontSize: 14, color: COLORS.textPrimary },
+  saveNoteBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 999 },
+  saveNoteText: { color: "#fff", fontWeight: "800", fontSize: 15 },
 });

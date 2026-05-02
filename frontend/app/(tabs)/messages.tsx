@@ -14,16 +14,25 @@ export default function Messages() {
   const router = useRouter();
   const [convos, setConvos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pros, setPros] = useState<any[]>([]);
+  const [contacts, setContacts] = useState<any[]>([]);
 
   const load = async () => {
     try {
+      // Maman → liste des pros disponibles ; Pro/Centre → liste de leurs patientes
+      let contactsPromise: Promise<any> = Promise.resolve({ data: [] });
+      if (user?.role === "maman") {
+        contactsPromise = api.get("/professionnels");
+      } else if (user?.role === "professionnel" || user?.role === "centre_sante") {
+        contactsPromise = api.get("/pro/patients");
+      }
       const [c, p] = await Promise.all([
         api.get("/messages/conversations"),
-        user?.role === "maman" ? api.get("/professionnels") : Promise.resolve({ data: [] }),
+        contactsPromise,
       ]);
-      setConvos(c.data);
-      setPros(p.data);
+      setConvos(c.data || []);
+      setContacts(p.data || []);
+    } catch (e) {
+      console.warn("Load messages failed", e);
     } finally {
       setLoading(false);
     }
@@ -34,7 +43,10 @@ export default function Messages() {
   if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
 
   const existingIds = new Set(convos.map((c) => c.other_id));
-  const newPros = pros.filter((p) => !existingIds.has(p.id));
+  const newContacts = contacts.filter((p) => !existingIds.has(p.id));
+  const isMaman = user?.role === "maman";
+  const isProOrCentre = user?.role === "professionnel" || user?.role === "centre_sante";
+  const sectionLabel = isMaman ? "Démarrer une conversation" : isProOrCentre ? "Mes patientes" : "";
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -47,12 +59,12 @@ export default function Messages() {
         keyExtractor={(i) => i.other_id}
         contentContainerStyle={{ padding: SPACING.xl, paddingTop: 0, paddingBottom: 40 }}
         ListHeaderComponent={
-          user?.role === "maman" && newPros.length > 0 ? (
+          (isMaman || isProOrCentre) && newContacts.length > 0 ? (
             <View style={{ marginBottom: 20 }}>
-              <Text style={styles.sectionLabel}>Démarrer une conversation</Text>
+              <Text style={styles.sectionLabel}>{sectionLabel}</Text>
               <FlatList
                 horizontal
-                data={newPros}
+                data={newContacts}
                 keyExtractor={(p) => p.id}
                 showsHorizontalScrollIndicator={false}
                 renderItem={({ item }) => (
@@ -61,11 +73,13 @@ export default function Messages() {
                     onPress={() => router.push(`/chat/${item.id}?name=${encodeURIComponent(item.name)}`)}
                     testID={`new-convo-${item.id}`}
                   >
-                    <View style={styles.chipAvatar}>
-                      <Text style={styles.chipAvatarText}>{item.name.charAt(0)}</Text>
+                    <View style={[styles.chipAvatar, isProOrCentre && { backgroundColor: "#EC4899" }]}>
+                      <Text style={styles.chipAvatarText}>{(item.name || "?").charAt(0).toUpperCase()}</Text>
                     </View>
-                    <Text style={styles.chipName}>{item.name}</Text>
-                    <Text style={styles.chipSpec} numberOfLines={1}>{item.specialite}</Text>
+                    <Text style={styles.chipName} numberOfLines={1}>{item.name}</Text>
+                    <Text style={styles.chipSpec} numberOfLines={1}>
+                      {isMaman ? (item.specialite || "Pro") : (item.has_grossesse ? `🤰 ${item.grossesse_sa || "?"} SA` : item.enfants_count > 0 ? `👶 ${item.enfants_count} enfant${item.enfants_count > 1 ? "s" : ""}` : "Patiente")}
+                    </Text>
                   </TouchableOpacity>
                 )}
               />
@@ -97,7 +111,13 @@ export default function Messages() {
             <Ionicons name="mail-open-outline" size={60} color={COLORS.textMuted} />
             <Text style={styles.emptyTitle}>Aucune conversation</Text>
             <Text style={styles.emptyText}>
-              {user?.role === "maman" ? "Sélectionnez un professionnel ci-dessus" : "Vos conversations apparaîtront ici"}
+              {isMaman
+                ? "Sélectionnez un professionnel ci-dessus pour démarrer une conversation"
+                : isProOrCentre
+                ? (newContacts.length > 0
+                    ? "Sélectionnez une patiente ci-dessus pour démarrer une conversation"
+                    : "Vos conversations apparaîtront ici dès qu'une patiente vous contactera ou que vous aurez un RDV en commun.")
+                : "Vos conversations apparaîtront ici"}
             </Text>
           </View>
         }

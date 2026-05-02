@@ -2676,3 +2676,166 @@ agent_communication:
       all 4 validation cases (missing titre/fichier, >12MB, invalid category default), and
       delete-then-404 flow all work. 401 auth guard on every endpoint. No bugs to fix.
       Test script: /app/backend_test_documents.py.
+
+backend:
+  - task: "Notes médicales Pro pour enfant (POST /pro/consultation-notes avec patient_type=enfant)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Le Pro peut désormais ajouter une note médicale (diagnostic / traitement / observation)
+          directement depuis le dossier patient → page enfant. Endpoint backend déjà en place :
+          POST /api/pro/consultation-notes accepte patient_id qui peut être soit maman_id, soit enfant_id.
+          Quand c'est un enfant_id : la note est tagguée patient_type="enfant", liée à enfant_id ET maman_id,
+          chiffrement AES-256-GCM des champs diagnostic/traitement/notes, push notification + in-app
+          notification automatique à la maman propriétaire.
+      - working: true
+        agent: "testing"
+        comment: |
+          FULL PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_notes_docs.py — 48/48 overall scenarios pass).
+          Setup: logged in maman.test@alomaman.dev + pro.test@alomaman.dev; reused existing enfant
+          (id=e41c8152-...-a6cf, nom='Test 1') and existing RDV between this pro and maman
+          (id=4594bb5f-...-b53fc, status=confirme) — no manual PATCH needed since the RDV was
+          already in status=confirme.
+
+          (1c) POST /pro/consultation-notes {patient_id=<enfant_id>, diagnostic='Bronchiolite légère',
+               traitement='Sérum + paracétamol', notes='Surveiller fièvre 48h'} → 200. Response body:
+               - id present (UUID) ✓
+               - patient_type='enfant' ✓ (server.py L2216 sets this when enfant_doc found)
+               - patient_id=<enfant_id> ✓
+               - maman_id=<maman_id> ✓ (server.py L2218 copies enfant_doc.user_id as maman_id)
+               - diagnostic, traitement, notes all returned in CLEAR TEXT (decrypted via
+                 decrypt_consultation_note at L2254). None start with 'enc::' or 'enc_v1:'. ✓
+          (1d) POST with patient_id='non-existent-uuid-xyz' → 403 with detail="Vous n'avez pas accès
+               à ce patient (aucun RDV en commun)" (server.py L2209). ✓
+          (1e) GET /enfants/{enfant_id}/consultation-notes as Pro → 200 with exactly 1 note (the one
+               just created). All returned notes have pro_id == this pro (filter at L2276:
+               {patient_id, patient_type:'enfant', pro_id:user.id}). Fields decrypted in the list. ✓
+          (1f) GET /enfants/{enfant_id}/consultation-notes as Maman → 200 with 1 note. Same note
+               visible, diagnostic/traitement/notes all in plaintext (not prefixed with enc::/enc_v1:). ✓
+
+          Implementation verified:
+          • server.py L2193 looks up enfant by id; L2194-2203 counts RDV with $or on enfant_id OR
+            maman_id → flexible RDV matching (works even if RDV has no enfant_id field).
+          • L2216 patient_type='enfant', L2217 enfant_id=pid, L2218 maman_id=enfant.user_id.
+          • L2221-2223 AES-256-GCM encryption via encrypt_str for diagnostic/traitement/notes
+            before insert.
+          • L2254 returns decrypt_consultation_note(doc) so Pro POST gets clear-text response.
+          • L2257-2281 list endpoint: role guard checks maman owns enfant OR pro adds pro_id filter,
+            then decrypts each note before returning.
+          • L2232-2241 in-app notification inserted for target maman (title="📝 Nouvelle note
+            médicale"). L2244-2250 push sent if push_token exists.
+
+          NO BUGS DETECTED. Feature production-ready.
+
+  - task: "Upload document carnet enfant (POST /enfants/{eid}/documents) — taille 9MB max"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Frontend (/app/frontend/app/enfants/[id]/documents.tsx) modifié :
+          - Limite augmentée 4MB → 9MB (alignée sur la fonctionnalité globale "Mes documents")
+          - Lecture base64 cross-platform (web : FileReader+blob ; natif : FileSystem.readAsStringAsync)
+          - Gestion d'erreur explicite si la lecture du fichier échoue ("Erreur de lecture")
+      - working: true
+        agent: "testing"
+        comment: |
+          FULL PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_notes_docs.py — same 48/48 overall suite).
+
+          (2b) POST /enfants/{enfant_id}/documents {nom='Echographie test', type='echo',
+               description='Test upload', file_base64='data:application/pdf;base64,JVBERi0xLjQK…'}
+               → 200 with {id (uuid), nom='Echographie test', type='echo', size_kb (int),
+               created_at (ISO)}. The response correctly OMITS file_base64 — the endpoint at
+               server.py L1327 returns only the summary fields. ✓
+          (2c) GET /enfants/{enfant_id}/documents → 200 with list containing the new doc.
+               Server.py L1335 excludes file_base64 at the Mongo projection level
+               ({"_id":0, "file_base64":0}) so no base64 leaks in the list endpoint. ✓
+          (2d) GET /enfants/{enfant_id}/documents/{doc_id} → 200 returns the full doc including
+               file_base64, which EXACTLY matches the original upload (data URI preserved). ✓
+          (2e) GET /enfants/{enfant_id}/documents WITHOUT Bearer → 401 "Non authentifié". ✓
+          (2f) GET /enfants/{enfant_id}/documents as Pro → 403 detail="Accès refusé".
+               require_roles("maman") decorator at L1331 enforces the maman-only guard. ✓
+          (2g) DELETE /enfants/{enfant_id}/documents/{doc_id} as Maman → 200 {ok:true}. Subsequent
+               list is empty (no matching id). ✓
+
+          Implementation verified (server.py L1300-1355):
+          • DocumentIn model requires {nom, file_base64}; type/description optional.
+          • Insert doc has: id, enfant_id, user_id=maman.id, nom (trimmed, 200 chars max),
+            type (default='autre'), description (trimmed, 500 chars max), file_base64,
+            size_kb=len(file_base64)//1024, created_at ISO.
+          • All 4 endpoints filter by user_id=current maman.id → GDPR isolation guaranteed.
+          • Request body size: FastAPI/Uvicorn default body limit is high enough for ~9 MB
+            (Starlette defaults to no strict limit; uvicorn accepts the full body). The
+            test used a small fake PDF but the code path does not cap size server-side (hence
+            the 9 MB limit is enforced client-side as described by main agent).
+
+          NO BUGS DETECTED. Feature production-ready.
+
+frontend:
+  - task: "Messagerie côté Pro — démarrer une conversation avec ses patientes"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(tabs)/messages.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          BUG FIX : Avant cette modification, le Pro avait l'onglet Messages mais ne pouvait PAS
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      BUG FIX SESSION — Child medical notes + Child carnet documents: 48/48 PASS on
+      https://cycle-tracker-pro.preview.emergentagent.com/api (script: /app/backend_test_notes_docs.py).
+
+      TASK 1 — POST /pro/consultation-notes with patient_type=enfant ✅
+      • Pro can now post a medical note for an ENFANT (pediatric consultation) when he has a RDV
+        with the enfant's parent maman. Response includes patient_type='enfant', maman_id set to
+        enfant.user_id, and diagnostic/traitement/notes returned in plaintext (AES-256-GCM
+        decrypted via decrypt_consultation_note). Storage is encrypted at rest (enc_v1: prefix).
+      • 403 "aucun RDV en commun" correctly returned when patient_id is a non-existent UUID.
+      • GET /enfants/{enfant_id}/consultation-notes filters by pro_id for Pro role (only his own
+        notes), and by maman ownership of enfant for Maman role. Both see the note in cleartext.
+
+      TASK 2 — Child carnet documents (POST/GET/DELETE /enfants/{eid}/documents) ✅
+      • POST returns only summary fields (id, nom, type, size_kb, created_at) — NO file_base64
+        in the response (security best-practice, reduces bandwidth).
+      • LIST omits file_base64 via Mongo projection {file_base64:0}.
+      • GET single document returns file_base64 matching the upload verbatim (data URI preserved).
+      • Auth: 401 without Bearer. GDPR: Pro→403 via require_roles("maman") decorator.
+      • DELETE removes the doc cleanly; subsequent list is empty.
+
+      REGRESSION (4/4) ✅
+      • Maman + Pro login OK, GET /professionnels returns 11 pros, GET /pro/patients returns 1
+        patient (the test maman with an existing RDV).
+
+      Setup reuse: existing enfant 'Test 1' (id=e41c8152-...) and existing confirmed RDV
+      (id=4594bb5f-..., status=confirme) were reused — no need to create fresh objects. Cleanup
+      removed the test consultation_note at end of run.
+
+      NO BUGS DETECTED. Both new features are production-ready. Main agent can summarise and finish.
+
+          démarrer une conversation tant qu'une maman ne l'avait pas contacté en premier.
+          Correction : la liste "Mes patientes" charge maintenant /api/pro/patients (mamans avec qui
+          le Pro a eu au moins un RDV). Le Pro peut taper sur n'importe quelle patiente pour ouvrir
+          le chat. Affichage adapté : 🤰 X SA si grossesse en cours, sinon 👶 N enfants ou "Patiente".
+          Avatar rose (#EC4899) côté Pro pour distinguer du flux maman→pro.
+          Ne nécessite pas de test backend (utilise endpoints existants /pro/patients +
+          /messages/conversations + /messages/{id}). Test frontend recommandé via screenshot.
