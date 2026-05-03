@@ -289,6 +289,8 @@ class RegisterIn(BaseModel):
     accepte_politique_confidentialite: bool = False
     accepte_donnees_sante: bool = False  # requis pour maman/pro/centre
     accepte_communications: bool = False  # opt-in newsletter (optionnel)
+    # 🤝 Parrainage : code du parrain (parraine un nouveau compte maman)
+    referral_code: Optional[str] = None
 
 
 class LoginIn(BaseModel):
@@ -521,6 +523,30 @@ async def register(payload: RegisterIn):
     # Si pas d'email, en synthétiser un pour la clé interne (login email)
     internal_email = email or f"{phone.replace('+', '')}@phone.alomaman.local"
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    # 🤝 Parrainage : valider le code si fourni (uniquement pour les mamans)
+    referred_by_id = None
+    referred_by_code = None
+    if payload.referral_code and payload.role == "maman":
+        code_clean = payload.referral_code.strip().upper()
+        parrain = await db.users.find_one({"referral_code": code_clean, "role": "maman"}, {"_id": 0, "id": 1})
+        if parrain:
+            referred_by_id = parrain["id"]
+            referred_by_code = code_clean
+
+    # 🎟️ Générer un code de parrainage unique de 6 caractères (ex: NOHLAN → A7K2M9)
+    my_ref_code = None
+    if payload.role == "maman":
+        import secrets as _secrets
+        import string as _string
+        alphabet = _string.ascii_uppercase + _string.digits  # sans O/I/1/0 pour la lisibilité
+        alphabet = alphabet.replace("O", "").replace("I", "").replace("0", "").replace("1", "")
+        for _ in range(20):
+            candidate = "".join(_secrets.choice(alphabet) for _ in range(6))
+            if not await db.users.find_one({"referral_code": candidate}, {"_id": 0, "id": 1}):
+                my_ref_code = candidate
+                break
+
     doc = {
         "id": user_id,
         "email": internal_email,
@@ -541,8 +567,80 @@ async def register(payload: RegisterIn):
         "consent_politique": True,
         "consent_donnees_sante": bool(payload.accepte_donnees_sante),
         "consent_communications": bool(payload.accepte_communications),
+        # 🤝 Parrainage
+        "referral_code": my_ref_code,
+        "referred_by_id": referred_by_id,
+        "referred_by_code": referred_by_code,
+        "referrals_count": 0,
+        "referral_premium_days_earned": 0,
     }
     await db.users.insert_one(doc)
+
+    # 🎁 Récompense parrainage : si la nouvelle maman a utilisé un code, on crédite le parrain
+    if referred_by_id:
+        try:
+            # +1 filleule, +7 jours Premium pour le parrain
+            parrain_doc = await db.users.find_one({"id": referred_by_id}, {"_id": 0, "premium_until": 1, "referrals_count": 1, "referral_premium_days_earned": 1})
+            days_to_add = 7  # 1 filleule = 7 jours Premium
+            now_dt = datetime.now(timezone.utc)
+            current_until = parrain_doc.get("premium_until") if parrain_doc else None
+            base_dt = now_dt
+            if current_until:
+                try:
+                    parsed = datetime.fromisoformat(current_until.replace("Z", "+00:00")) if isinstance(current_until, str) else current_until
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    if parsed > now_dt:
+                        base_dt = parsed
+                except Exception:
+                    base_dt = now_dt
+            new_until = base_dt + timedelta(days=days_to_add)
+            new_count = (parrain_doc.get("referrals_count") if parrain_doc else 0) + 1
+            earned = (parrain_doc.get("referral_premium_days_earned") if parrain_doc else 0) + days_to_add
+            # Paliers : 3 filleules = +30 jours, 10 filleules = +60 jours supplémentaires
+            bonus_days = 0
+            bonus_msg = ""
+            if new_count == 3:
+                bonus_days = 30
+                bonus_msg = " 🎁 Palier 3 filleules : +1 mois bonus !"
+            elif new_count == 10:
+                bonus_days = 60
+                bonus_msg = " 🏆 Palier 10 filleules : +2 mois bonus !"
+            if bonus_days:
+                new_until = new_until + timedelta(days=bonus_days)
+                earned += bonus_days
+            await db.users.update_one(
+                {"id": referred_by_id},
+                {"$set": {
+                    "premium": True,
+                    "premium_until": new_until.isoformat(),
+                    "premium_since": parrain_doc.get("premium_since") if parrain_doc and parrain_doc.get("premium_since") else now_dt.isoformat(),
+                    "referrals_count": new_count,
+                    "referral_premium_days_earned": earned,
+                }},
+            )
+            # Log referral event
+            await db.referral_events.insert_one({
+                "id": str(uuid.uuid4()),
+                "parrain_id": referred_by_id,
+                "filleule_id": user_id,
+                "code_used": referred_by_code,
+                "days_awarded": days_to_add + bonus_days,
+                "created_at": now_iso,
+            })
+            # Notification in-app au parrain
+            await db.notifications.insert_one({
+                "id": str(uuid.uuid4()),
+                "user_id": referred_by_id,
+                "type": "referral_reward",
+                "title": "🤝 Nouveau parrainage !",
+                "body": f"{payload.name} vient de s'inscrire avec votre code. +{days_to_add + bonus_days} jours Premium offerts.{bonus_msg}",
+                "read": False,
+                "created_at": now_iso,
+            })
+            logger.info(f"🤝 Referral reward: parrain={referred_by_id} filleule={user_id} +{days_to_add + bonus_days}j")
+        except Exception as e:
+            logger.error(f"Referral reward failed: {e}")
 
     # Auto-créer un Centre de Santé si role centre_sante
     if payload.role == "centre_sante" and payload.nom_centre:
@@ -5653,15 +5751,30 @@ PREMIUM_PLANS = {
         "icon": "heart",
         "description": "Accompagnement complet de la grossesse aux premiers pas de bébé, à un prix accessible.",
         "features": [
-            "Assistant IA (Claude Sonnet) illimité",
-            "Téléconsultations prioritaires",
-            "Export PDF/FHIR du dossier illimité",
-            "Stockage photos & échographies",
-            "Rappels santé automatisés (vaccins, RDV)",
-            "Contenus éducatifs Premium",
-            "Support 24/7",
+            "👶 Jusqu'à 5 enfants",
+            "♾️ RDV illimités + téléconsultations prioritaires",
+            "🤖 IA Claude Sonnet illimitée (24/7)",
+            "📊 Dashboard santé complet + courbes OMS",
+            "👪 Partage famille (4 proches)",
+            "🎁 Offres partenaires (pharmacies, crèches)",
+            "📞 Ligne d'écoute post-partum",
+            "📄 Export PDF/FHIR illimité",
+            "💾 2 Go stockage (photos, échos)",
+            "🔔 Rappels IA contextuels",
+            "⭐ Support 24/7 (< 2h)",
+            "🎖️ Badge Maman Premium",
         ],
-        "free_limits": "Gratuit : 2 enfants · 10 RDV/mois · IA basique",
+        "free_limits": "Gratuit : 1 enfant · 3 RDV/mois · 5 questions IA/mois · 3 téléconsultations/an · 50 Mo stockage",
+        # 📊 Limites chiffrées appliquées côté backend
+        "limits": {
+            "enfants_max": 1,
+            "rdv_per_month": 3,
+            "ia_questions_per_month": 5,
+            "teleconsultations_per_year": 3,
+            "storage_mb": 50,
+            "export_pdf_per_year": 1,
+            "family_shares": 0,
+        },
     },
     "professionnel": {
         "code": "pro",
@@ -5723,7 +5836,13 @@ PREMIUM_PLANS = {
 
 # Quotas freemium — limites pour les utilisateurs non-Premium
 FREE_QUOTAS = {
-    "maman": {"enfants_max": 2, "rdv_per_month": 10, "ia_per_day": 10},
+    "maman": {
+        "enfants_max": 1,             # 1 enfant maximum (gratuit)
+        "rdv_per_month": 3,           # 3 RDV / mois (gratuit)
+        "ia_questions_per_month": 5,  # 5 questions IA / mois (gratuit)
+        "teleconsultations_per_year": 3,  # 3 téléconsults / an (gratuit)
+        "storage_mb": 50,
+    },
     "professionnel": {"patientes_max": 10, "ia_pro_per_day": 0},
     "centre_sante": {"membres_pro_max": 3},
     "famille": {"notifications_enabled": False},
@@ -5774,6 +5893,72 @@ async def my_plan(user=Depends(get_current_user)):
         "is_premium": bool(user.get("premium") and user.get("premium_until") and datetime.fromisoformat(user["premium_until"].replace("Z", "+00:00")) > datetime.now(timezone.utc)) if user.get("premium_until") else bool(user.get("premium", False)),
         "premium_until": user.get("premium_until"),
     }
+
+
+# ====================================================================
+# 🤝 SYSTÈME DE PARRAINAGE
+# ====================================================================
+@api.get("/referral/me")
+async def my_referral(user=Depends(get_current_user)):
+    """Statistiques de parrainage de la maman courante."""
+    if user.get("role") != "maman":
+        raise HTTPException(403, "Le parrainage est réservé aux mamans")
+    # Si le user n'a pas encore de code (ancien compte), lui en créer un à la volée
+    my_code = user.get("referral_code")
+    if not my_code:
+        import secrets as _secrets
+        import string as _string
+        alphabet = _string.ascii_uppercase + _string.digits
+        alphabet = alphabet.replace("O", "").replace("I", "").replace("0", "").replace("1", "")
+        for _ in range(20):
+            candidate = "".join(_secrets.choice(alphabet) for _ in range(6))
+            if not await db.users.find_one({"referral_code": candidate}, {"_id": 0, "id": 1}):
+                my_code = candidate
+                break
+        if my_code:
+            await db.users.update_one({"id": user["id"]}, {"$set": {"referral_code": my_code}})
+    # Récupérer la liste des filleules
+    filleules_cursor = db.users.find({"referred_by_id": user["id"]}, {"_id": 0, "id": 1, "name": 1, "created_at": 1})
+    filleules = await filleules_cursor.to_list(100)
+    # Prochain palier
+    count = len(filleules)
+    next_milestone = None
+    if count < 3:
+        next_milestone = {"at": 3, "bonus_days": 30, "remaining": 3 - count, "label": "+1 mois bonus"}
+    elif count < 10:
+        next_milestone = {"at": 10, "bonus_days": 60, "remaining": 10 - count, "label": "+2 mois bonus"}
+    return {
+        "referral_code": my_code,
+        "referrals_count": count,
+        "days_earned": int(user.get("referral_premium_days_earned") or 0),
+        "filleules": filleules,
+        "share_url": f"https://alomaman.com/inscription?ref={my_code}" if my_code else None,
+        "share_text": f"🤰 Rejoins-moi sur À lo Maman pour un suivi complet de ta grossesse et de ton bébé ! Utilise mon code {my_code} à l'inscription. 👶",
+        "next_milestone": next_milestone,
+        "rewards_info": {
+            "per_referral_days": 7,
+            "milestones": [
+                {"at": 3, "bonus_days": 30, "label": "3 filleules = +1 mois"},
+                {"at": 10, "bonus_days": 60, "label": "10 filleules = +2 mois"},
+            ],
+        },
+    }
+
+
+class ReferralValidateIn(BaseModel):
+    code: str
+
+
+@api.post("/referral/validate-code")
+async def validate_referral_code(payload: ReferralValidateIn):
+    """Vérifie qu'un code de parrainage existe (utilisé avant l'inscription)."""
+    code = (payload.code or "").strip().upper()
+    if not code or len(code) != 6:
+        return {"valid": False, "reason": "Code invalide (6 caractères requis)"}
+    parrain = await db.users.find_one({"referral_code": code, "role": "maman"}, {"_id": 0, "name": 1})
+    if not parrain:
+        return {"valid": False, "reason": "Code introuvable"}
+    return {"valid": True, "parrain_name": parrain.get("name", "").split()[0] if parrain.get("name") else "une maman"}
 
 
 @api.post("/pay/subscribe")

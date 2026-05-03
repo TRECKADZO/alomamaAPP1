@@ -2893,3 +2893,97 @@ agent_communication:
           Avatar rose (#EC4899) côté Pro pour distinguer du flux maman→pro.
           Ne nécessite pas de test backend (utilise endpoints existants /pro/patients +
           /messages/conversations + /messages/{id}). Test frontend recommandé via screenshot.
+
+backend:
+  - task: "Système de PARRAINAGE (referral) — GET/POST /api/referral/*"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          50/52 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_referral.py). Both "failures" are MINOR cosmetic
+          omissions in serialize_user (data correct in DB, confirmed via GET /referral/me).
+
+          ✅ STEP 1 — GET /referral/me (login maman.test): 200 with ALL required keys
+          {referral_code:'YXQ5H5' (6 upper), referrals_count:0, days_earned:0,
+          filleules:[], share_url:'https://alomaman.com/inscription?ref=YXQ5H5',
+          share_text:'🤰 Rejoins-moi sur À lo Maman…', next_milestone:{at:3,
+          bonus_days:30, remaining:3, label:'+1 mois bonus'}, rewards_info:{...}}.
+
+          ✅ STEP 2 — POST /referral/validate-code {code:MAMAN1_CODE} → 200 {valid:true,
+          parrain_name:'Aminata'} (first name of 'Aminata TestMaman').
+
+          ✅ STEP 3 — POST /referral/validate-code {code:'AAAAAA'} → 200 {valid:false,
+          reason:'Code introuvable'}.
+
+          ✅ STEP 4 — POST /referral/validate-code {code:'ab'} → 200 {valid:false,
+          reason:'Code invalide (6 caractères requis)'}.
+
+          ✅ STEP 5 — POST /auth/register WITH referral_code=MAMAN1_CODE (role=maman,
+          full RGPD consent) → 200 (token+user). Via GET /referral/me on the new filleule:
+          she has her OWN unique referral_code (757KEP, 6 chars, distinct from parrain's),
+          referrals_count:0. The downstream reward logic proves referred_by_id+referred_by_code
+          are persisted correctly server-side.
+
+          ✅ STEP 6 — Parrain reward verified: GET /referral/me as maman.test now returns
+          referrals_count=1 (was 0), days_earned=7 (was 0), filleules=['Filleule Test1'].
+          GET /auth/me shows user.premium=true, premium_until ≈ now+7 days (delta=7.00d).
+          GET /notifications contains a new notif type=referral_reward, title='🤝 Nouveau
+          parrainage !', body='Filleule Test1 vient de s'inscrire avec votre code. +7 jours
+          Premium offerts.' ✓
+
+          ✅ STEP 7 — Palier 3 filleules: registered filleule2+filleule3 with same code →
+          GET /referral/me shows referrals_count=3, days_earned=51 (exactly INITIAL+7*3+30,
+          confirming +30-day bonus on the 3rd filleule). A palier notification containing
+          '🎁 Palier 3 filleules : +1 mois bonus !' is present.
+
+          ✅ STEP 8 — Error cases:
+          (a) POST /auth/register with referral_code='ZZZZZZ' (invalid) → 200, user created
+              with referred_by_id=null + referred_by_code=null (no reward, no error). ✓
+          (b) POST /auth/register role='professionnel' + referral_code=MAMAN1_CODE → 200,
+              pro.referred_by_id=null (parrainage ignoré pour rôles non-maman, L530:
+              `if payload.referral_code and payload.role == "maman"`). ✓
+          (c) GET /referral/me as Pro → 403 {detail:'Le parrainage est réservé aux mamans'}. ✓
+
+          ✅ STEP 9 — Plans & limits (maman gratuit, filleule1 before parrain premium applies
+          to her): GET /plans/me → plan.limits.enfants_max=1, rdv_per_month=3,
+          ia_questions_per_month=5 ; plan.free_limits='Gratuit : 1 enfant · 3 RDV/mois ·
+          5 questions IA/mois · 3 téléconsultations/an · 50 Mo stockage' ✓
+
+          ⚠️ MINOR (2 failures out of 52, non-blocking cosmetic issue only):
+          The /auth/register response includes a `user` object produced by serialize_user
+          (server.py L75-100) which does NOT include `referral_code`, `referred_by_code`,
+          or `referred_by_id`. These 3 fields are correctly PERSISTED in MongoDB (proven by
+          all downstream logic working — parrain rewards, palier bonuses, notifications)
+          and correctly RETURNED via GET /referral/me (filleule1 fetched her own code
+          757KEP immediately after register). Frontend that needs these fields on the
+          register response should instead call GET /referral/me right after register.
+          Main agent may optionally add these 3 fields to serialize_user for ergonomics,
+          but it's not a functional bug.
+
+          CLEANUP: 5 test accounts deleted via DELETE /auth/me. Maman.test counters reset
+          to initial values (referrals_count=0, days_earned=0, premium=false,
+          premium_until=null) via direct Mongo update. 3 orphan referral_events + 3 referral
+          notifications removed from DB. Script is idempotent for future reruns.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Referral system fully validated — 50/52 checks PASS (2 minor cosmetic only).
+        All core flows work: code generation (6 upper-case chars), validate-code (valid/
+        introuvable/<6chars), register with referral_code credits parrain (+7d premium,
+        premium_until bumped, notification 🤝 fires), palier 3 filleules adds +30d bonus
+        (total +51d), pro role rejected with 403, invalid code silently ignored, /plans/me
+        returns correct gratuit limits (1 enfant, 3 RDV/mois, 5 IA/mois).
+        Minor (non-blocking): serialize_user in server.py L75-100 omits `referral_code`,
+        `referred_by_code`, `referred_by_id` from /auth/register response user object.
+        Data IS correctly persisted — the filleule can retrieve her code immediately via
+        GET /referral/me after login. Optional future enhancement only. Test script:
+        /app/backend_test_referral.py. Cleanup idempotent.
+

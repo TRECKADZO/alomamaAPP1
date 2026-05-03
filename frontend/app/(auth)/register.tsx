@@ -50,6 +50,7 @@ export default function Register() {
     ville: "",
     region: "",
     email_contact: "",
+    referral_code: "",
   });
   const [loading, setLoading] = useState(false);
   // Consentement
@@ -57,6 +58,8 @@ export default function Register() {
   const [acceptePolitique, setAcceptePolitique] = useState(false);
   const [accepteDonneesSante, setAccepteDonneesSante] = useState(false);
   const [accepteComms, setAccepteComms] = useState(false);
+  // 🤝 Parrainage
+  const [refValidation, setRefValidation] = useState<{ valid: boolean; parrain_name?: string; reason?: string } | null>(null);
 
   const update = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -122,6 +125,7 @@ export default function Register() {
         accepte_politique_confidentialite: acceptePolitique,
         accepte_donnees_sante: accepteDonneesSante,
         accepte_communications: accepteComms,
+        referral_code: role === "maman" && form.referral_code ? form.referral_code.trim().toUpperCase() : undefined,
       } as any);
       router.replace("/(tabs)");
     } catch (e) {
@@ -310,6 +314,49 @@ export default function Register() {
                 </View>
               </View>
             </>
+          )}
+
+          {/* 🤝 Code de parrainage (uniquement pour les mamans) */}
+          {role === "maman" && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Code de parrainage (optionnel)</Text>
+              <View style={styles.inputWrap}>
+                <Ionicons name="people-outline" size={20} color={COLORS.textMuted} style={styles.icon} />
+                <TextInput
+                  style={[styles.input, { textTransform: "uppercase" }]}
+                  placeholder="Ex : A7K2M9"
+                  placeholderTextColor={COLORS.textMuted}
+                  value={form.referral_code}
+                  autoCapitalize="characters"
+                  maxLength={6}
+                  onChangeText={async (v) => {
+                    const clean = v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+                    update("referral_code", clean);
+                    if (clean.length === 6) {
+                      try {
+                        const r = await (await import("../../lib/api")).api.post("/referral/validate-code", { code: clean });
+                        setRefValidation(r.data);
+                      } catch {
+                        setRefValidation({ valid: false, reason: "Erreur de vérification" });
+                      }
+                    } else {
+                      setRefValidation(null);
+                    }
+                  }}
+                  testID="reg-referral-code"
+                />
+              </View>
+              {refValidation && (
+                <Text style={{ fontSize: 12, marginTop: 4, color: refValidation.valid ? "#10B981" : "#EF4444", fontWeight: "700" }}>
+                  {refValidation.valid
+                    ? `✓ Code valide — parrainée par ${refValidation.parrain_name}`
+                    : `✗ ${refValidation.reason || "Code invalide"}`}
+                </Text>
+              )}
+              <Text style={{ fontSize: 11, marginTop: 4, color: COLORS.textMuted }}>
+                Une amie vous a invité ? Entrez son code pour la remercier 🎁
+              </Text>
+            </View>
           )}
 
           <View style={styles.consentBox}>
