@@ -2321,6 +2321,9 @@ async def create_consultation_note(payload: ConsultationNoteIn, user=Depends(req
         "attachment_base64": encrypt_str(payload.attachment_base64) if payload.attachment_base64 else None,
         "attachment_name": (payload.attachment_name or "")[:200] if payload.attachment_name else None,
         "attachment_mime": (payload.attachment_mime or "")[:100] if payload.attachment_mime else None,
+        # 📬 Suivi lecture par la maman
+        "read_by_maman": False,
+        "read_at": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.consultation_notes.insert_one(doc)
@@ -2352,6 +2355,86 @@ async def create_consultation_note(payload: ConsultationNoteIn, user=Depends(req
         pass
 
     return decrypt_consultation_note(doc)
+
+
+@api.get("/mes-consultation-notes/unread-count")
+async def my_unread_notes_count(user=Depends(get_current_user)):
+    """Nombre de notes médicales non lues par la maman (pour badge cloche / profil)."""
+    if user.get("role") != "maman":
+        return {"count": 0}
+    count = await db.consultation_notes.count_documents({
+        "$or": [
+            {"patient_id": user["id"], "patient_type": "maman", "read_by_maman": {"$ne": True}},
+            {"maman_id": user["id"], "read_by_maman": {"$ne": True}},
+        ]
+    })
+    return {"count": count}
+
+
+@api.post("/mes-consultation-notes/{note_id}/mark-read")
+async def mark_note_read(note_id: str, user=Depends(get_current_user)):
+    """Marque une note comme lue par la maman."""
+    if user.get("role") != "maman":
+        raise HTTPException(403, "Réservé aux mamans")
+    # Accepte si elle est destinataire (maman directe OU maman de l'enfant)
+    note = await db.consultation_notes.find_one({
+        "id": note_id,
+        "$or": [
+            {"patient_id": user["id"], "patient_type": "maman"},
+            {"maman_id": user["id"]},
+        ]
+    }, {"_id": 0, "id": 1})
+    if not note:
+        raise HTTPException(404, "Note introuvable")
+    await db.consultation_notes.update_one(
+        {"id": note_id},
+        {"$set": {"read_by_maman": True, "read_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True}
+
+
+@api.post("/mes-consultation-notes/mark-all-read")
+async def mark_all_notes_read(user=Depends(get_current_user)):
+    """Marque TOUTES les notes comme lues en une seule fois."""
+    if user.get("role") != "maman":
+        raise HTTPException(403, "Réservé aux mamans")
+    result = await db.consultation_notes.update_many(
+        {"$or": [
+            {"patient_id": user["id"], "patient_type": "maman", "read_by_maman": {"$ne": True}},
+            {"maman_id": user["id"], "read_by_maman": {"$ne": True}},
+        ]},
+        {"$set": {"read_by_maman": True, "read_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True, "marked": result.modified_count}
+
+
+@api.get("/pro/mes-notes-ecrites")
+async def list_pro_my_written_notes(user=Depends(require_roles("professionnel"))):
+    """
+    📜 Historique de TOUTES les notes médicales écrites par le Pro courant.
+    Enrichi avec le nom du patient (maman ou enfant) et le statut "lu/non-lu".
+    """
+    notes_raw = await db.consultation_notes.find(
+        {"pro_id": user["id"]},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(500)
+    # Enrichissement noms
+    maman_ids = list({n.get("maman_id") or n.get("patient_id") for n in notes_raw if n.get("maman_id") or n.get("patient_id")})
+    enfant_ids = list({n.get("enfant_id") for n in notes_raw if n.get("enfant_id")})
+    mamans = await db.users.find({"id": {"$in": maman_ids}}, {"_id": 0, "id": 1, "name": 1, "avatar": 1}).to_list(500) if maman_ids else []
+    enfants = await db.enfants.find({"id": {"$in": enfant_ids}}, {"_id": 0, "id": 1, "nom": 1}).to_list(500) if enfant_ids else []
+    mamans_map = {m["id"]: m.get("name", "Inconnue") for m in mamans}
+    enfants_map = {e["id"]: e.get("nom", "Enfant") for e in enfants}
+
+    result = []
+    for n in notes_raw:
+        dec = decrypt_consultation_note(n)
+        dec["enfant_nom"] = enfants_map.get(dec.get("enfant_id")) if dec.get("enfant_id") else None
+        dec["maman_nom"] = mamans_map.get(dec.get("maman_id") or dec.get("patient_id"), "Inconnue")
+        dec["concerne"] = dec["enfant_nom"] or dec["maman_nom"]
+        dec["read_by_maman"] = bool(dec.get("read_by_maman"))
+        result.append(dec)
+    return result
 
 
 @api.get("/mes-consultation-notes")

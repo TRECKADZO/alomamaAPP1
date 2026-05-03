@@ -65,6 +65,21 @@ export default function MesNotes() {
     }
   };
 
+  const markAllRead = async () => {
+    try {
+      await api.post("/mes-consultation-notes/mark-all-read");
+      setNotes((prev) => prev.map((n) => ({ ...n, read_by_maman: true })));
+    } catch {}
+  };
+
+  const toggleNoteRead = async (noteId: string, currentlyRead: boolean) => {
+    if (currentlyRead) return; // déjà lue
+    try {
+      await api.post(`/mes-consultation-notes/${noteId}/mark-read`);
+      setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, read_by_maman: true } : n)));
+    } catch {}
+  };
+
   useFocusEffect(useCallback(() => { load(); }, []));
 
   if (loading) {
@@ -83,8 +98,16 @@ export default function MesNotes() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>📝 Mes notes médicales</Text>
-          <Text style={styles.sub}>{notes.length} note{notes.length > 1 ? "s" : ""} reçue{notes.length > 1 ? "s" : ""}</Text>
+          <Text style={styles.sub}>
+            {notes.length} note{notes.length > 1 ? "s" : ""} · {notes.filter((n) => !n.read_by_maman).length} non lue{notes.filter((n) => !n.read_by_maman).length > 1 ? "s" : ""}
+          </Text>
         </View>
+        {notes.some((n) => !n.read_by_maman) && (
+          <TouchableOpacity onPress={markAllRead} style={styles.markAllBtn}>
+            <Ionicons name="checkmark-done" size={16} color={COLORS.primary} />
+            <Text style={styles.markAllText}>Tout lu</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <ScrollView
@@ -101,19 +124,37 @@ export default function MesNotes() {
           </View>
         ) : notes.map((n) => {
           const isEnfant = !!n.enfant_id;
+          const isUnread = !n.read_by_maman;
           return (
-            <View key={n.id} style={[styles.card, isEnfant && { borderLeftWidth: 4, borderLeftColor: "#EC4899" }]}>
+            <TouchableOpacity
+              key={n.id}
+              activeOpacity={0.9}
+              onPress={() => toggleNoteRead(n.id, !isUnread)}
+              style={[
+                styles.card,
+                isEnfant && { borderLeftWidth: 4, borderLeftColor: "#EC4899" },
+                isUnread && styles.cardUnread,
+              ]}
+            >
+              {isUnread && <View style={styles.unreadDot} />}
               <View style={styles.cardHead}>
                 <View style={{ flex: 1 }}>
                   <View style={styles.proRow}>
                     <View style={styles.proAvatar}><Text style={styles.proAvatarTxt}>👨‍⚕️</Text></View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.proName}>Dr {n.pro_name || "Inconnu"}</Text>
+                      <Text style={[styles.proName, isUnread && { fontWeight: "900" }]}>Dr {n.pro_name || "Inconnu"}</Text>
                       {n.pro_specialite ? <Text style={styles.proSpec}>{n.pro_specialite}</Text> : null}
                     </View>
                   </View>
                 </View>
-                <Text style={styles.date}>{(n.date || n.created_at) ? new Date(n.date || n.created_at).toLocaleDateString("fr-FR") : ""}</Text>
+                <View style={{ alignItems: "flex-end" }}>
+                  {isUnread && (
+                    <View style={styles.unreadPill}>
+                      <Text style={styles.unreadPillText}>NOUVEAU</Text>
+                    </View>
+                  )}
+                  <Text style={styles.date}>{(n.date || n.created_at) ? new Date(n.date || n.created_at).toLocaleDateString("fr-FR") : ""}</Text>
+                </View>
               </View>
 
               {/* Badge concerné */}
@@ -160,7 +201,7 @@ export default function MesNotes() {
                 <Ionicons name="shield-checkmark" size={14} color="#10B981" />
                 <Text style={styles.signText}>Note signée — Dr {n.pro_name || ""}</Text>
               </View>
-            </View>
+            </TouchableOpacity>
           );
         })}
       </ScrollView>
@@ -175,6 +216,14 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border, marginRight: 10 },
   title: { fontSize: 18, fontWeight: "800", color: COLORS.textPrimary },
   sub: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  markAllBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "#FCE7F3", borderRadius: 999, borderWidth: 1, borderColor: "#FBCFE8" },
+  markAllText: { fontSize: 11, color: COLORS.primary, fontWeight: "800" },
+
+  // 🔴 États lu/non-lu
+  cardUnread: { borderWidth: 2, borderColor: "#EC4899", backgroundColor: "#FEF5F9" },
+  unreadDot: { position: "absolute", top: 10, right: 10, width: 10, height: 10, borderRadius: 5, backgroundColor: "#EF4444" },
+  unreadPill: { paddingHorizontal: 8, paddingVertical: 3, backgroundColor: "#EC4899", borderRadius: 999, marginBottom: 4 },
+  unreadPillText: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
 
   empty: { padding: 40, alignItems: "center", marginTop: 40 },
   emptyTitle: { fontSize: 16, fontWeight: "800", color: COLORS.textPrimary, marginTop: 12 },

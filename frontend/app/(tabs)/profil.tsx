@@ -182,6 +182,9 @@ export default function Profil() {
                 <MenuRow icon="people-outline" label="🤝 Parrainage — Invitez, gagnez Premium" onPress={() => router.push("/parrainage" as any)} />
               </>
             )}
+            {user?.role === "professionnel" && (
+              <MenuRow icon="document-text-outline" label="📜 Mes notes médicales écrites" onPress={() => router.push("/pro/mes-notes-ecrites" as any)} />
+            )}
             <MenuRow icon="language-outline" label="Langue" value="Français" />
             <MenuRow icon="help-circle-outline" label="Aide & Support" onPress={() => router.push("/aide-support" as any)} />
             <MenuRow icon="information-circle-outline" label="À propos" onPress={() => router.push("/about" as any)} />

@@ -3068,3 +3068,103 @@ agent_communication:
       (data:image/jpeg;base64,...). Sort by created_at DESC confirmed. Security: 401 without
       Bearer, 403 for Pro, cross-maman isolation verified (fresh maman2 returns [] and never
       sees maman.test's notes). Main agent can summarise and finish.
+
+
+backend:
+  - task: "Read-tracking consultation notes — unread-count, mark-read, mark-all-read, pro/mes-notes-ecrites"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          44/44 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_consultation_notes_read_tracking.py).
+
+          Setup: Login maman.test@alomaman.dev and pro.test@alomaman.dev OK.
+
+          🅰 TEST 1 — GET /mes-consultation-notes/unread-count (2/2 PASS):
+          • As maman → 200 {count: 0} (initial state, notes nettoyées lors du test précédent).
+          • As pro (non-maman) → 200 {count: 0} (server returns 0 without error).
+
+          🅱 TEST 2 — POST /pro/consultation-notes x2 (5/5 PASS):
+          • Note1 created with {patient_id: maman_id, diagnostic: "Test1"} → 200, id returned.
+          • Note2 created with {patient_id: maman_id, diagnostic: "Test2"} → 200, id returned.
+          • GET /mes-consultation-notes (maman) shows both notes with read_by_maman=false par défaut.
+
+          🅲 TEST 3 — unread-count after 2 new notes (1/1 PASS):
+          • GET /mes-consultation-notes/unread-count (maman) → 200 {count: 2}, exactement 2 (pas plus,
+            pas moins — l'état initial était 0).
+
+          🅳 TEST 4 — POST /mes-consultation-notes/{note1_id}/mark-read (5/5 PASS):
+          • As maman → 200 {ok: true}.
+          • GET /mes-consultation-notes (maman) → note1.read_by_maman=true + read_at='2026-05-03T14:54:44.925838+00:00' ISO 8601 UTC.
+          • GET /mes-consultation-notes/unread-count → {count: 1} (décrémenté de 1 : 2 → 1).
+
+          🅴 TEST 5 — POST /mes-consultation-notes/{fake_id}/mark-read (2/2 PASS):
+          • Fake ID "NON-EXISTENT-FAKE-ID-12345" → 404 detail="Note introuvable" (exact match per spec).
+
+          🅵 TEST 6 — POST /mes-consultation-notes/{note1_id}/mark-read as pro (2/2 PASS):
+          • Pro tente de mark-read sur sa propre note → 403 detail="Réservé aux mamans" (exact match).
+
+          🅶 TEST 7 — POST /mes-consultation-notes/mark-all-read (3/3 PASS):
+          • As maman → 200 {ok: true, marked: 1} (il ne restait que note2 non lue → 1 marked).
+          • GET /mes-consultation-notes/unread-count → {count: 0} (toutes lues).
+
+          🅷 TEST 8 — GET /pro/mes-notes-ecrites (12/12 PASS):
+          • As pro → 200, retourne les 2 notes écrites.
+          • Tri created_at DESC confirmé (sorted(dates, reverse=True)).
+          • Chaque note contient TOUS les champs requis : {id, concerne, maman_nom, enfant_nom,
+            read_by_maman, diagnostic, traitement, notes, date, created_at}.
+          • note1.read_by_maman=true (marqué en TEST 4).
+          • note2.read_by_maman=true (marqué en TEST 7 via mark-all-read).
+          • diagnostic/traitement/notes en CLAIR pour les 2 notes (diagnostic='Test1' et 'Test2',
+            traitement='' et notes='' — aucun préfixe enc_v1:/enc:: ne fuit).
+          • concerne='Aminata TestMaman' (nom de la maman) + enfant_nom=null pour les 2 notes
+            (puisque patient_type="maman").
+
+          🅸 TEST 9 — Sécurité (2/2 PASS):
+          • GET /pro/mes-notes-ecrites as maman → 403 detail="Accès refusé" (require_roles("professionnel")).
+          • GET /pro/mes-notes-ecrites sans Bearer → 401 detail="Non authentifié".
+
+          🅹 TEST 10 — Cleanup (2/2 PASS):
+          • DELETE /pro/consultation-notes/{note1_id} → 200 {ok: true}.
+          • DELETE /pro/consultation-notes/{note2_id} → 200 {ok: true}.
+
+          PERFORMANCE : Latence moyenne 202ms sur 18 appels HTTP (min=128ms, max=367ms, POST être
+          légèrement plus lent que GET comme attendu).
+
+          IMPLEMENTATION REVIEW (server.py L2360-2437):
+          • /unread-count (L2360-2371): correctly filters on read_by_maman: {$ne: true}, using $or
+            to catch both patient_type="maman" (direct) and maman_id (via enfant), returns {count: 0}
+            for non-maman callers (no 403, graceful).
+          • /mark-read (L2374-2393): validates user.role=="maman" → 403, then finds note via $or
+            ownership check (patient + maman_id), $set read_by_maman=true + read_at=ISO UTC now.
+          • /mark-all-read (L2396-2408): bulk update_many with same $or filter, returns modified_count.
+          • /pro/mes-notes-ecrites (L2411-2437): guarded by require_roles("professionnel"), sorts
+            created_at DESC, batch-enriches maman_nom + enfant_nom, coerces read_by_maman to bool,
+            decrypts all sensitive fields.
+
+          NO BUGS DETECTED. All 3 new endpoints (unread-count, mark-read, mark-all-read) + the
+          pro/mes-notes-ecrites endpoint are production-ready.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      ✅ 3 new consultation-notes endpoints + /pro/mes-notes-ecrites fully validated — 44/44 PASS
+      (script: /app/backend_test_consultation_notes_read_tracking.py).
+
+      Coverage complète: (1) GET /mes-consultation-notes/unread-count returns {count: N} for maman
+      and {count: 0} for pro (no 403). (2) POST /mes-consultation-notes/{id}/mark-read → {ok: true}
+      with read_at ISO 8601 UTC, decrements count by 1. (3) Non-existent note → 404 'Note
+      introuvable'. (4) Pro attempting mark-read → 403 'Réservé aux mamans'. (5) POST
+      /mes-consultation-notes/mark-all-read → {ok: true, marked: N>=1}, count=0 after. (6) GET
+      /pro/mes-notes-ecrites returns all notes in created_at DESC order, each with all 10 required
+      fields (id, concerne, maman_nom, enfant_nom, read_by_maman, diagnostic, traitement, notes,
+      date, created_at), diagnostic/traitement/notes in clear text (no enc_v1:/enc:: leak), and
+      read_by_maman reflects the real mark-read/mark-all-read state. (7) Security: maman → 403,
+      no Bearer → 401. Avg latency 202ms. Cleanup OK. Main agent can summarise and finish.
