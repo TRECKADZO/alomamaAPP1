@@ -2354,6 +2354,37 @@ async def create_consultation_note(payload: ConsultationNoteIn, user=Depends(req
     return decrypt_consultation_note(doc)
 
 
+@api.get("/mes-consultation-notes")
+async def list_my_consultation_notes(user=Depends(get_current_user)):
+    """
+    📝 Liste TOUTES les notes médicales que la maman a reçues :
+       - Ses notes personnelles (patient_type="maman")
+       - Celles de ses enfants (patient_type="enfant" avec maman_id=moi)
+    Chaque note est enrichie avec {enfant_nom} si applicable.
+    """
+    if user.get("role") != "maman":
+        raise HTTPException(403, "Réservé aux mamans")
+    # Récupère toutes les notes où elle est concernée
+    query = {"$or": [
+        {"patient_id": user["id"], "patient_type": "maman"},
+        {"maman_id": user["id"]},
+    ]}
+    notes_raw = await db.consultation_notes.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Enrichit avec le nom de l'enfant si applicable
+    enfant_ids = list({n.get("enfant_id") for n in notes_raw if n.get("enfant_id")})
+    enfants_map: dict = {}
+    if enfant_ids:
+        enfants = await db.enfants.find({"id": {"$in": enfant_ids}}, {"_id": 0, "id": 1, "nom": 1}).to_list(200)
+        enfants_map = {e["id"]: e["nom"] for e in enfants}
+    result = []
+    for n in notes_raw:
+        dec = decrypt_consultation_note(n)
+        dec["enfant_nom"] = enfants_map.get(dec.get("enfant_id")) if dec.get("enfant_id") else None
+        dec["concerne"] = dec["enfant_nom"] or "Moi"
+        result.append(dec)
+    return result
+
+
 @api.get("/enfants/{eid}/consultation-notes")
 async def list_enfant_consultation_notes(eid: str, user=Depends(get_current_user)):
     """

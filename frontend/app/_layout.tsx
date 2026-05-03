@@ -104,6 +104,7 @@ export default function RootLayout() {
                   <Stack.Screen name="naissance" />
                   <Stack.Screen name="premium" />
                   <Stack.Screen name="parrainage" options={{ headerShown: false }} />
+                  <Stack.Screen name="mes-notes" options={{ headerShown: false }} />
                   <Stack.Screen name="portail-pro" options={{ title: "Portail Pro - À lo Maman" }} />
                   <Stack.Screen name="plans" options={{ title: "Nos offres - À lo Maman" }} />
                   <Stack.Screen name="cmu" options={{ title: "CMU - Ma couverture" }} />

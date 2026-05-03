@@ -413,6 +413,14 @@ export default function DossierPatient() {
                 <Ionicons name="close" size={24} color={COLORS.textPrimary} />
               </TouchableOpacity>
             </View>
+            {/* 👤 Destinataire explicite */}
+            <View style={[styles.recipientBadge, { backgroundColor: isEnfant ? "#FCE7F3" : "#DBEAFE" }]}>
+              <Text style={styles.recipientIcon}>{isEnfant ? "👶" : "👩"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.recipientLabel}>Note pour</Text>
+                <Text style={styles.recipientName}>{subject?.nom || subject?.name || nom} {isEnfant ? "(enfant)" : "(maman)"}</Text>
+              </View>
+            </View>
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
               <Text style={styles.formLabel}>Diagnostic</Text>
               <TextInput style={styles.formInput} value={noteDiag} onChangeText={setNoteDiag} placeholder="Ex : Bronchiolite légère" placeholderTextColor={COLORS.textMuted} returnKeyType="next" />
@@ -555,4 +563,9 @@ const styles = StyleSheet.create({
   attachBtnText: { color: "#EC4899", fontWeight: "800", fontSize: 12 },
   attachmentCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 12, backgroundColor: "#FCE7F3", borderWidth: 1, borderColor: "#FBCFE8" },
   attachmentName: { flex: 1, fontSize: 13, color: "#9D174D", fontWeight: "600" },
+  // 👤 Badge destinataire
+  recipientBadge: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, marginBottom: 14 },
+  recipientIcon: { fontSize: 28 },
+  recipientLabel: { fontSize: 11, fontWeight: "800", color: COLORS.textSecondary, textTransform: "uppercase" },
+  recipientName: { fontSize: 15, fontWeight: "800", color: COLORS.textPrimary, marginTop: 2 },
 });
