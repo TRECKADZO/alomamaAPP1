@@ -2987,3 +2987,84 @@ agent_communication:
         GET /referral/me after login. Optional future enhancement only. Test script:
         /app/backend_test_referral.py. Cleanup idempotent.
 
+
+
+backend:
+  - task: "GET /api/mes-consultation-notes — vue maman unifiée (notes perso + enfants)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          35/35 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_mes_consultation_notes.py).
+
+          SETUP (4/4):
+          • Login maman.test@alomaman.dev + pro.test@alomaman.dev OK.
+          • Reused existing enfant 'Test 1' (id=e41c8152…, maman-owned).
+          • A confirmed RDV between the pro and maman already existed (no need to create one).
+
+          STEP 2 — POST /pro/consultation-notes (6/6 PASS): 3 notes créées avec succès —
+          (A) patient_id=maman_id → 200, patient_type="maman", clear diagnostic.
+          (B) patient_id=enfant_id → 200, patient_type="enfant", maman_id set to enfant.user_id=maman.id.
+          (C) patient_id=enfant_id + attachment_base64 "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+              attachment_name="prescription.jpg", attachment_mime="image/jpeg" → 200, attachment returned
+              clear in the data-URI form (no enc_v1: / enc:: prefix).
+
+          STEP 3 — MAIN /mes-consultation-notes as maman (14/14 PASS):
+          • GET /mes-consultation-notes → 200, returns a list.
+          • The 3 notes A/B/C are ALL present (missing=[], total_returned=3).
+          • No sensitive field contains 'enc_v1:' or 'enc::' across all notes
+            (diagnostic / traitement / notes / attachment_base64 all decrypted correctly).
+          • Note A: concerne="Moi", enfant_nom=None ✓
+          • Note B: concerne="Test 1" (enfant's name), enfant_nom="Test 1" ✓
+          • Note C: concerne="Test 1", enfant_nom="Test 1", attachment_base64 full data-URI preserved
+            ("data:image/jpeg;base64,/9j/4AAQSkZJRg==") ✓
+          • Clear-text values match original inputs verbatim (diagnostic A, traitement B).
+
+          STEP 4 — Tri par created_at DESC (2/2 PASS):
+          • All timestamps strictly descending across the returned list.
+          • Note C (newest) appears at index 0 while Note A (oldest of the 3) appears at index 2.
+
+          STEP 5 — Sécurité (5/5 PASS):
+          (5.a) GET /mes-consultation-notes without Bearer → 401 "Non authentifié" ✓
+          (5.b) GET as Pro (pro.test) → 403 {"detail":"Réservé aux mamans"} ✓
+          (5.c) Registered maman2_mcn_<ts>@test.alomaman.dev (fresh maman, full RGPD consent) →
+                GET /mes-consultation-notes → 200 with empty list [] → confirms cross-maman isolation
+                (leaked=[], total_seen_by_maman2=0). The maman2 does NOT see any of maman.test's notes.
+
+          STEP 6 — Cas vide: confirmed via maman2 (list = []).
+
+          STEP 7 — Cleanup (4/4 PASS):
+          • DELETE /pro/consultation-notes/{A}, {B}, {C} all returned 200.
+          • DELETE /auth/me on maman2 with {password, confirmation:"SUPPRIMER"} → 200.
+
+          IMPLEMENTATION REVIEW (server.py L2357-2385):
+          • Role guard checks user.role == "maman" (403 otherwise).
+          • Query is $or of [{patient_id: me, patient_type: "maman"}, {maman_id: me}] —
+            correctly captures both personal notes and children's notes.
+          • Sort on created_at descending (limit 200).
+          • For each note, decrypt_consultation_note() decrypts diagnostic/traitement/notes/attachment_base64.
+          • Enrichment: enfant_ids collected, batch-fetched from db.enfants, mapped to name.
+            Each result gets `enfant_nom` (or null) and `concerne` = enfant_nom or "Moi".
+
+          NO BUGS DETECTED. Endpoint production-ready.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      ✅ GET /api/mes-consultation-notes fully validated — 35/35 scenarios PASS
+      (script: /app/backend_test_mes_consultation_notes.py). The maman correctly sees ALL her
+      medical notes in a single call: her personal notes (patient_type="maman") AND her children's
+      notes (patient_type="enfant" with maman_id=her id). Each note is enriched with `concerne`
+      ("Moi" or enfant name) and `enfant_nom` (null or name). All sensitive fields
+      (diagnostic, traitement, notes, attachment_base64) are decrypted in the response — no
+      `enc_v1:` / `enc::` prefix leaks. attachment_base64 returned as full data URI
+      (data:image/jpeg;base64,...). Sort by created_at DESC confirmed. Security: 401 without
+      Bearer, 403 for Pro, cross-maman isolation verified (fresh maman2 returns [] and never
+      sees maman.test's notes). Main agent can summarise and finish.
