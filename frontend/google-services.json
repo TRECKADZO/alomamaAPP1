@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "382328813385",
+    "project_id": "alomaman-c6cf3",
+    "storage_bucket": "alomaman-c6cf3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:382328813385:android:791b19f19f6cdb9a694c98",
+        "android_client_info": {
+          "package_name": "com.alomaman"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBLnTDFDcC54TNgtvAx-jJFosXKi50Vwfo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

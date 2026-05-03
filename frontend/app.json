@@ -22,6 +22,7 @@
       "package": "com.alomaman",
       "versionCode": 3,
       "softwareKeyboardLayoutMode": "pan",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#F4A754"
