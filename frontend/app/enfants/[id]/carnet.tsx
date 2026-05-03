@@ -106,6 +106,7 @@ export default function CarnetModulaire() {
   const [loading, setLoading] = useState(true);
   const [activeStage, setActiveStage] = useState<StageKey>("0_6m");
   const [ttsOn, setTtsOn] = useState(false);
+  const [speakingKey, setSpeakingKey] = useState<string | null>(null);
 
   const ageMonths = enfant ? monthsBetween(enfant.date_naissance) : 0;
   const focus = getRoleFocus(user?.role, (user as any)?.specialite);
@@ -123,6 +124,7 @@ export default function CarnetModulaire() {
     return () => { Speech.stop(); };
   }, [id]);
 
+  // Lecture "implicite" : ne déclenche la voix que si le mode TTS global est activé
   const speak = async (text: string) => {
     try {
       await Speech.stop();
@@ -131,9 +133,38 @@ export default function CarnetModulaire() {
     } catch {}
   };
 
+  // Lecture "explicite" : appuyée par l'utilisateur → toujours jouer, avec toggle stop/play
+  const playSpeech = async (text: string, key: string) => {
+    try {
+      // Si on tape le bouton actif pendant lecture → arrête
+      if (speakingKey === key) {
+        await Speech.stop();
+        setSpeakingKey(null);
+        return;
+      }
+      await Speech.stop();
+      setSpeakingKey(key);
+      Speech.speak(text, {
+        language: "fr-FR",
+        pitch: 1.0,
+        rate: 0.95,
+        onDone: () => setSpeakingKey((k) => (k === key ? null : k)),
+        onStopped: () => setSpeakingKey((k) => (k === key ? null : k)),
+        onError: () => {
+          setSpeakingKey(null);
+          Alert.alert("Lecture vocale", "La synthèse vocale n'est pas disponible sur cet appareil.");
+        },
+      });
+    } catch {
+      setSpeakingKey(null);
+      Alert.alert("Lecture vocale", "Impossible de lire le texte à voix haute.");
+    }
+  };
+
   const toggleTts = async () => {
     if (ttsOn) {
       await Speech.stop();
+      setSpeakingKey(null);
       setTtsOn(false);
     } else {
       setTtsOn(true);
@@ -265,14 +296,18 @@ export default function CarnetModulaire() {
         {enfant.allergies?.length > 0 && (
           <TouchableOpacity
             style={styles.allergyBanner}
-            onPress={() => speak(`Attention, ${enfant.nom} est allergique à ${enfant.allergies.join(", ")}.`)}
+            onPress={() => playSpeech(`Attention, ${enfant.nom} est allergique à ${enfant.allergies.join(", ")}.`, "allergy")}
           >
             <Ionicons name="warning" size={20} color="#B45309" />
             <View style={{ flex: 1 }}>
               <Text style={styles.allergyTitle}>⚠️ Allergies</Text>
               <Text style={styles.allergyText}>{enfant.allergies.join(" · ")}</Text>
             </View>
-            {ttsOn && <Ionicons name="volume-high" size={18} color="#B45309" />}
+            <Ionicons
+              name={speakingKey === "allergy" ? "stop-circle" : "volume-high"}
+              size={20}
+              color="#B45309"
+            />
           </TouchableOpacity>
         )}
 
@@ -337,8 +372,17 @@ export default function CarnetModulaire() {
             <Text style={[styles.stageBannerTitle, { color: currentStage.color }]}>{currentStage.label}</Text>
             <Text style={styles.stageBannerDesc}>{currentStage.description}</Text>
           </View>
-          <TouchableOpacity onPress={() => speak(`${currentStage.label}. ${currentStage.description}`)} style={styles.playBtn}>
-            <Ionicons name="play-circle" size={28} color={currentStage.color} />
+          <TouchableOpacity
+            onPress={() => playSpeech(`${currentStage.label}. ${currentStage.description}`, `stage-${currentStage.key}`)}
+            style={styles.playBtn}
+            accessibilityLabel={`Écouter la description de ${currentStage.label}`}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons
+              name={speakingKey === `stage-${currentStage.key}` ? "stop-circle" : "play-circle"}
+              size={36}
+              color={currentStage.color}
+            />
           </TouchableOpacity>
         </View>
 
@@ -415,7 +459,7 @@ const styles = StyleSheet.create({
   stageBanner: { flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: SPACING.lg, padding: 14, borderRadius: RADIUS.md, marginTop: 6, marginBottom: 6 },
   stageBannerTitle: { fontSize: 16, fontWeight: "800" },
   stageBannerDesc: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
-  playBtn: { padding: 4 },
+  playBtn: { padding: 8, borderRadius: 30 },
 
   modulesGrid: { paddingHorizontal: SPACING.lg, gap: 10 },
   moduleCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, borderLeftWidth: 4, ...SHADOW },
