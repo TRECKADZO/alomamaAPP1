@@ -9,6 +9,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImagePicker from "expo-image-picker";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
@@ -76,6 +79,85 @@ export default function DossierPatient() {
   const [noteTrait, setNoteTrait] = useState("");
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  // 📎 Pièce jointe à la note
+  const [noteAttachment, setNoteAttachment] = useState<string | null>(null); // data URI complet
+  const [noteAttachmentName, setNoteAttachmentName] = useState("");
+  const [noteAttachmentMime, setNoteAttachmentMime] = useState("");
+
+  const pickAttachment = async () => {
+    try {
+      const r = await DocumentPicker.getDocumentAsync({ type: ["application/pdf", "image/*"], copyToCacheDirectory: true, multiple: false });
+      if (r.canceled || !r.assets?.[0]) return;
+      const asset = r.assets[0];
+      let b64 = "";
+      try {
+        if (Platform.OS === "web") {
+          const fr = await fetch(asset.uri);
+          const blob = await fr.blob();
+          b64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve((reader.result as string).split(",")[1] || "");
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } else {
+          b64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+        }
+      } catch {
+        Alert.alert("Erreur", "Impossible de lire le fichier.");
+        return;
+      }
+      const sizeBytes = asset.size || Math.round((b64.length * 3) / 4);
+      if (sizeBytes > 5 * 1024 * 1024) {
+        Alert.alert("Fichier trop volumineux", "La taille maximale d'une pièce jointe est 5 Mo.");
+        return;
+      }
+      const mime = asset.mimeType || (asset.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+      setNoteAttachment(`data:${mime};base64,${b64}`);
+      setNoteAttachmentName(asset.name || "document");
+      setNoteAttachmentMime(mime);
+    } catch (e) {
+      Alert.alert("Erreur", formatError(e));
+    }
+  };
+
+  const pickAttachmentPhoto = async () => {
+    Alert.alert("Ajouter une photo", "Choisissez la source", [
+      { text: "Annuler", style: "cancel" },
+      {
+        text: "Appareil photo",
+        onPress: async () => {
+          try {
+            const perm = await ImagePicker.requestCameraPermissionsAsync();
+            if (!perm.granted) return Alert.alert("Permission refusée");
+            const r = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], base64: true, quality: 0.6 });
+            if (r.canceled || !r.assets?.[0]?.base64) return;
+            setNoteAttachment(`data:image/jpeg;base64,${r.assets[0].base64}`);
+            setNoteAttachmentName(`photo_${Date.now()}.jpg`);
+            setNoteAttachmentMime("image/jpeg");
+          } catch (e) {
+            Alert.alert("Erreur appareil photo", formatError(e));
+          }
+        },
+      },
+      {
+        text: "Galerie",
+        onPress: async () => {
+          try {
+            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!perm.granted) return Alert.alert("Permission refusée");
+            const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], base64: true, quality: 0.6 });
+            if (r.canceled || !r.assets?.[0]?.base64) return;
+            setNoteAttachment(`data:image/jpeg;base64,${r.assets[0].base64}`);
+            setNoteAttachmentName(`photo_${Date.now()}.jpg`);
+            setNoteAttachmentMime("image/jpeg");
+          } catch (e) {
+            Alert.alert("Erreur galerie", formatError(e));
+          }
+        },
+      },
+    ]);
+  };
 
   useEffect(() => {
     if (isEnfant && id) {
@@ -99,9 +181,13 @@ export default function DossierPatient() {
         traitement: noteTrait.trim() || undefined,
         notes: noteText.trim() || undefined,
         date: new Date().toISOString(),
+        attachment_base64: noteAttachment || undefined,
+        attachment_name: noteAttachmentName || undefined,
+        attachment_mime: noteAttachmentMime || undefined,
       });
       setEnfantNotes((prev) => [r.data, ...prev]);
       setNoteDiag(""); setNoteTrait(""); setNoteText("");
+      setNoteAttachment(null); setNoteAttachmentName(""); setNoteAttachmentMime("");
       setShowAddNote(false);
       Alert.alert("✓ Note ajoutée", "La note médicale a été enregistrée. La maman a été notifiée.");
     } catch (e: any) {
@@ -318,21 +404,46 @@ export default function DossierPatient() {
 
       {/* Modal Ajouter une note */}
       <Modal visible={showAddNote} animationType="slide" transparent onRequestClose={() => setShowAddNote(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: "flex-end" }}>
-            <View style={styles.modalCard}>
-              <View style={styles.modalHead}>
-                <Text style={styles.modalTitle}>📝 Nouvelle note médicale</Text>
-                <TouchableOpacity onPress={() => setShowAddNote(false)}>
-                  <Ionicons name="close" size={24} color={COLORS.textPrimary} />
-                </TouchableOpacity>
-              </View>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalWrap} keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}>
+          <TouchableOpacity activeOpacity={1} style={{ flex: 1 }} onPress={() => setShowAddNote(false)} />
+          <View style={styles.modalCard}>
+            <View style={styles.modalHead}>
+              <Text style={styles.modalTitle}>📝 Nouvelle note médicale</Text>
+              <TouchableOpacity onPress={() => setShowAddNote(false)}>
+                <Ionicons name="close" size={24} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
               <Text style={styles.formLabel}>Diagnostic</Text>
-              <TextInput style={styles.formInput} value={noteDiag} onChangeText={setNoteDiag} placeholder="Ex : Bronchiolite légère" placeholderTextColor={COLORS.textMuted} />
+              <TextInput style={styles.formInput} value={noteDiag} onChangeText={setNoteDiag} placeholder="Ex : Bronchiolite légère" placeholderTextColor={COLORS.textMuted} returnKeyType="next" />
               <Text style={styles.formLabel}>Traitement / Prescription</Text>
               <TextInput style={[styles.formInput, { height: 70, textAlignVertical: "top" }]} multiline value={noteTrait} onChangeText={setNoteTrait} placeholder="Médicaments, posologie, durée…" placeholderTextColor={COLORS.textMuted} />
               <Text style={styles.formLabel}>Observations / Conseils</Text>
               <TextInput style={[styles.formInput, { height: 80, textAlignVertical: "top" }]} multiline value={noteText} onChangeText={setNoteText} placeholder="Conseils à la maman, suivi à prévoir…" placeholderTextColor={COLORS.textMuted} />
+
+              {/* Pièce jointe */}
+              <Text style={styles.formLabel}>Pièce jointe (optionnel)</Text>
+              {noteAttachment ? (
+                <View style={styles.attachmentCard}>
+                  <Ionicons name="document-attach" size={18} color="#EC4899" />
+                  <Text style={styles.attachmentName} numberOfLines={1}>{noteAttachmentName || "Fichier joint"}</Text>
+                  <TouchableOpacity onPress={() => { setNoteAttachment(null); setNoteAttachmentName(""); setNoteAttachmentMime(""); }}>
+                    <Ionicons name="close-circle" size={20} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TouchableOpacity style={styles.attachBtn} onPress={pickAttachment}>
+                    <Ionicons name="document-attach-outline" size={16} color="#EC4899" />
+                    <Text style={styles.attachBtnText}>PDF/Image</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.attachBtn} onPress={pickAttachmentPhoto}>
+                    <Ionicons name="camera-outline" size={16} color="#EC4899" />
+                    <Text style={styles.attachBtnText}>Photo</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               <TouchableOpacity onPress={saveNote} disabled={savingNote} style={{ marginTop: 16 }}>
                 <LinearGradient colors={savingNote ? ["#94A3B8", "#94A3B8"] : ["#EC4899", "#F472B6"]} style={styles.saveNoteBtn}>
                   {savingNote ? <ActivityIndicator color="#fff" /> : (
@@ -343,8 +454,8 @@ export default function DossierPatient() {
                   )}
                 </LinearGradient>
               </TouchableOpacity>
-            </View>
-          </ScrollView>
+            </ScrollView>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
@@ -438,4 +549,10 @@ const styles = StyleSheet.create({
   formInput: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: 12, fontSize: 14, color: COLORS.textPrimary },
   saveNoteBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 999 },
   saveNoteText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+
+  // 📎 Attachment
+  attachBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: "#EC4899", backgroundColor: "#FCE7F3" },
+  attachBtnText: { color: "#EC4899", fontWeight: "800", fontSize: 12 },
+  attachmentCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 12, backgroundColor: "#FCE7F3", borderWidth: 1, borderColor: "#FBCFE8" },
+  attachmentName: { flex: 1, fontSize: 13, color: "#9D174D", fontWeight: "600" },
 });

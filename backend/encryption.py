@@ -165,7 +165,7 @@ def decrypt_consultation_note(note: Any) -> Any:
     if not note or not isinstance(note, dict):
         return note
     out = dict(note)
-    for f in ("diagnostic", "traitement", "notes"):
+    for f in ("diagnostic", "traitement", "notes", "attachment_base64"):
         if out.get(f):
             out[f] = decrypt_str(out[f])
     return out

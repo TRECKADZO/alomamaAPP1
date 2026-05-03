@@ -556,8 +556,8 @@ backend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.4"
-  test_sequence: 8
+  version: "1.5"
+  test_sequence: 9
   run_ui: false
 
 test_plan:
@@ -565,6 +565,60 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend:
+  - task: "Pro→Maman consultation notes WITH attachment (PDF/IMAGE) — POST/GET /api/pro/consultation-notes + GET /api/enfants/{eid}/notes"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/encryption.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          54/54 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_consultation_notes_attachment.py).
+
+          Setup: maman.test@alomaman.dev + pro.test@alomaman.dev. Existing enfant Test 1 (id=e41c8152-…) and confirmed RDV 4594bb5f-… already in place.
+
+          🅰 STEP 2 — POST /pro/consultation-notes WITH PDF (16/16 PASS):
+          • Body {patient_id=enfant_id, diagnostic="Rhume léger", traitement="Paracétamol 60 mg/kg/j", notes="Revoir si fièvre > 48h", attachment_base64=data:application/pdf;base64,JVBERi…, attachment_name="ordonnance.pdf", attachment_mime="application/pdf"} → 200.
+          • Response contains all required fields: id, pro_name="Dr Konan TestPro", patient_id, patient_type="enfant", enfant_id (matches), maman_id (matches), diagnostic/traitement/notes (clear text, exact match), attachment_base64 (data URI complet, exact match), attachment_name="ordonnance.pdf", attachment_mime="application/pdf", created_at.
+          • None of the sensitive fields start with "enc_v1:" or "enc::" → properly decrypted in API response.
+
+          🅱 STEP 3 — GET /enfants/{eid}/notes as MAMAN (10/10 PASS):
+          • Returns the created note in MAMAN's list.
+          • diagnostic, traitement, notes all in CLEAR text (no enc_v1: / enc:: prefix).
+          • attachment_base64 returned as full data URI matching original input.
+          • attachment_name + attachment_mime present.
+
+          🅲 STEP 4 — GET /enfants/{eid}/notes as PRO (6/6 PASS):
+          • Returns the same note for the Pro.
+          • All sensitive fields decrypted (clear).
+
+          🅳 STEP 5 — POST WITHOUT attachment (3/3 PASS):
+          • Body {patient_id, diagnostic="Contrôle ok", notes="RAS"} → 200; attachment_base64=null in response; diagnostic clear.
+
+          🅴 STEP 6 — POST WITH IMAGE attachment (4/4 PASS):
+          • Body with attachment_base64="data:image/jpeg;base64,/9j/4AAQSkZJRg==", attachment_name="lesion.jpg", attachment_mime="image/jpeg" → 200; data URI preserved exactly; name + mime preserved; diagnostic="Eczéma" clear.
+
+          🅵 STEP 7 — Notifications maman (8/8 PASS):
+          • Before: 1 consultation_note notif. After 3 POSTs: 4 consultation_note notifs → delta=3 exact.
+          • Each new notif has type="consultation_note", title="📝 Nouvelle note médicale", body contains the Pro's name "Dr Konan TestPro".
+
+          🅶 STEP 8 — MongoDB at-rest verification (4/4 PASS):
+          • Direct query on db.consultation_notes shows diagnostic/traitement/notes/attachment_base64 ALL stored as "enc_v1:..." ciphertext. Confirms AES-256-GCM encryption at rest while API returns clear values to authenticated callers (Phase 3 round-trip integrity verified).
+
+          OBSERVATION (Minor, not blocking) — Notification body contains duplicated "Dr" prefix: "Dr Dr Konan TestPro a ajouté une note de Test 1." This is because server.py L2239 prepends "Dr " unconditionally without checking if the pro's name already starts with "Dr" (unlike the ring endpoint at L2386-2388 which has a regex-insensitive check). Cosmetic only — does not affect functionality. The "Dr " logic for ring (server.py L2386) handles this correctly; consider applying the same logic at L2239 for consistency.
+
+          CLEANUP: 3 test notes deleted via DELETE /pro/consultation-notes/{id} (all returned 200). Notifications were not deleted (no public endpoint to delete individual notifications, but they're now marked inert by the test).
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Pro→Maman consultation notes flow with PDF/IMAGE attachments fully validated — 54/54 checks PASS. POST /api/pro/consultation-notes correctly accepts attachment_base64 (data URI), encrypts at rest (DB shows enc_v1:...), and returns clear values in both /pro/consultation-notes response and GET /api/enfants/{eid}/notes (both maman and pro views). Notifications (type=consultation_note, title="📝 Nouvelle note médicale") correctly created for the maman with the Pro's name in the body. Minor cosmetic issue: notif body has duplicated "Dr Dr Konan TestPro" because server.py L2239 prepends "Dr " unconditionally — the same regex-insensitive check used at L2386-2388 (ring endpoint) should be applied for consistency, but this is non-blocking. Test script: /app/backend_test_consultation_notes_attachment.py. No critical issues.
 
 backend:
   - task: "Téléconsultation RING — POST /api/teleconsultation/ring/{rdv_id}"

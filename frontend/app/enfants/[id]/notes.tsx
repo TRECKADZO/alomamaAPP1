@@ -2,12 +2,50 @@
  * Notes médicales d'un enfant (lecture seule pour la maman)
  */
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import * as FileSystem from "expo-file-system/legacy";
 import { api } from "../../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../../constants/theme";
+
+function parseDataUri(input?: string | null): { mime: string; raw: string } {
+  if (!input) return { mime: "application/octet-stream", raw: "" };
+  const m = input.match(/^data:([^;]+);base64,(.+)$/);
+  if (m) return { mime: m[1], raw: m[2] };
+  return { mime: "application/octet-stream", raw: input };
+}
+
+async function openAttachment(dataUri: string, name: string) {
+  try {
+    const { mime, raw } = parseDataUri(dataUri);
+    if (Platform.OS === "web") {
+      const byteChars = atob(raw);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([new Uint8Array(byteNumbers)], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name || "piece_jointe";
+      a.target = "_blank";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 500);
+    } else {
+      const Sharing = await import("expo-sharing");
+      const ext = mime.includes("pdf") ? "pdf" : (mime.split("/")[1] || "bin");
+      const fileName = `${(name || "piece_jointe").replace(/\s+/g, "_").replace(/\.[^.]+$/, "")}.${ext}`;
+      const localUri = (FileSystem.cacheDirectory || "") + fileName;
+      await FileSystem.writeAsStringAsync(localUri, raw, { encoding: FileSystem.EncodingType.Base64 });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(localUri, { mimeType: mime, dialogTitle: name, UTI: mime.includes("pdf") ? "com.adobe.pdf" : undefined });
+      }
+    }
+  } catch {
+    Alert.alert("Erreur", "Impossible d'ouvrir la pièce jointe.");
+  }
+}
 
 export default function NotesEnfant() {
   const router = useRouter();
@@ -50,17 +88,31 @@ export default function NotesEnfant() {
           <View key={n.id} style={styles.card}>
             <View style={styles.cardHead}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.proName}>👨‍⚕️ Dr {n.pro_name || n.author_name || "Inconnu"}</Text>
+                <Text style={styles.proName}>👨‍⚕️ Dr {n.pro_name || "Inconnu"}</Text>
                 {n.pro_specialite && <Text style={styles.proSpec}>{n.pro_specialite}</Text>}
               </View>
-              <Text style={styles.date}>{n.created_at ? new Date(n.created_at).toLocaleDateString("fr-FR") : ""}</Text>
+              <Text style={styles.date}>{(n.date || n.created_at) ? new Date(n.date || n.created_at).toLocaleDateString("fr-FR") : ""}</Text>
             </View>
             {n.diagnostic && <View style={styles.field}><Text style={styles.fieldLabel}>Diagnostic</Text><Text style={styles.fieldText}>{n.diagnostic}</Text></View>}
+            {n.traitement && <View style={styles.field}><Text style={styles.fieldLabel}>Traitement / Ordonnance</Text><Text style={styles.fieldText}>{n.traitement}</Text></View>}
             {n.notes && <View style={styles.field}><Text style={styles.fieldLabel}>Observations</Text><Text style={styles.fieldText}>{n.notes}</Text></View>}
-            {n.prescription && <View style={styles.field}><Text style={styles.fieldLabel}>Ordonnance</Text><Text style={styles.fieldText}>{n.prescription}</Text></View>}
+
+            {/* 📎 Pièce jointe (si présente) */}
+            {n.attachment_base64 ? (
+              <TouchableOpacity
+                onPress={() => openAttachment(n.attachment_base64, n.attachment_name || "piece_jointe")}
+                style={styles.attachmentChip}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="document-attach" size={18} color="#EC4899" />
+                <Text style={styles.attachmentText} numberOfLines={1}>{n.attachment_name || "Pièce jointe"}</Text>
+                <Ionicons name={Platform.OS === "web" ? "download-outline" : "open-outline"} size={16} color="#EC4899" />
+              </TouchableOpacity>
+            ) : null}
+
             <View style={styles.signBadge}>
               <Ionicons name="shield-checkmark" size={14} color="#10B981" />
-              <Text style={styles.signText}>Note signée — {n.pro_name || n.author_name}</Text>
+              <Text style={styles.signText}>Note signée — Dr {n.pro_name || ""}</Text>
             </View>
           </View>
         ))}

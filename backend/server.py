@@ -1367,15 +1367,9 @@ async def list_enfant_notes(eid: str, user=Depends(get_current_user)):
         {"enfant_id": eid},
         {"_id": 0},
     ).sort("created_at", -1)
-    notes = await cursor.to_list(100)
-    # Déchiffre les notes si chiffrées
-    for n in notes:
-        if isinstance(n.get("notes"), str) and n["notes"].startswith("enc::"):
-            try:
-                n["notes"] = decrypt_str(n["notes"])
-            except Exception:
-                pass
-    return notes
+    notes_raw = await cursor.to_list(100)
+    # 🔓 Déchiffre TOUS les champs sensibles (diagnostic, traitement, notes, attachment_base64)
+    return [decrypt_consultation_note(n) for n in notes_raw]
 
 
 # ----------------------------------------------------------------------
@@ -2174,6 +2168,10 @@ class ConsultationNoteIn(BaseModel):
     diagnostic: Optional[str] = ""
     traitement: Optional[str] = ""
     notes: Optional[str] = ""
+    # 📎 Pièce jointe optionnelle (data URI complet, ex: data:application/pdf;base64,XXX)
+    attachment_base64: Optional[str] = None
+    attachment_name: Optional[str] = None
+    attachment_mime: Optional[str] = None
 
 
 @api.post("/pro/consultation-notes")
@@ -2221,6 +2219,10 @@ async def create_consultation_note(payload: ConsultationNoteIn, user=Depends(req
         "diagnostic": encrypt_str(payload.diagnostic) if payload.diagnostic else payload.diagnostic,
         "traitement": encrypt_str(payload.traitement) if payload.traitement else payload.traitement,
         "notes": encrypt_str(payload.notes) if payload.notes else payload.notes,
+        # 📎 Pièce jointe chiffrée (data URI complet)
+        "attachment_base64": encrypt_str(payload.attachment_base64) if payload.attachment_base64 else None,
+        "attachment_name": (payload.attachment_name or "")[:200] if payload.attachment_name else None,
+        "attachment_mime": (payload.attachment_mime or "")[:100] if payload.attachment_mime else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.consultation_notes.insert_one(doc)
