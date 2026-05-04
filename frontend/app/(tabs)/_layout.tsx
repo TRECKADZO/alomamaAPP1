@@ -75,13 +75,26 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* --------- Pro/Centre : Patients --------- */}
+      {/* --------- Pro/Centre : Patientes ou Pros --------- */}
+      {/* Pour le PRO → ses patientes ; pour le CENTRE → ses pros membres */}
       <Tabs.Screen
         name="patients"
         options={{
-          title: "Patients",
+          title: isCentre ? "Pros" : "Patientes",
           href: isPro || isCentre ? "/(tabs)/patients" : null,
-          tabBarIcon: ({ color, size }) => <Ionicons name="medkit" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name={isCentre ? "medkit" : "people"} size={size} color={color} />
+          ),
+        }}
+      />
+
+      {/* --------- Centre uniquement : Patientes du centre --------- */}
+      <Tabs.Screen
+        name="patientes"
+        options={{
+          title: "Patientes",
+          href: isCentre ? "/(tabs)/patientes" : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
         }}
       />
 
