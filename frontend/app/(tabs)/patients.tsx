@@ -193,10 +193,12 @@ export default function Patients() {
             </Text>
           </View>
         ) : (
-          filtered.map((p) => (
+          filtered.map((p) => {
+            const hasUnread = (p.unread_count || 0) > 0;
+            return (
             <TouchableOpacity
               key={p.id}
-              style={styles.card}
+              style={[styles.card, hasUnread && styles.cardUnread]}
               onPress={() => !isCentre && router.push(`/pro/dossier/${p.id}`)}
               activeOpacity={isCentre ? 1 : 0.7}
               testID={`item-card-${p.id}`}
@@ -206,13 +208,28 @@ export default function Patients() {
                 style={styles.avatar}
               >
                 <Text style={styles.avatarText}>{(p.name || "?").charAt(0).toUpperCase()}</Text>
+                {hasUnread && (
+                  <View style={styles.avatarDot}>
+                    <Text style={styles.avatarDotText}>{p.unread_count > 9 ? "9+" : p.unread_count}</Text>
+                  </View>
+                )}
               </LinearGradient>
               <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{p.name || "—"}</Text>
+                <Text style={[styles.name, hasUnread && { color: COLORS.primary }]}>{p.name || "—"}</Text>
                 {isCentre && p.specialite ? (
                   <Text style={styles.specialite}>{p.specialite}</Text>
                 ) : null}
-                <Text style={styles.meta} numberOfLines={1}>{p.email || p.phone || ""}</Text>
+                {/* 📨 Dernier message ou email de contact */}
+                {!isCentre && p.last_message ? (
+                  <Text
+                    style={[styles.meta, hasUnread && { fontWeight: "800", color: COLORS.textPrimary }]}
+                    numberOfLines={1}
+                  >
+                    {p.last_message_from_me ? "Vous : " : ""}{p.last_message}
+                  </Text>
+                ) : (
+                  <Text style={styles.meta} numberOfLines={1}>{p.email || p.phone || ""}</Text>
+                )}
                 <View style={styles.badges}>
                   {isCentre ? (
                     <>
@@ -268,18 +285,22 @@ export default function Patients() {
                 ) : (
                   <>
                     <TouchableOpacity
-                      style={styles.iconBtn}
-                      onPress={() => router.push(`/chat/${p.id}?name=${encodeURIComponent(p.name || "")}`)}
+                      style={[styles.iconBtn, hasUnread && styles.iconBtnPrimary]}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        router.push(`/chat/${p.id}?name=${encodeURIComponent(p.name || "")}`);
+                      }}
                       testID={`msg-patient-${p.id}`}
                     >
-                      <Ionicons name="chatbubble-ellipses" size={18} color={COLORS.primary} />
+                      <Ionicons name="chatbubble-ellipses" size={18} color={hasUnread ? "#fff" : COLORS.primary} />
                     </TouchableOpacity>
                     <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
                   </>
                 )}
               </View>
             </TouchableOpacity>
-          ))
+          );
+          })
         )}
       </ScrollView>
     </SafeAreaView>
@@ -319,7 +340,10 @@ const styles = StyleSheet.create({
   actionLabel: { fontSize: 11, color: COLORS.textPrimary, fontWeight: "700", textAlign: "center" },
 
   card: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, marginBottom: 10, borderWidth: 1, borderColor: COLORS.border, ...SHADOW },
+  cardUnread: { borderColor: COLORS.primary, borderWidth: 1.5, backgroundColor: COLORS.primaryLight },
   avatar: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center" },
+  avatarDot: { position: "absolute", top: -2, right: -2, minWidth: 22, height: 22, borderRadius: 11, backgroundColor: "#EF4444", alignItems: "center", justifyContent: "center", paddingHorizontal: 5, borderWidth: 2, borderColor: "#fff" },
+  avatarDotText: { color: "#fff", fontWeight: "800", fontSize: 10 },
   avatarText: { color: "#fff", fontWeight: "800", fontSize: 20 },
   name: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 15 },
   specialite: { color: "#A855F7", fontSize: 12, fontWeight: "700", marginTop: 1 },
@@ -328,6 +352,7 @@ const styles = StyleSheet.create({
   badge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: RADIUS.pill },
   badgeText: { fontSize: 10, fontWeight: "800" },
   iconBtn: { width: 36, height: 36, backgroundColor: COLORS.primaryLight, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  iconBtnPrimary: { backgroundColor: COLORS.primary },
 
   errorBox: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, backgroundColor: "#FEE2E2", borderRadius: RADIUS.md, marginBottom: 14 },
   errorText: { flex: 1, color: "#B91C1C", fontSize: 12, fontWeight: "600" },

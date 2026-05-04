@@ -2175,15 +2175,63 @@ backend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.3"
-  test_sequence: 7
+  version: "1.4"
+  test_sequence: 8
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Pro Patients Enrichment (messaging signals)"
+    - "Messages Attachment Support"
   stuck_tasks: []
   test_all: false
-  test_priority: "stuck_first"
+  test_priority: "high_first"
+
+backend:
+  - task: "Pro Patients enrichissement messagerie (unread_count, last_message, tri non-lus)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Enrichi GET /api/pro/patients pour inclure par patient :
+          - unread_count (messages non-lus envoyés par le patient au pro)
+          - last_message (preview 80 chars, "📎 <nom>" si pièce jointe)
+          - last_message_at (ISO timestamp) et last_message_from_me (bool)
+          Tri : patientes avec unread en premier, puis par dernier message desc.
+          Ajouté helper _ts().
+          À TESTER : GET /api/pro/patients avec pro ayant 2 patientes :
+            - patiente A : 2 messages non-lus du pro
+            - patiente B : 1 message lu reçu
+          Vérifier unread_count=2/0, tri B après A, last_message cohérent.
+
+  - task: "Messagerie : pièce jointe (image/PDF base64)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          MessageIn étendu avec attachment_base64 + attachment_name + attachment_mime.
+          POST /api/messages accepte :
+           - texte seul (comportement classique)
+           - pièce jointe seule (content="")
+           - texte + pièce jointe
+           - refuse 400 si content vide ET pas d'attachment
+          Notification push : preview texte OU "📎 <nom>" si pas de texte.
+          À TESTER : 4 scénarios ci-dessus + vérifier que le doc retourné contient
+          bien attachment_base64/name/mime.
+
+
 
 agent_communication:
   - agent: "testing"
@@ -3168,3 +3216,78 @@ agent_communication:
       date, created_at), diagnostic/traitement/notes in clear text (no enc_v1:/enc:: leak), and
       read_by_maman reflects the real mark-read/mark-all-read state. (7) Security: maman → 403,
       no Bearer → 401. Avg latency 202ms. Cleanup OK. Main agent can summarise and finish.
+
+
+backend:
+  - task: "Pro messaging tool — GET /api/pro/patients enriched + POST /api/messages with attachment"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          42/42 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_pro_messaging.py).
+
+          🅰 TEST 1 — GET /api/pro/patients ENRICHED (15/15 PASS)
+          Setup: maman.test@alomaman.dev + pro.test@alomaman.dev. Maman has 7 RDV, includes 1 with this pro.
+          • Maman → Pro POST /api/messages "Test unread 1" → 200 ✓
+          • Maman → Pro POST /api/messages "Test unread 2" → 200 ✓
+          • GET /pro/patients as pro → 200, list of 1 patient ✓
+          • Maman patient object contains all NEW messaging fields:
+            - unread_count = 2 ✓
+            - last_message = "Test unread 2" (preview, last one) ✓
+            - last_message_at = "2026-05-04T21:21:38.295774+00:00" (ISO string, non-null) ✓
+            - last_message_from_me = false ✓
+          • Existing fields preserved: id, name, has_grossesse, enfants_count, last_rdv_date ✓
+          • GET /messages/{maman_id} as pro → marks read; subsequent GET /pro/patients → unread_count = 0 ✓
+          • Sort test SKIPPED (only 1 patient available — cannot test ordering with multiple unread/read patients).
+            Implementation review (server.py L2287-2289) confirms the sort key `(unread==0, -ts(last_message_at))`
+            puts unread>0 before unread=0; logic is correct, just not exercisable with current dataset.
+
+          🅱 TEST 2 — POST /api/messages WITH ATTACHMENT (27/27 PASS)
+          • 2A Text only (regression): {to_id, content:"Hello"} → 200; response.content="Hello",
+            attachment_base64 absent (None). ✓
+          • 2B Text + image: {content:"Voici ma photo", attachment_base64:"data:image/jpeg;base64,/9j/4AAQ…",
+            attachment_name:"photo.jpg", attachment_mime:"image/jpeg"} → 200; response preserves all 4 fields
+            exactly. ✓
+          • 2C Attachment only, empty content: {content:"", attachment_base64:"data:application/pdf;base64,JVBERi…",
+            attachment_name:"document.pdf", attachment_mime:"application/pdf"} → 200; content="" preserved,
+            attachment fields preserved. ✓
+          • 2D Invalid — both empty: {content:""} → 400 with detail "Le message est vide". ✓
+          • 2E GET /messages/{pro_id} → 200 list; both attachment messages retrieved with
+            attachment_base64 + attachment_name + attachment_mime fields populated correctly
+            (photo.jpg + image/jpeg, document.pdf + application/pdf, base64 payload non-empty). ✓
+
+          IMPLEMENTATION REVIEW:
+          • MessageIn (server.py L371-378): adds optional attachment_base64, attachment_name,
+            attachment_mime. ✓
+          • POST /api/messages (L1819-1851): validates non-empty content OR attachment, persists
+            attachment fields when present, sets sensible defaults for name/mime, sends notification
+            with "📎 <name>" preview when content is empty. ✓
+          • GET /api/pro/patients (L2227-2290): correctly looks up last message between (uid↔pro_id)
+            via `$or` query, computes unread count, sets last_message_from_me=(from_id==pro_id),
+            falls back to attachment label when content is empty (L2271-2272), and sorts by
+            (unread_count==0, last_message_at) so unread>0 patients appear first. ✓
+          • _ts helper (L2293-…): converts ISO date to timestamp for stable sort. ✓
+
+          NO BUGS DETECTED. Both endpoints are production-ready for the Pro messaging tool upgrade.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      ✅ Pro messaging tool upgrade fully validated — 42/42 PASS (script:
+      /app/backend_test_pro_messaging.py). GET /api/pro/patients now correctly returns the new
+      messaging signal fields (unread_count, last_message, last_message_at, last_message_from_me)
+      while preserving all existing fields (id, name, has_grossesse, enfants_count, last_rdv_date),
+      and unread_count goes from 2 → 0 after the pro reads the conversation. POST /api/messages
+      regression OK for text-only, accepts attachment_base64+name+mime (image and PDF data URIs
+      tested), accepts attachment-only with empty content, and correctly returns 400 "Le message
+      est vide" when both content and attachment are empty. Retrieval via GET /api/messages/{other}
+      surfaces all attachment fields. Sort test (unread > 0 before unread = 0) was skipped because
+      only 1 patient is in this pro's RDV history; the sort logic at server.py L2287-2289 was
+      reviewed and is correct. No bugs to fix — main agent can summarise and finish.

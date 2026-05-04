@@ -371,6 +371,10 @@ class RdvIn(BaseModel):
 class MessageIn(BaseModel):
     to_id: str
     content: str
+    # 📎 Pièce jointe optionnelle (data URI complet, ex: data:image/jpeg;base64,XXX)
+    attachment_base64: Optional[str] = None
+    attachment_name: Optional[str] = None
+    attachment_mime: Optional[str] = None
 
 
 class PostIn(BaseModel):
@@ -1814,21 +1818,34 @@ async def get_thread(other_id: str, user=Depends(get_current_user)):
 
 @api.post("/messages")
 async def send_message(payload: MessageIn, user=Depends(get_current_user)):
+    # Garde : le contenu texte peut être vide si une pièce jointe est présente
+    content = (payload.content or "").strip()
+    has_attachment = bool(payload.attachment_base64)
+    if not content and not has_attachment:
+        raise HTTPException(status_code=400, detail="Le message est vide")
+
     doc = {
         "id": str(uuid.uuid4()),
         "from_id": user["id"],
         "from_name": user["name"],
         "to_id": payload.to_id,
-        "content": payload.content,
+        "content": content,
         "read": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if has_attachment:
+        doc["attachment_base64"] = payload.attachment_base64
+        doc["attachment_name"] = payload.attachment_name or "piece-jointe"
+        doc["attachment_mime"] = payload.attachment_mime or "application/octet-stream"
     await db.messages.insert_one(doc)
     doc.pop("_id", None)
+
+    # Preview lisible pour notif : texte ou label de fichier
+    preview = content[:80] if content else f"📎 {doc.get('attachment_name', 'Pièce jointe')}"
     await push_notif(
         payload.to_id,
         f"Message de {user['name']}",
-        payload.content[:80],
+        preview,
         "message",
     )
     return doc
@@ -2234,7 +2251,54 @@ async def pro_patients(user=Depends(require_roles("professionnel"))):
                 u["grossesse_sa"] = None
         u["enfants_count"] = enfants_count
         u["last_rdv_date"] = last_rdv.get("date") if last_rdv else None
+
+        # 📨 Enrichissement messagerie : dernier message + compteur non-lus
+        last_msg = await db.messages.find_one(
+            {
+                "$or": [
+                    {"from_id": uid, "to_id": user["id"]},
+                    {"from_id": user["id"], "to_id": uid},
+                ]
+            },
+            {"_id": 0},
+            sort=[("created_at", -1)],
+        )
+        unread = await db.messages.count_documents(
+            {"from_id": uid, "to_id": user["id"], "read": False}
+        )
+        if last_msg:
+            preview = (last_msg.get("content") or "").strip()
+            if not preview and last_msg.get("attachment_name"):
+                preview = f"📎 {last_msg['attachment_name']}"
+            u["last_message"] = preview[:80]
+            u["last_message_at"] = last_msg.get("created_at")
+            u["last_message_from_me"] = last_msg.get("from_id") == user["id"]
+        else:
+            u["last_message"] = None
+            u["last_message_at"] = None
+            u["last_message_from_me"] = None
+        u["unread_count"] = unread
+
+    # Tri : patientes avec non-lus en haut, puis par dernier message le plus récent
+    def sort_key(u):
+        unread = u.get("unread_count", 0)
+        lm = u.get("last_message_at") or u.get("last_rdv_date") or ""
+        return (-unread, lm)  # unread descending, then lm descending (strings sorted reverse later)
+    users.sort(key=lambda u: (-(u.get("unread_count", 0)), u.get("last_message_at") or u.get("last_rdv_date") or ""), reverse=False)
+    # re-ordonner : non-lus en premier, le reste trié par date desc
+    users.sort(key=lambda u: (u.get("unread_count", 0) == 0, -( _ts(u.get("last_message_at") or u.get("last_rdv_date") or "")) ))
     return users
+
+
+def _ts(iso_str: str) -> float:
+    """Helper : convertit une date ISO en timestamp pour tri."""
+    if not iso_str:
+        return 0.0
+    try:
+        s = str(iso_str).replace("Z", "+00:00")
+        return datetime.fromisoformat(s).timestamp()
+    except Exception:
+        return 0.0
 
 
 @api.get("/pro/dossier/{patient_id}")
