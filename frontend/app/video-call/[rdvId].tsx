@@ -24,12 +24,15 @@ import {
   ClientRoleType,
   createAgoraRtcEngine,
 } from "../../lib/agora";
+import { WebAgoraClient, WEB_AGORA_AVAILABLE } from "../../lib/agoraWeb";
+import WebVideoView from "../../components/WebVideoView";
 
-// ----- Détection environnement (Expo Go ne supporte PAS les modules natifs) -----
+// ----- Détection environnement -----
 const isExpoGo = Constants.appOwnership === "expo";
 const isWeb = Platform.OS === "web";
-// AgoraSDK est null sur web ; sur iOS/Android, il est résolu via lib/agora.native.ts
-// mais Expo Go n'inclut pas le code natif (besoin d'un dev build / production build).
+// Sur web, on utilise le SDK Agora Web (agora-rtc-sdk-ng) — pas de Jitsi.
+// Sur mobile build prod → AgoraSDK natif.
+// Sur mobile Expo Go (dev) → Jitsi fallback (code natif indisponible).
 const _agoraInExpoGo = isExpoGo;
 
 // Permissions Android
@@ -73,6 +76,9 @@ export default function VideoCall() {
   const [diagInfo, setDiagInfo] = useState<any>(null);
 
   const engineRef = useRef<any>(null);
+  const webClientRef = useRef<WebAgoraClient | null>(null);
+  const localVideoContainerRef = useRef<any>(null);
+  const remoteVideoContainerRef = useRef<any>(null);
   const timerRef = useRef<any>(null);
   const statusPollRef = useRef<any>(null);
 
@@ -152,10 +158,77 @@ export default function VideoCall() {
       engineRef.current?.release();
     } catch {}
     engineRef.current = null;
+    try {
+      webClientRef.current?.leave();
+    } catch {}
+    webClientRef.current = null;
     setInCall(false);
     setRemoteUid(null);
     setAgoraReady(false);
   }, []);
+
+  // ---- Démarrer l'appel via Agora WEB (navigateur desktop) ----
+  const startWebAgoraCall = async () => {
+    if (!rdvId) return;
+    setLoading(true);
+    try {
+      // 1. Récupérer le token sécurisé (même endpoint que mobile)
+      const { data } = await api.post(`/teleconsultation/agora-token/${rdvId}`);
+      const info: AgoraToken = data;
+
+      // 2. Instancier le client web
+      const client = new WebAgoraClient();
+      webClientRef.current = client;
+
+      // 3. Handlers d'événements
+      client.setCallbacks({
+        onRemoteJoined: (user) => {
+          setRemoteUid(Number(user.uid));
+          // Lire l'audio distant immédiatement
+          client.playRemoteAudio(user);
+          // La vidéo distante sera lue quand le conteneur sera disponible (useEffect ci-dessous)
+          setTimeout(() => {
+            if (remoteVideoContainerRef.current) {
+              client.playRemoteVideo(remoteVideoContainerRef.current, user);
+            }
+          }, 100);
+        },
+        onRemoteLeft: (user) => {
+          if (Number(user.uid) === remoteUid) setRemoteUid(null);
+        },
+        onNetworkQuality: (up, _down) => {
+          setNetworkQuality(up);
+        },
+        onError: (err) => {
+          console.warn("[Agora Web] error", err);
+        },
+      });
+
+      // 4. Rejoindre le canal (même appId/channel/token que mobile → interop totale)
+      await client.join(info.app_id, info.channel, info.token, info.uid);
+
+      setAgoraReady(true);
+      setInCall(true);
+      setLoading(false);
+
+      // 5. Jouer la prévisualisation locale dès que le conteneur est monté
+      setTimeout(() => {
+        if (localVideoContainerRef.current) {
+          client.playLocalVideo(localVideoContainerRef.current);
+        }
+      }, 100);
+
+      // 6. Sonner l'autre participant
+      api.post(`/teleconsultation/ring/${rdvId}`).catch(() => {});
+    } catch (e: any) {
+      Alert.alert(
+        "Erreur Agora Web",
+        formatError(e) + "\n\nVérifiez que vous avez autorisé l'accès au micro et à la caméra dans votre navigateur.",
+      );
+      setLoading(false);
+      cleanupCall();
+    }
+  };
 
   // ---- Démarrer l'appel via Agora ----
   const startAgoraCall = async () => {
@@ -235,22 +308,32 @@ export default function VideoCall() {
     } finally { setLoading(false); }
   };
 
-  // ---- Contrôles d'appel ----
+  // ---- Contrôles d'appel (supportent mobile natif + web) ----
   const toggleMute = () => {
-    if (!engineRef.current) return;
-    engineRef.current.muteLocalAudioStream(!muted);
-    setMuted(!muted);
+    const newMuted = !muted;
+    if (engineRef.current) {
+      engineRef.current.muteLocalAudioStream(newMuted);
+    } else if (webClientRef.current) {
+      webClientRef.current.setAudioEnabled(!newMuted);
+    }
+    setMuted(newMuted);
   };
 
   const toggleCamera = () => {
-    if (!engineRef.current) return;
-    engineRef.current.muteLocalVideoStream(!cameraOff);
-    setCameraOff(!cameraOff);
+    const newCameraOff = !cameraOff;
+    if (engineRef.current) {
+      engineRef.current.muteLocalVideoStream(newCameraOff);
+    } else if (webClientRef.current) {
+      webClientRef.current.setVideoEnabled(!newCameraOff);
+    }
+    setCameraOff(newCameraOff);
   };
 
   const switchCamera = () => {
-    if (!engineRef.current) return;
-    try { engineRef.current.switchCamera(); } catch {}
+    // switchCamera n'est pertinent que sur mobile (avant/arrière)
+    if (engineRef.current) {
+      try { engineRef.current.switchCamera(); } catch {}
+    }
   };
 
   const endCall = () => {
@@ -275,15 +358,23 @@ export default function VideoCall() {
     networkQuality <= 4 ? "Moyen" : "Faible";
 
   // ===== EN APPEL : interface plein écran =====
-  if (inCall && agoraReady && AgoraSDK) {
+  // Accepte le path natif (AgoraSDK + engine) OU le path web (WebAgoraClient)
+  if (inCall && agoraReady && (AgoraSDK || webClientRef.current)) {
     return (
       <View style={styles.callContainer}>
         {/* Vidéo distante (plein écran) */}
         {remoteUid ? (
-          <RtcSurfaceView
-            style={StyleSheet.absoluteFillObject}
-            canvas={{ uid: remoteUid }}
-          />
+          isWeb ? (
+            <WebVideoView
+              ref={remoteVideoContainerRef}
+              style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%" }}
+            />
+          ) : (
+            <RtcSurfaceView
+              style={StyleSheet.absoluteFillObject}
+              canvas={{ uid: remoteUid }}
+            />
+          )
         ) : (
           <View style={[StyleSheet.absoluteFillObject, styles.waitingScreen]}>
             <LinearGradient colors={["#0F172A", "#1E293B"]} style={StyleSheet.absoluteFillObject} />
@@ -297,10 +388,14 @@ export default function VideoCall() {
         {/* Vidéo locale (PIP en haut à droite) */}
         {!cameraOff && (
           <View style={styles.localVideoBox}>
-            <RtcSurfaceView
-              style={styles.localVideo}
-              canvas={{ uid: 0 }}
-            />
+            {isWeb ? (
+              <WebVideoView ref={localVideoContainerRef} style={{ width: "100%", height: "100%" }} />
+            ) : (
+              <RtcSurfaceView
+                style={styles.localVideo}
+                canvas={{ uid: 0 }}
+              />
+            )}
           </View>
         )}
         {cameraOff && (
@@ -336,9 +431,12 @@ export default function VideoCall() {
               <Ionicons name={cameraOff ? "videocam-off" : "videocam"} size={24} color="#fff" />
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={switchCamera} style={styles.ctrlBtn}>
-              <Ionicons name="camera-reverse" size={24} color="#fff" />
-            </TouchableOpacity>
+            {/* Switch camera : mobile uniquement */}
+            {!isWeb && (
+              <TouchableOpacity onPress={switchCamera} style={styles.ctrlBtn}>
+                <Ionicons name="camera-reverse" size={24} color="#fff" />
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity onPress={endCall} style={[styles.ctrlBtn, styles.endBtn]}>
               <Ionicons name="call" size={24} color="#fff" style={{ transform: [{ rotate: "135deg" }] }} />
@@ -359,7 +457,11 @@ export default function VideoCall() {
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Téléconsultation</Text>
           <Text style={styles.sub}>
-            {AgoraSDK ? "Visio HD sécurisée — Agora" : "Visio sécurisée — Jitsi (mode développement)"}
+            {AgoraSDK
+              ? "Visio HD sécurisée — Agora"
+              : isWeb && WEB_AGORA_AVAILABLE
+                ? "Visio HD sécurisée — Agora Web"
+                : "Visio sécurisée — Jitsi (mode développement)"}
           </Text>
         </View>
       </View>
@@ -393,11 +495,13 @@ export default function VideoCall() {
         <Text style={styles.bigSub}>
           {AgoraSDK
             ? "Vidéo HD optimisée pour les réseaux mobiles 3G+. Chiffrement bout-en-bout."
-            : "L'appel sera ouvert dans le navigateur (mode développement)."}
+            : isWeb && WEB_AGORA_AVAILABLE
+              ? "Vidéo HD dans votre navigateur. Autorisez l'accès au micro et à la caméra."
+              : "L'appel sera ouvert dans le navigateur (mode développement)."}
         </Text>
 
-        {/* Avertissement Expo Go */}
-        {!AgoraSDK && (
+        {/* Avertissement Expo Go (uniquement mobile sans AgoraSDK) */}
+        {!AgoraSDK && !isWeb && (
           <View style={styles.warningBox}>
             <Ionicons name="information-circle" size={18} color="#F59E0B" />
             <Text style={styles.warningText}>
@@ -434,7 +538,13 @@ export default function VideoCall() {
         {/* Bouton conditionnel selon la fenêtre */}
         {windowInfo?.available ? (
           <TouchableOpacity
-            onPress={AgoraSDK ? startAgoraCall : startJitsiCall}
+            onPress={
+              AgoraSDK
+                ? startAgoraCall
+                : isWeb && WEB_AGORA_AVAILABLE
+                  ? startWebAgoraCall
+                  : startJitsiCall
+            }
             disabled={loading}
             style={{ marginTop: 24, alignSelf: "stretch" }}
             testID="start-call-btn"
