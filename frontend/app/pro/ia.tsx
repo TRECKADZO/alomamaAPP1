@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, TextInput, ActivityIndicator } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -18,6 +18,7 @@ const PROMPTS = [
 
 export default function AssistantIAPro() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<any[]>([
     { role: "assistant", content: "Bonjour Docteur ! Je suis votre assistant IA spécialisé en santé maternelle et pédiatrique. Comment puis-je vous aider ?" },
@@ -69,7 +70,11 @@ export default function AssistantIAPro() {
         ))}
       </ScrollView>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={80}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
+      >
         <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: SPACING.lg, gap: 10 }}>
           {messages.map((m, i) => (
             <View key={i} style={[styles.msgBubble, m.role === "user" ? styles.msgUser : styles.msgBot]}>
@@ -78,9 +83,17 @@ export default function AssistantIAPro() {
           ))}
           {loading && <View style={[styles.msgBubble, styles.msgBot]}><ActivityIndicator color={COLORS.primary} /></View>}
         </ScrollView>
-        <View style={styles.inputRow}>
-          <TextInput style={styles.input} value={input} onChangeText={setInput} placeholder="Posez votre question clinique..." placeholderTextColor={COLORS.textMuted} multiline />
-          <TouchableOpacity onPress={() => send()} disabled={loading}>
+        <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, SPACING.md) }]}>
+          <TextInput
+            style={styles.input}
+            value={input}
+            onChangeText={setInput}
+            placeholder="Posez votre question clinique..."
+            placeholderTextColor={COLORS.textMuted}
+            multiline
+            testID="ia-pro-input"
+          />
+          <TouchableOpacity onPress={() => send()} disabled={loading} testID="ia-pro-send-btn">
             <LinearGradient colors={["#A855F7", "#6366F1"]} style={styles.sendBtn}>
               <Ionicons name="send" size={18} color="#fff" />
             </LinearGradient>
