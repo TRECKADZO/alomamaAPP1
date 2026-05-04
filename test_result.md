@@ -2190,11 +2190,11 @@ test_plan:
 backend:
   - task: "Pro Patients enrichissement messagerie (unread_count, last_message, tri non-lus)"
     implemented: true
-    working: "NA"
+    working: true
     file: "/app/backend/server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
@@ -2204,32 +2204,36 @@ backend:
           - last_message (preview 80 chars, "📎 <nom>" si pièce jointe)
           - last_message_at (ISO timestamp) et last_message_from_me (bool)
           Tri : patientes avec unread en premier, puis par dernier message desc.
-          Ajouté helper _ts().
-          À TESTER : GET /api/pro/patients avec pro ayant 2 patientes :
-            - patiente A : 2 messages non-lus du pro
-            - patiente B : 1 message lu reçu
-          Vérifier unread_count=2/0, tri B après A, last_message cohérent.
+      - working: true
+        agent: "testing"
+        comment: |
+          15/15 PASS. Nouveaux champs (unread_count, last_message, last_message_at,
+          last_message_from_me) correctement peuplés. Champs existants préservés.
+          Flow mark-read: unread_count passe de 2 → 0 après GET /messages/{id}.
+          Sort test non exécuté (1 seule patiente dans l'historique RDV) mais
+          la clé de tri est correcte dans le code (L2287-2289).
 
   - task: "Messagerie : pièce jointe (image/PDF base64)"
     implemented: true
-    working: "NA"
+    working: true
     file: "/app/backend/server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
         comment: |
           MessageIn étendu avec attachment_base64 + attachment_name + attachment_mime.
-          POST /api/messages accepte :
-           - texte seul (comportement classique)
-           - pièce jointe seule (content="")
-           - texte + pièce jointe
-           - refuse 400 si content vide ET pas d'attachment
-          Notification push : preview texte OU "📎 <nom>" si pas de texte.
-          À TESTER : 4 scénarios ci-dessus + vérifier que le doc retourné contient
-          bien attachment_base64/name/mime.
+          POST /api/messages accepte texte seul / attachment seul / les deux,
+          refuse 400 si les deux vides. Preview notif : texte OU "📎 <nom>".
+      - working: true
+        agent: "testing"
+        comment: |
+          27/27 PASS. Tous les scénarios validés : texte seul (régression OK),
+          texte+image, attachment seul content vide, 400 si both vides, retrieval
+          via GET /messages/{id} expose correctement attachment_base64/name/mime.
+
 
 
 
