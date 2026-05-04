@@ -7155,6 +7155,132 @@ async def centre_membres(user=Depends(require_roles("centre_sante"))):
     return pros
 
 
+# ----------------------------------------------------------------------
+# Messagerie Centre : contacts (pros membres + patientes du centre)
+# ----------------------------------------------------------------------
+async def _enrich_messaging_signals(other_id: str, me_id: str) -> dict:
+    """Helper: retourne les signaux de messagerie entre `me_id` et `other_id`."""
+    last_msg = await db.messages.find_one(
+        {
+            "$or": [
+                {"from_id": other_id, "to_id": me_id},
+                {"from_id": me_id, "to_id": other_id},
+            ]
+        },
+        {"_id": 0},
+        sort=[("created_at", -1)],
+    )
+    unread = await db.messages.count_documents(
+        {"from_id": other_id, "to_id": me_id, "read": False}
+    )
+    if last_msg:
+        preview = (last_msg.get("content") or "").strip()
+        if not preview and last_msg.get("attachment_name"):
+            preview = f"📎 {last_msg['attachment_name']}"
+        return {
+            "last_message": preview[:80],
+            "last_message_at": last_msg.get("created_at"),
+            "last_message_from_me": last_msg.get("from_id") == me_id,
+            "unread_count": unread,
+        }
+    return {
+        "last_message": None,
+        "last_message_at": None,
+        "last_message_from_me": None,
+        "unread_count": unread,
+    }
+
+
+@api.get("/centre/contacts")
+async def centre_contacts(user=Depends(require_roles("centre_sante"))):
+    """
+    Tous les contacts joignables par le centre :
+    - Ses pros membres (type="pro")
+    - Toutes les patientes suivies par ses pros, dédupliquées (type="patient")
+
+    Chaque contact est enrichi avec : unread_count, last_message, last_message_at,
+    last_message_from_me. Tri : non-lus en premier, puis dernier message desc.
+    """
+    c = await db.centres.find_one({"owner_id": user["id"]})
+    if not c:
+        return {"pros": [], "patientes": []}
+
+    membres_ids = c.get("membres_pro", [])
+
+    # 1. Pros membres
+    pros_raw = await db.users.find(
+        {"id": {"$in": membres_ids}}, {"_id": 0, "password_hash": 0}
+    ).to_list(500)
+    pros = []
+    for p in pros_raw:
+        signals = await _enrich_messaging_signals(p["id"], user["id"])
+        pros.append({
+            "id": p["id"],
+            "name": p.get("name"),
+            "phone": p.get("phone"),
+            "email": p.get("email"),
+            "specialite": p.get("specialite"),
+            "type": "pro",
+            **signals,
+        })
+
+    # 2. Patientes : dédupliquées via les RDV de tous les pros membres
+    patient_ids: set = set()
+    if membres_ids:
+        async for r in db.rdv.find(
+            {"pro_id": {"$in": membres_ids}}, {"maman_id": 1, "_id": 0}
+        ):
+            patient_ids.add(r["maman_id"])
+
+    patientes = []
+    if patient_ids:
+        patientes_raw = await db.users.find(
+            {"id": {"$in": list(patient_ids)}}, {"_id": 0, "password_hash": 0}
+        ).to_list(2000)
+        for u in patientes_raw:
+            uid = u["id"]
+            gross = await db.grossesses.find_one({"user_id": uid, "active": True}, {"_id": 0})
+            enfants_count = await db.enfants.count_documents({"user_id": uid})
+            grossesse_sa = None
+            if gross and gross.get("date_debut"):
+                try:
+                    dt_str = str(gross["date_debut"]).replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(dt_str)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    weeks = int((datetime.now(timezone.utc) - dt).total_seconds() / (7 * 24 * 3600))
+                    grossesse_sa = max(0, min(weeks, 42))
+                except Exception:
+                    pass
+            signals = await _enrich_messaging_signals(uid, user["id"])
+            patientes.append({
+                "id": uid,
+                "name": u.get("name"),
+                "phone": u.get("phone"),
+                "email": u.get("email"),
+                "type": "patient",
+                "has_grossesse": bool(gross),
+                "grossesse_sa": grossesse_sa,
+                "enfants_count": enfants_count,
+                **signals,
+            })
+
+    # Tri : non-lus en premier, puis dernier message le plus récent
+    def _ts_local(s: str) -> float:
+        if not s:
+            return 0.0
+        try:
+            return datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
+    sort_key = lambda x: (x.get("unread_count", 0) == 0, -_ts_local(x.get("last_message_at") or ""))
+    pros.sort(key=sort_key)
+    patientes.sort(key=sort_key)
+
+    return {"pros": pros, "patientes": patientes}
+
+
 class CentreActionIn(BaseModel):
     pro_id: str
 

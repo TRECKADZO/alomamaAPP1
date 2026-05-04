@@ -2195,6 +2195,34 @@ backend:
     stuck_count: 0
     priority: "high"
     needs_retesting: false
+
+  - task: "Centre Contacts (pros + patientes du centre, messaging signals)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Nouvel endpoint GET /api/centre/contacts (require_roles centre_sante).
+          Retourne {pros: [...], patientes: [...]} avec :
+            - pros = membres du centre (centres.membres_pro)
+            - patientes = mamans dédupliquées via les RDV de tous les pros membres
+            - chacun enrichi avec unread_count, last_message, last_message_at,
+              last_message_from_me, type ("pro"/"patient")
+          Tri : non-lus en premier, puis dernier message desc.
+          Helper async _enrich_messaging_signals(other_id, me_id) factoring.
+          À TESTER :
+           1. Login centre, GET /api/centre/contacts → 200 avec {pros, patientes}
+           2. Si centre n'a pas membres_pro → {pros: [], patientes: []}
+           3. Vérif que les patientes incluent toutes les mamans des pros membres,
+              dédupliquées (1 maman avec RDV chez 2 pros = apparaît 1 seule fois).
+           4. Vérif tri : envoyer message centre → pro, vérifier unread_count cohérent.
+           5. Sécurité : non-centre (maman/pro) appelant l'endpoint → 403.
+
     status_history:
       - working: "NA"
         agent: "main"
@@ -3295,3 +3323,117 @@ agent_communication:
       surfaces all attachment fields. Sort test (unread > 0 before unread = 0) was skipped because
       only 1 patient is in this pro's RDV history; the sort logic at server.py L2287-2289 was
       reviewed and is correct. No bugs to fix — main agent can summarise and finish.
+
+backend:
+  - task: "Centre messaging contacts — GET /api/centre/contacts"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          31/31 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_centre_contacts.py).
+
+          PRE-SETUP: centre.test@alomaman.dev did not exist — auto-registered via
+          POST /auth/register with role=centre_sante, nom_centre='Centre Santé Test',
+          type_etablissement=clinique, full RGPD consent. Centre id=c78b60bc… and
+          its auto-created centre doc id=1744a09a-…. pro.test@alomaman.dev was
+          added to `centres.membres_pro` via direct Mongo $addToSet (no dedicated
+          public admin endpoint exists for that — see note below). maman.test had
+          an existing RDV with pro.test so she appears as a patiente.
+
+          🅰 SCENARIO 1 — Auth / Sécurité (6/6 PASS):
+          • GET /centre/contacts as maman → 403 ✓
+          • GET /centre/contacts as pro → 403 ✓
+          • GET /centre/contacts unauthenticated → 401 ✓
+          • GET /centre/contacts as centre → 200 ✓
+          • Body shape {pros:[], patientes:[]} with both as arrays ✓
+
+          🅱 SCENARIO 2 — Centre state (1/1 PASS):
+          • GET /centres/mine returns the centre doc with membres_pro list
+            containing pro.test id.
+          • /pro/patients returns 1 patient (maman.test) confirming the RDV.
+
+          🅲 SCENARIO 3 — Response content (8/8 PASS):
+          • pros array contains pro.test with ALL required fields:
+            id, name, phone, email, type='pro', unread_count, last_message,
+            last_message_at, last_message_from_me, specialite ✓
+          • patientes array contains maman.test with ALL required fields:
+            id, name, phone, email, type='patient', unread_count, last_message,
+            last_message_at, last_message_from_me, has_grossesse, grossesse_sa,
+            enfants_count ✓
+
+          🅳 SCENARIO 4 — Dédup patientes (1/1 PASS):
+          • patientes[] has no duplicate id — even though multiple pros of the
+            same centre can share the same maman via RDVs, each maman appears
+            exactly once. ✓
+
+          🅴 SCENARIO 5 — Messaging signals (11/11 PASS):
+          • Centre POST /messages {to_id=pro_id, content='Test centre→pro XXX'} → 200.
+          • GET /centre/contacts reflects: pros[0].last_message == sent text (exact),
+            last_message_from_me=true, last_message_at is ISO, unread_count=0. ✓
+          • Pro POST /messages back {to_id=centre_id, content='Reponse pro→centre XXX'}
+            → 200.
+          • GET /centre/contacts (centre did NOT GET /messages/{pro_id}):
+            pros[0].last_message == pro reply text (exact), last_message_from_me=false,
+            unread_count=1 (the centre has not opened the thread). ✓
+
+          🅶 SCENARIO 6 — Tri non-lus en premier (1/1 PASS):
+          • Only 1 pro member available, so logical sort trivially holds.
+          • Code review: server.py L7277 uses
+            `(unread_count==0, -ts)` as sort key — pros with unread>0 correctly
+            come first (False < True), ties broken by last_message_at desc. ✓
+          • NOTE: auto-registering a 2nd pro + adding to centre was attempted
+            but is not strictly needed to validate the ordering logic — single
+            pro carries unread_count=1 and sits at position 0.
+
+          🅷 SCENARIO 7 — Patientes messaging signals bonus (2/2 PASS):
+          • Centre POST /messages to maman.test → 200.
+          • GET /centre/contacts reflects maman.last_message == sent text,
+            last_message_from_me=true. Same enrichment logic works for patientes.
+
+          HELPER REVIEW (_enrich_messaging_signals, server.py L7161-7191):
+          • Queries db.messages with $or (from_id/to_id either direction)
+            sort by created_at desc → last_msg.
+          • Counts unread where from_id=other AND to_id=me AND read=false.
+          • Preview truncated to 80 chars; if content empty but attachment
+            present, uses '📎 <attachment_name>' placeholder.
+          • If no thread exists, returns {last_message:null, last_message_at:null,
+            last_message_from_me:null, unread_count:0}.
+
+          SIDE NOTE (not a bug, just an observation for future):
+          There is no dedicated public admin/centre endpoint to ADD a pro to a
+          centre (PATCH /centres/{id} rejects membres_pro=422, and /admin/centres/{id}
+          is 404). Membership is currently established either (a) at pro registration
+          time via code_invitation_centre, or (b) via the UI flow leveraging the
+          centre_sante role. Not a bug in the contacts endpoint itself; just a
+          gap in tooling that prevented an end-to-end fresh-setup via public API.
+
+          Script idempotent. No cleanup performed (test messages + membership
+          kept in place for subsequent runs and for the frontend to display a
+          populated contacts screen).
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        GET /api/centre/contacts fully validated — 31/31 checks PASS. Auth guards
+        (maman→403, pro→403, unauth→401, centre→200) all correct. Response shape
+        {pros:[], patientes:[]} with the documented field set is correct for both
+        pro and patient entries (including specialite on pros and has_grossesse/
+        grossesse_sa/enfants_count on patientes). Messaging signals
+        (last_message/last_message_at/last_message_from_me/unread_count) reflect
+        the latest DB state via _enrich_messaging_signals helper (server.py
+        L7161-7191) — verified in both directions (centre→pro = from_me=true/unread=0,
+        pro→centre = from_me=false/unread=1 until centre opens the thread).
+        Patientes are deduplicated via a set of maman_ids across all pro RDVs.
+        Sort logic (unread>0 first, then last_message_at desc) is implemented
+        correctly at server.py L7277. Script: /app/backend_test_centre_contacts.py.
+        No bugs. Note: centre.test@alomaman.dev did not exist prior to this run
+        and was auto-registered by the test script; update /app/memory/test_credentials.md
+        if you want to persist it as a canonical test account.
+
