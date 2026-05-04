@@ -2198,30 +2198,24 @@ backend:
 
   - task: "Centre Contacts (pros + patientes du centre, messaging signals)"
     implemented: true
-    working: "NA"
+    working: true
     file: "/app/backend/server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
+        comment: "Nouvel endpoint GET /api/centre/contacts retournant {pros, patientes} dédupliqués + messaging signals."
+      - working: true
+        agent: "testing"
         comment: |
-          Nouvel endpoint GET /api/centre/contacts (require_roles centre_sante).
-          Retourne {pros: [...], patientes: [...]} avec :
-            - pros = membres du centre (centres.membres_pro)
-            - patientes = mamans dédupliquées via les RDV de tous les pros membres
-            - chacun enrichi avec unread_count, last_message, last_message_at,
-              last_message_from_me, type ("pro"/"patient")
-          Tri : non-lus en premier, puis dernier message desc.
-          Helper async _enrich_messaging_signals(other_id, me_id) factoring.
-          À TESTER :
-           1. Login centre, GET /api/centre/contacts → 200 avec {pros, patientes}
-           2. Si centre n'a pas membres_pro → {pros: [], patientes: []}
-           3. Vérif que les patientes incluent toutes les mamans des pros membres,
-              dédupliquées (1 maman avec RDV chez 2 pros = apparaît 1 seule fois).
-           4. Vérif tri : envoyer message centre → pro, vérifier unread_count cohérent.
-           5. Sécurité : non-centre (maman/pro) appelant l'endpoint → 403.
+          31/31 PASS. Auth (403/403/401/200), shape, contenu (specialite/has_grossesse/etc),
+          déduplication patientes, signaux centre↔pro et centre↔maman, tri vérifié par
+          inspection du code (1 seul pro dans setup live).
+          Note: centre.test@alomaman.dev a été auto-créé par le test script.
+          Note: pro.test a été ajouté à centres.membres_pro via Mongo directe (pas d'endpoint public).
+
 
     status_history:
       - working: "NA"
