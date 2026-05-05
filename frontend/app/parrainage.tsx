@@ -142,15 +142,16 @@ export default function Parrainage() {
           </View>
         </View>
 
-        {/* 📱 Lien Google Play inclus dans chaque partage */}
+        {/* 📱🌐 Liens Google Play + Web inclus dans chaque partage */}
         {PLAY_STORE_URL ? (
           <View style={styles.playStoreCard}>
-            <Ionicons name="logo-google-playstore" size={22} color="#10B981" />
+            <Ionicons name="link" size={22} color="#10B981" />
             <View style={{ flex: 1 }}>
-              <Text style={styles.playStoreTitle}>Lien Google Play inclus ✓</Text>
+              <Text style={styles.playStoreTitle}>Liens d&apos;installation inclus ✓</Text>
               <Text style={styles.playStoreText}>
-                Le lien de téléchargement est automatiquement ajouté à votre invitation.
-                Vos filleules pourront installer l&apos;app en 1 clic.
+                Le Google Play et le site web <Text style={{ fontWeight: "800" }}>alomaman.com</Text> sont
+                automatiquement ajoutés à votre invitation. Vos filleules pourront installer l&apos;app
+                ou l&apos;utiliser dans leur navigateur.
               </Text>
             </View>
           </View>
