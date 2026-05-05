@@ -12,7 +12,9 @@ import {
   BackHandler,
   ToastAndroid,
   Platform,
+  Share,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,6 +24,7 @@ import { api } from "../../lib/api";
 import { cachedGet } from "../../lib/offline";
 import { useNotifications } from "../../lib/notifications-context";
 import { COLORS, IMAGES, RADIUS, SHADOW, SPACING } from "../../constants/theme";
+import { buildShareAppText } from "../../constants/links";
 
 export default function DashboardHome() {
   const { user } = useAuth();
@@ -491,6 +494,21 @@ function ProDash({ user, data, router }: any) {
     const today = new Date();
     return d.toDateString() === today.toDateString();
   });
+
+  // Partage du lien Play Store aux patientes / collègues
+  const inviterPatientes = async () => {
+    const intro = `Bonjour,\n\nJe suis Dr ${user?.name || ""} et j'utilise l'application *À lo Maman* pour accompagner mes patientes enceintes et leurs enfants.\n\nTéléchargez gratuitement l'application pour :\n• Suivre votre grossesse semaine par semaine\n• Partager votre dossier avec moi en toute sécurité\n• Recevoir mes conseils et rappels personnalisés\n• Prendre RDV en quelques clics`;
+    const msg = buildShareAppText(intro);
+    try {
+      if (Platform.OS === "web") {
+        await Clipboard.setStringAsync(msg);
+        Alert.alert("✓ Message copié", "Collez-le dans WhatsApp, SMS, e-mail… pour inviter vos patientes.");
+      } else {
+        await Share.share({ message: msg, title: "Inviter mes patientes sur À lo Maman" });
+      }
+    } catch {}
+  };
+
   return (
     <View>
       <LinearGradient colors={["#DBEAFE", "#BFDBFE"]} style={styles.welcomeCard}>
@@ -559,6 +577,7 @@ function ProDash({ user, data, router }: any) {
           <QuickAction icon="chatbubbles" label="Messages" onPress={() => router.push("/(tabs)/messages")} color="#3B82F6" />
           <QuickAction icon="chatbubbles-outline" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} color="#10B981" />
           <QuickAction icon="videocam" label="Téléconsult." onPress={() => router.push("/(tabs)/rdv")} color="#EC4899" />
+          <QuickAction icon="share-social" label="Inviter" onPress={inviterPatientes} color="#10B981" />
           <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} color="#F59E0B" />
         </View>
       </View>
@@ -617,6 +636,21 @@ function AdminDash({ user, data, router }: any) {
    DASHBOARD CENTRE DE SANTÉ
    =========================================================== */
 function CentreDash({ user, router }: any) {
+  const centreName = user?.name || "Centre";
+
+  // Partage du lien Play Store aux patientes/pros
+  const inviter = async () => {
+    const intro = `Bonjour,\n\nLe centre *${centreName}* vous invite à rejoindre l'application *À lo Maman*, votre compagnon santé maternelle et pédiatrique.\n\n✓ Suivi grossesse semaine par semaine\n✓ Carnet de santé enfants\n✓ Téléconsultations & RDV en ligne\n✓ Assistant IA & communauté\n✓ Intégration CMU & remboursements`;
+    const msg = buildShareAppText(intro);
+    try {
+      if (Platform.OS === "web") {
+        await Clipboard.setStringAsync(msg);
+        Alert.alert("✓ Message copié", "Collez-le sur WhatsApp, SMS ou e-mail pour inviter vos patientes et pros.");
+      } else {
+        await Share.share({ message: msg, title: "Inviter sur À lo Maman" });
+      }
+    } catch {}
+  };
   const [centre, setCentre] = useState<any>(null);
   const loadCentre = async () => {
     try {
@@ -708,6 +742,7 @@ function CentreDash({ user, router }: any) {
               <QuickAction icon="calendar" label="Agenda" onPress={() => router.push("/centre/calendrier")} color="#3B82F6" />
               <QuickAction icon="pricetag" label="Tarifs" onPress={() => router.push("/centre/tarifs")} color="#10B981" />
               <QuickAction icon="chatbubbles" label="Messages" onPress={() => router.push("/(tabs)/messages")} color="#3B82F6" />
+              <QuickAction icon="share-social" label="Inviter" onPress={inviter} color="#10B981" />
               <QuickAction icon="chatbubbles-outline" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} color="#F59E0B" />
               <QuickAction icon="sparkles" label="Assistant" onPress={() => router.push("/(tabs)/assistant")} color="#EC4899" />
               <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} color="#F59E0B" />

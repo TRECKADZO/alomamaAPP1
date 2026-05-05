@@ -11,6 +11,7 @@ import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api } from "../lib/api";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
+import { buildShareAppText, PLAY_STORE_URL } from "../constants/links";
 
 export default function Parrainage() {
   const router = useRouter();
@@ -39,10 +40,12 @@ export default function Parrainage() {
   const shareInvite = async () => {
     if (!data?.share_text) return;
     try {
-      const msg = `${data.share_text}\n\n${data.share_url || ""}`.trim();
+      // Compose : texte original + lien parrainage spécifique (share_url) + lien Play Store
+      const intro = `${data.share_text}\n\n${data.share_url || ""}`.trim();
+      const msg = buildShareAppText(intro);
       if (Platform.OS === "web") {
         await Clipboard.setStringAsync(msg);
-        Alert.alert("Message copié", "Collez-le dans WhatsApp, SMS, Messenger…");
+        Alert.alert("Message copié", "Le message complet (avec le lien Google Play) a été copié. Collez-le dans WhatsApp, SMS, Messenger…");
       } else {
         await Share.share({ message: msg });
       }
@@ -139,6 +142,20 @@ export default function Parrainage() {
           </View>
         </View>
 
+        {/* 📱 Lien Google Play inclus dans chaque partage */}
+        {PLAY_STORE_URL ? (
+          <View style={styles.playStoreCard}>
+            <Ionicons name="logo-google-playstore" size={22} color="#10B981" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.playStoreTitle}>Lien Google Play inclus ✓</Text>
+              <Text style={styles.playStoreText}>
+                Le lien de téléchargement est automatiquement ajouté à votre invitation.
+                Vos filleules pourront installer l&apos;app en 1 clic.
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
         {/* Paliers */}
         <View style={styles.milestonesCard}>
           <Text style={styles.howTitle}>🏆 Paliers bonus</Text>
@@ -203,6 +220,10 @@ const styles = StyleSheet.create({
   howRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 10, gap: 10 },
   howNum: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#EC4899", color: "#fff", textAlign: "center", lineHeight: 24, fontWeight: "800", fontSize: 13 },
   howText: { flex: 1, fontSize: 13, color: COLORS.textPrimary, lineHeight: 18 },
+
+  playStoreCard: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 14, padding: 14, backgroundColor: "#ECFDF5", borderRadius: RADIUS.lg, borderWidth: 1, borderColor: "#A7F3D0" },
+  playStoreTitle: { fontSize: 13, fontWeight: "800", color: "#065F46" },
+  playStoreText: { fontSize: 11, color: "#047857", marginTop: 3, lineHeight: 15 },
 
   milestonesCard: { marginTop: 14, padding: 16, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border },
   milestoneRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
