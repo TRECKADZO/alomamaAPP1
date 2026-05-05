@@ -7753,7 +7753,7 @@ async def pro_patient_recherche(payload: dict, user=Depends(require_roles("profe
         "access_token": None,
         "access_expires_at": None,
         "created_at": now.isoformat(),
-        "expires_at": (now + timedelta(minutes=5)).isoformat(),  # la demande elle-même expire en 5 min
+        "expires_at": (now + timedelta(minutes=15)).isoformat(),  # la demande elle-même expire en 15 min
     }
     await db.access_requests.insert_one(demande)
     demande.pop("_id", None)

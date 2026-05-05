@@ -58,13 +58,14 @@ export default function DashboardHome() {
   const load = async () => {
     try {
       if (user?.role === "maman") {
-        const [g, enfants, rdv, rem] = await Promise.all([
+        const [g, enfants, rdv, rem, demandes] = await Promise.all([
           cachedGet("/grossesse").catch(() => ({ data: null })),
           cachedGet("/enfants").catch(() => ({ data: [] })),
           cachedGet("/rdv").catch(() => ({ data: [] })),
           cachedGet("/reminders").catch(() => ({ data: [] })),
+          api.get("/partage/demandes-recues").catch(() => ({ data: [] })),
         ]);
-        setData({ grossesse: g.data, enfants: enfants.data, rdv: rdv.data, reminders: rem.data });
+        setData({ grossesse: g.data, enfants: enfants.data, rdv: rdv.data, reminders: rem.data, demandes: demandes.data });
       } else if (user?.role === "professionnel") {
         const [patients, rdv] = await Promise.all([
           cachedGet("/pro/patients").catch(() => ({ data: [] })),
@@ -130,6 +131,13 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
   const reminders = (data.reminders || []).filter((r: any) => !r.done).slice(0, 3);
   const documents = data.documents || [];
 
+  // 🔐 Demandes d'accès pro au dossier médical — en attente et non expirées
+  const demandesPending = (data.demandes || []).filter((d: any) => {
+    if (d.status !== "pending") return false;
+    if (!d.expires_at) return true;
+    try { return new Date(d.expires_at).getTime() > Date.now(); } catch { return true; }
+  });
+
   // Calculs grossesse
   const weeksRaw = g?.date_debut
     ? Math.floor((Date.now() - new Date(g.date_debut).getTime()) / (7 * 24 * 3600 * 1000))
@@ -162,6 +170,39 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
 
   return (
     <View>
+      {/* 🔴 BANNIÈRE URGENTE — Demande d'accès au dossier médical */}
+      {demandesPending.length > 0 && (
+        <TouchableOpacity
+          onPress={() => router.push("/partage-dossier")}
+          style={styles.accessRequestBanner}
+          testID="access-request-banner"
+        >
+          <LinearGradient
+            colors={["#EF4444", "#DC2626"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.accessRequestGradient}
+          >
+            <View style={styles.accessRequestIcon}>
+              <Ionicons name="shield-checkmark" size={22} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.accessRequestTitle}>
+                🔐 {demandesPending.length} demande{demandesPending.length > 1 ? "s" : ""} d&apos;accès en attente
+              </Text>
+              <Text style={styles.accessRequestSub} numberOfLines={2}>
+                Dr {demandesPending[0].pro_nom || "un professionnel"} souhaite consulter {demandesPending.length > 1 ? "des dossiers" : "votre dossier"}.
+                Touchez pour valider.
+              </Text>
+            </View>
+            <View style={styles.accessRequestCta}>
+              <Text style={styles.accessRequestCtaText}>Valider</Text>
+              <Ionicons name="chevron-forward" size={16} color="#DC2626" />
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
+
       {/* Bienvenue — gradient pink-purple comme la source */}
       <LinearGradient
         colors={["#FCE7F3", "#F3E8FF"]}
@@ -758,6 +799,42 @@ function QuickAction({ icon, label, onPress, testID, color = COLORS.primary }: a
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bgPrimary },
   loading: { flex: 1, backgroundColor: COLORS.bgPrimary, alignItems: "center", justifyContent: "center" },
+
+  // 🔐 Bannière urgente — Demande d'accès au dossier médical (pro → maman)
+  accessRequestBanner: {
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.lg,
+    marginBottom: 8,
+    borderRadius: RADIUS.lg,
+    overflow: "hidden",
+    ...SHADOW,
+  },
+  accessRequestGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+  },
+  accessRequestIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  accessRequestTitle: { color: "#fff", fontWeight: "800", fontSize: 14 },
+  accessRequestSub: { color: "rgba(255,255,255,0.95)", fontSize: 12, marginTop: 3, lineHeight: 16 },
+  accessRequestCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#fff",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  accessRequestCtaText: { color: "#DC2626", fontWeight: "800", fontSize: 12 },
 
   // Welcome card (gradient)
   welcomeCard: {
