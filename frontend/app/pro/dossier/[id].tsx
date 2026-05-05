@@ -1,9 +1,11 @@
 import { useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Modal, KeyboardAvoidingView, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Modal, KeyboardAvoidingView, Platform, Alert, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import { api, formatError } from "../../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
 import DateField from "../../../components/DateField";
@@ -17,6 +19,7 @@ export default function DossierPatient() {
   const [noteModal, setNoteModal] = useState(false);
   const [rappelModal, setRappelModal] = useState(false);
   const [note, setNote] = useState({ date: new Date().toISOString().slice(0, 10), diagnostic: "", traitement: "", notes: "" });
+  const [attachment, setAttachment] = useState<{ base64: string; name: string; mime: string } | null>(null);
   const [rappel, setRappel] = useState(() => {
     // Default: tomorrow at 09:00
     const d = new Date();
@@ -39,13 +42,77 @@ export default function DossierPatient() {
   useFocusEffect(useCallback(() => { load(); }, [id]));
 
   const saveNote = async () => {
-    if (!note.diagnostic && !note.notes) return Alert.alert("Champs", "Ajoutez au moins un diagnostic ou des notes");
+    if (!note.diagnostic && !note.notes && !attachment) return Alert.alert("Champs", "Ajoutez au moins un diagnostic, des notes, ou une pièce jointe");
     try {
-      await api.post("/pro/consultation-notes", { patient_id: id, ...note });
+      await api.post("/pro/consultation-notes", {
+        patient_id: id,
+        ...note,
+        attachment_base64: attachment?.base64,
+        attachment_name: attachment?.name,
+        attachment_mime: attachment?.mime,
+      });
       setNoteModal(false);
       setNote({ date: new Date().toISOString().slice(0, 10), diagnostic: "", traitement: "", notes: "" });
+      setAttachment(null);
       load();
+      Alert.alert("✓ Note enregistrée", "La patiente a été notifiée.");
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
+  };
+
+  // ---- Ajout de pièce jointe (photo caméra / galerie / document PDF) ----
+  const pickAttachmentPhoto = async (fromCamera: boolean) => {
+    try {
+      const perm = fromCamera
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return Alert.alert("Permission refusée", "Autorisez l'accès pour continuer.");
+      const r = fromCamera
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], base64: true, quality: 0.6 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], base64: true, quality: 0.6 });
+      if (r.canceled || !r.assets?.[0]?.base64) return;
+      const asset = r.assets[0];
+      setAttachment({
+        base64: `data:image/jpeg;base64,${asset.base64}`,
+        name: asset.fileName || `photo_${Date.now()}.jpg`,
+        mime: "image/jpeg",
+      });
+    } catch (e: any) {
+      Alert.alert("Erreur", formatError(e));
+    }
+  };
+
+  const pickAttachmentDocument = async () => {
+    try {
+      const r = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/*"],
+        copyToCacheDirectory: true,
+      });
+      if (r.canceled || !r.assets?.[0]) return;
+      const asset = r.assets[0];
+      const FileSystem = await import("expo-file-system/legacy");
+      const b64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: "base64" as any });
+      if (!b64) return Alert.alert("Erreur", "Fichier illisible");
+      setAttachment({
+        base64: `data:${asset.mimeType || "application/pdf"};base64,${b64}`,
+        name: asset.name || "document.pdf",
+        mime: asset.mimeType || "application/pdf",
+      });
+    } catch (e: any) {
+      Alert.alert("Erreur", formatError(e));
+    }
+  };
+
+  const showAttachmentMenu = () => {
+    Alert.alert(
+      "Ajouter une pièce jointe",
+      "Choisissez la source",
+      [
+        { text: "Annuler", style: "cancel" },
+        { text: "📷 Caméra", onPress: () => pickAttachmentPhoto(true) },
+        { text: "🖼️ Galerie", onPress: () => pickAttachmentPhoto(false) },
+        { text: "📄 Document (PDF)", onPress: pickAttachmentDocument },
+      ],
+    );
   };
 
   const saveRappel = async () => {
@@ -215,6 +282,22 @@ export default function DossierPatient() {
                 {n.traitement && <Text style={styles.noteContent}>{n.traitement}</Text>}
                 {n.notes && <Text style={styles.noteLabel}>NOTES</Text>}
                 {n.notes && <Text style={styles.noteContent}>{n.notes}</Text>}
+                {/* Aperçu pièce jointe si présente */}
+                {n.attachment_base64 && (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={styles.noteLabel}>PIÈCE JOINTE</Text>
+                    {n.attachment_mime?.startsWith("image/") ? (
+                      <Image source={{ uri: n.attachment_base64 }} style={styles.noteAttachImg} resizeMode="cover" />
+                    ) : (
+                      <View style={styles.noteAttachFile}>
+                        <Ionicons name="document-text" size={20} color="#DC2626" />
+                        <Text style={{ flex: 1, color: COLORS.textPrimary, fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
+                          {n.attachment_name || "Document"}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
             ))
           )
@@ -251,7 +334,34 @@ export default function DossierPatient() {
               <TextInput style={[styles.input, { height: 80, textAlignVertical: "top" }]} multiline value={note.traitement} onChangeText={(v) => setNote({ ...note, traitement: v })} placeholder="Traitement prescrit, ordonnance..." placeholderTextColor={COLORS.textMuted} />
               <Label text="Notes complémentaires" />
               <TextInput style={[styles.input, { height: 100, textAlignVertical: "top" }]} multiline value={note.notes} onChangeText={(v) => setNote({ ...note, notes: v })} placeholder="Observations, recommandations..." placeholderTextColor={COLORS.textMuted} />
-              <TouchableOpacity onPress={saveNote}>
+
+              {/* Pièce jointe optionnelle */}
+              <Label text="Pièce jointe" />
+              {attachment ? (
+                <View style={styles.attachCard}>
+                  {attachment.mime.startsWith("image/") ? (
+                    <Image source={{ uri: attachment.base64 }} style={styles.attachThumb} />
+                  ) : (
+                    <View style={[styles.attachThumb, { backgroundColor: "#FEE2E2", alignItems: "center", justifyContent: "center" }]}>
+                      <Ionicons name="document-text" size={24} color="#DC2626" />
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.attachName} numberOfLines={1}>{attachment.name}</Text>
+                    <Text style={styles.attachMeta}>{attachment.mime.startsWith("image/") ? "Image" : "Document PDF"}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setAttachment(null)} style={styles.attachRemove}>
+                    <Ionicons name="close-circle" size={22} color={COLORS.error} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity onPress={showAttachmentMenu} style={styles.attachAddBtn} testID="note-attach-btn">
+                  <Ionicons name="attach" size={18} color={COLORS.primary} />
+                  <Text style={styles.attachAddText}>Ajouter photo / document</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity onPress={saveNote} testID="save-note-btn">
                 <LinearGradient colors={["#2DD4BF", "#06B6D4"]} style={styles.btnPrimary}>
                   <Text style={styles.btnPrimaryText}>Enregistrer la note</Text>
                 </LinearGradient>
@@ -346,6 +456,17 @@ const styles = StyleSheet.create({
   modalHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   modalTitle: { fontSize: 18, fontWeight: "800", color: COLORS.textPrimary, flex: 1 },
   input: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: 12, color: COLORS.textPrimary, fontSize: 14 },
+
+  attachAddBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 14, backgroundColor: COLORS.primaryLight, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.primary, borderStyle: "dashed" },
+  attachAddText: { color: COLORS.primary, fontWeight: "700", fontSize: 13 },
+  attachCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: RADIUS.md, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  attachThumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: "#F3F4F6" },
+  attachName: { color: COLORS.textPrimary, fontWeight: "700", fontSize: 13 },
+  attachMeta: { color: COLORS.textSecondary, fontSize: 11, marginTop: 2 },
+  attachRemove: { padding: 4 },
+  noteAttachImg: { width: "100%", height: 180, borderRadius: 10, marginTop: 6, backgroundColor: "#000" },
+  noteAttachFile: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, marginTop: 6, borderRadius: 10, backgroundColor: "#FEF2F2", borderWidth: 1, borderColor: "#FECACA" },
+
   btnPrimary: { paddingVertical: 14, borderRadius: RADIUS.pill, alignItems: "center", marginTop: 18 },
   btnPrimaryText: { color: "#fff", fontWeight: "800", fontSize: 15 },
 });
