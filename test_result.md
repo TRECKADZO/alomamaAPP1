@@ -2181,13 +2181,45 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Pro Patients Enrichment (messaging signals)"
-    - "Messages Attachment Support"
+    - "DMP — Détection Multi-domaine du Précoce"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 backend:
+  - task: "DMP — Catalogue 52 jalons / 7 domaines + endpoints"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py + /app/backend/dmp_data.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Nouveau module DMP (Détection Multi-domaine du Précoce) :
+          - 52 jalons dans 7 domaines (moteur global/fin, langage réceptif/expressif,
+            cognitif, social-émotionnel, autonomie)
+          - Chaque jalon : age_typique (médiane) + age_alerte (seuil retard)
+
+          Endpoints à tester :
+          1. GET /api/dmp/milestones (catalogue + recherche q + filtre domaine)
+          2. GET /api/enfants/{eid}/dmp (status enfant, scores par domaine, alertes)
+             - Maman : 200 si propriétaire de l'enfant ; 403 sinon
+             - Pro : 200 (accès libre, vérif consentement faite ailleurs)
+             - 404 si enfant inexistant
+          3. POST /api/enfants/{eid}/dmp/{milestone_id} (marquer acquis, idempotent)
+          4. DELETE /api/enfants/{eid}/dmp/{milestone_id} (annuler acquisition)
+
+          Cas critiques :
+          - Calcul score : enfant 24 mois marque "mg_court" (age_typique 20) → score
+            moteur_global doit augmenter
+          - Alerte : enfant 30 mois sans "le_premier_mot" (age_alerte 18) → alerte
+            apparaît dans data.alertes
+          - Trop jeune : enfant 5 mois → tous les jalons de 12+ mois ont statut "trop_jeune"
+
+
   - task: "Pro Patients enrichissement messagerie (unread_count, last_message, tri non-lus)"
     implemented: true
     working: true
@@ -3430,4 +3462,84 @@ agent_communication:
         No bugs. Note: centre.test@alomaman.dev did not exist prior to this run
         and was auto-registered by the test script; update /app/memory/test_credentials.md
         if you want to persist it as a canonical test account.
+
+
+backend:
+  - task: "DMP — Détection Multi-domaine du Précoce (milestones catalogue + per-enfant tracking)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/dmp_data.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          51/51 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_dmp.py).
+
+          🅰 GET /api/dmp/milestones (14/14 PASS):
+          • status=200 with auth token. Response shape {domains:[7 items], milestones:[52 items], total:52} exactly.
+          • Each milestone has all required keys: id, domaine, titre, description, age_typique, age_alerte, emoji.
+          • ?q=marche returns only items containing "marche" in titre/description (case-insensitive OR).
+          • ?domaine=cognitif returns exactly 7 items, all with domaine=="cognitif".
+          • Combined ?q=compte&domaine=cognitif applies AND filter correctly.
+
+          🅱 GET /api/enfants/{eid}/dmp — maman owner (13/13 PASS):
+          • Fresh maman + 24mo enfant (date_naissance = today-730d = 2024-05-06, computed age_mois=23) created successfully.
+          • Response contains age_mois, items (52), domains (7), alertes, score_global, enfant.{id,nom,sexe,date_naissance}.
+          • All items have statut ∈ {acquis, en_cours, alerte, trop_jeune}.
+          • Initially, all items have acquis=False.
+          • mg_marche_seul (age_alerte=18) at age_mois=23 → statut="alerte" ✓.
+          • le_premier_mot (age_alerte=18) at age_mois=23 → statut="alerte" ✓.
+          • All items with age_typique>23 → statut="trop_jeune" (no violations).
+          • score_global=0 when no milestone acquired (attendus exist but all at 0 acquis).
+
+          🅲 Auth guards (3/3 PASS):
+          • Different maman (non-owner) → 403 "Accès refusé à ce dossier".
+          • Inexistant enfant_id → 404 "Enfant introuvable".
+          • Pro role → 200 (pros allowed per require_roles("maman", "professionnel")).
+
+          🅳 POST /api/enfants/{eid}/dmp/{milestone_id} (6/6 PASS):
+          • POST mg_court as maman owner → 200 with body {ok:true, milestone_id:"mg_court"}.
+          • Idempotency: POST same milestone twice → 200 both times (upsert via update_one with upsert=True on L4237-4246).
+          • POST XXX_invalid → 404 "Jalon introuvable".
+          • POST as non-owner maman → 403 "Accès refusé".
+
+          🅴 State after POST (3/3 PASS):
+          • GET /dmp returns the acquired milestone with acquis=true, statut="acquis", acquired_at=ISO date (2026-05-06T…).
+
+          🅵 DELETE /api/enfants/{eid}/dmp/{milestone_id} (3/3 PASS):
+          • DELETE acquired milestone → 200 {ok:true}; subsequent GET shows acquis=false again.
+          • DELETE never-acquired milestone → 200 (idempotent, delete_one returns 0 deleted but endpoint still returns ok).
+
+          🅶 Score & alerts logic (4/4 PASS) — enfant 23mo, no acquired:
+          • score_global=0.
+          • alertes contains mg_assis_seul (age_alerte=10), mg_marche_seul (18), le_premier_mot (18) — all expected items present.
+          • After POST-ing all 33 milestones with age_typique≤23: score_global=100 and alertes=[] exactly.
+
+          IMPLEMENTATION REVIEW (server.py L4169-4259 + dmp_data.py):
+          • DOMAINS contains exactly 7 entries with key/label/emoji/color.
+          • MILESTONES contains exactly 52 entries (8+8+7+8+7+8+6 by domain).
+          • compute_dmp_status logic correct: age_mois>age_alerte AND not acquired → "alerte"; age_mois>=age_typique AND not acquired → "en_cours"; age_mois<age_typique → "trop_jeune".
+          • Score per domain = acquis/len(age_typique≤age_mois) → 100% when all attendus are acquired.
+          • score_global = mean of per-domain scores where score is not None (domains with no attendus excluded).
+          • DB collection db.dmp_progress keyed on (enfant_id, milestone_id) with acquired_at + acquired_by.
+          • Age calculation uses 30.4375 days/month; date_naissance stored as date string works correctly after fromisoformat parsing.
+
+          CLEANUP: test enfant + fresh DMP maman + other_tok maman all deleted at end of run. Script idempotent.
+          NO BUGS DETECTED. All endpoints production-ready.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        DMP module fully validated — 51/51 checks PASS on /app/backend_test_dmp.py.
+        Catalogue endpoint (GET /api/dmp/milestones) returns 7 domains + 52 milestones with q/domaine/both filters working.
+        Per-enfant endpoints (GET/POST/DELETE /api/enfants/{eid}/dmp[/{milestone_id}]) all working with correct auth guards
+        (maman owner, pro allowed, non-owner maman→403, missing enfant→404, invalid milestone→404).
+        State transitions verified: POST sets acquis=true/statut="acquis"/acquired_at=ISO; DELETE reverts to acquis=false;
+        both operations are idempotent. Score & alerts logic verified for a 23mo enfant: 0→0%, full acquisition→100%,
+        alertes correctly populated/emptied. No bugs found. Note: the existing maman.test@alomaman.dev had hit her free
+        enfants quota (1 enfant already), so the test registers a fresh maman + 24mo enfant for the owner tests.
 

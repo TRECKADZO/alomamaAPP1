@@ -4171,6 +4171,95 @@ async def jalons_all(user=Depends(get_current_user)):
     return {"jalons": JALONS}
 
 
+# ============================================================================
+# 🎯 DMP — Détection Multi-domaine du Précoce (52 jalons / 7 domaines)
+# ============================================================================
+from dmp_data import (
+    DOMAINS as DMP_DOMAINS,
+    MILESTONES as DMP_MILESTONES,
+    search_milestones as _dmp_search,
+    compute_dmp_status as _dmp_compute,
+    get_milestone as _dmp_get,
+)
+
+
+@api.get("/dmp/milestones")
+async def dmp_milestones(q: str = "", domaine: str = "", user=Depends(get_current_user)):
+    """Catalogue complet des jalons DMP (recherche + filtre par domaine optionnels)."""
+    items = _dmp_search(q, domaine)
+    return {"domains": DMP_DOMAINS, "milestones": items, "total": len(items)}
+
+
+@api.get("/enfants/{eid}/dmp")
+async def dmp_for_enfant(eid: str, user=Depends(require_roles("maman", "professionnel"))):
+    """Statut DMP pour un enfant : items + scores par domaine + alertes."""
+    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Enfant introuvable")
+    # Maman : doit être le sien. Pro : libre (RDV ou consentement vérifiés ailleurs).
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé à ce dossier")
+
+    # Calcul de l'âge en mois
+    try:
+        dn_str = str(e["date_naissance"]).replace("Z", "+00:00")
+        dn = datetime.fromisoformat(dn_str)
+        if dn.tzinfo is None:
+            dn = dn.replace(tzinfo=timezone.utc)
+        age_mois = max(0, int((datetime.now(timezone.utc) - dn).total_seconds() / (30.4375 * 86400)))
+    except Exception:
+        age_mois = 0
+
+    # Récupère les jalons acquis (collection dmp_progress)
+    progress = await db.dmp_progress.find({"enfant_id": eid}, {"_id": 0}).to_list(500)
+    acquired_ids = {p["milestone_id"] for p in progress}
+    acquired_dates = {p["milestone_id"]: p.get("acquired_at") for p in progress}
+
+    result = _dmp_compute(age_mois, acquired_ids)
+    # Enrichir items avec date d'acquisition
+    for it in result["items"]:
+        it["acquired_at"] = acquired_dates.get(it["id"])
+    result["enfant"] = {"id": eid, "nom": e.get("nom"), "sexe": e.get("sexe"), "date_naissance": e.get("date_naissance")}
+    return result
+
+
+@api.post("/enfants/{eid}/dmp/{milestone_id}")
+async def dmp_mark_acquired(eid: str, milestone_id: str, user=Depends(require_roles("maman", "professionnel"))):
+    """Marque un jalon comme acquis pour un enfant."""
+    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    if not _dmp_get(milestone_id):
+        raise HTTPException(404, "Jalon introuvable")
+
+    await db.dmp_progress.update_one(
+        {"enfant_id": eid, "milestone_id": milestone_id},
+        {"$set": {
+            "enfant_id": eid,
+            "milestone_id": milestone_id,
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+            "acquired_by": user["id"],
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "milestone_id": milestone_id}
+
+
+@api.delete("/enfants/{eid}/dmp/{milestone_id}")
+async def dmp_unmark(eid: str, milestone_id: str, user=Depends(require_roles("maman", "professionnel"))):
+    """Annule l'acquisition d'un jalon (en cas d'erreur)."""
+    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    await db.dmp_progress.delete_one({"enfant_id": eid, "milestone_id": milestone_id})
+    return {"ok": True}
+
+
+
 @api.get("/jalons/{age_mois}")
 async def jalons_for_age(age_mois: int, user=Depends(get_current_user)):
     """Retourne les jalons attendus à un âge donné."""

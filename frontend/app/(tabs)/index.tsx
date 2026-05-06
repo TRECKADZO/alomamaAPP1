@@ -470,6 +470,7 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
           <QuickAction icon="heart" label="Foetus S/S" onPress={() => router.push("/foetus")} testID="qa-foetus" color="#F472B6" />
           <QuickAction icon="restaurant" label="Diversification" onPress={() => router.push("/diversification")} testID="qa-diversif" color="#F59E0B" />
           <QuickAction icon="checkmark-done" label="Étapes dévelop." onPress={() => router.push("/jalons")} testID="qa-jalons" color="#10B981" />
+          <QuickAction icon="pulse" label="DMP — 7 axes" onPress={() => router.push("/dmp")} testID="qa-dmp" color="#0EA5E9" />
           <QuickAction icon="clipboard" label="Plan naissance" onPress={() => router.push("/plan-naissance")} testID="qa-plan-naissance" color="#EC4899" />
           <QuickAction icon="mail" label="Infolettre" onPress={() => router.push("/infolettre")} testID="qa-infolettre" color="#7C3AED" />
           <QuickAction icon="home" label="Maison sûre" onPress={() => router.push("/maison-securisee")} testID="qa-maison" color="#0EA5E9" />
