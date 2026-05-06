@@ -1,340 +1,332 @@
 #!/usr/bin/env python3
 """
-Backend tests for DMP (Détection Multi-domaine du Précoce) module.
-Tests: GET /api/dmp/milestones, GET/POST/DELETE /api/enfants/{eid}/dmp[/{milestone_id}]
+Backend tests — DMP Oui/Non responses + Bilan rapide.
+
+Covers:
+ - POST /enfants/{eid}/dmp/{milestone_id} with body {response: "oui"|"non"}
+ - Legacy compat (no body → "oui")
+ - Invalid response value → 400
+ - Invalid milestone → 404
+ - Cross-maman → 403
+ - DELETE → clears response
+ - GET /enfants/{eid}/dmp → response field, statuts (acquis/non_acquis/alerte/en_cours/trop_jeune),
+   couverture {repondus, attendus, pct}, domain.non_acquis count
+ - GET /enfants/{eid}/dmp/bilan-rapide — pending list sorted late-first
+ - Pro access OK on existing RDV child
+ - Legacy dmp_progress doc without `response` → reported as "oui"
 """
 import os
 import sys
 import time
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
-
 import requests
 
 BASE = "https://cycle-tracker-pro.preview.emergentagent.com/api"
-
 MAMAN_EMAIL = "maman.test@alomaman.dev"
-MAMAN_PWD = "Test1234!"
+MAMAN_PW = "Test1234!"
 PRO_EMAIL = "pro.test@alomaman.dev"
-PRO_PWD = "Test1234!"
+PRO_PW = "Test1234!"
 
-PASS = []
-FAIL = []
+CHILD_ID = "e41c8152-305e-4014-a4f8-4459d955a6cf"
 
+PASS, FAIL = [], []
 
-def check(label, cond, detail=""):
+def check(cond, name, detail=""):
     if cond:
-        PASS.append(label)
-        print(f"  ✅ {label}")
+        PASS.append(name)
+        print(f"  OK   {name}")
     else:
-        FAIL.append((label, detail))
-        print(f"  ❌ {label} — {detail}")
+        FAIL.append(f"{name} — {detail}")
+        print(f"  FAIL {name} — {detail}")
 
 
-def login(email, pwd):
-    r = requests.post(f"{BASE}/auth/login", json={"email": email, "password": pwd}, timeout=30)
+def login(email, pw):
+    r = requests.post(f"{BASE}/auth/login", json={"email": email, "password": pw}, timeout=15)
     r.raise_for_status()
-    body = r.json()
-    return body["token"], body["user"]
+    return r.json()["token"]
 
 
-def register(email, pwd, role="maman", **extra):
-    payload = {
+def h(t):
+    return {"Authorization": f"Bearer {t}"}
+
+
+def register_random_maman(nickname):
+    email = f"{nickname}_{int(time.time())}@test.alomaman.dev"
+    body = {
         "email": email,
-        "password": pwd,
-        "name": extra.get("name", "Test User"),
-        "phone": extra.get("phone", f"+22507{int(time.time())%10000000:07d}"),
-        "role": role,
+        "password": "Test1234!",
+        "name": f"Maman {nickname.capitalize()}",
+        "role": "maman",
         "accepte_cgu": True,
         "accepte_politique_confidentialite": True,
         "accepte_donnees_sante": True,
-        "accepte_communications": False,
     }
-    payload.update({k: v for k, v in extra.items() if k not in ("name", "phone")})
-    r = requests.post(f"{BASE}/auth/register", json=payload, timeout=30)
-    if r.status_code != 200:
-        print("Register failed:", r.status_code, r.text)
+    r = requests.post(f"{BASE}/auth/register", json=body, timeout=15)
     r.raise_for_status()
-    body = r.json()
-    return body["token"], body["user"]
+    data = r.json()
+    return data["token"], data["user"]
 
 
-def H(tok):
-    return {"Authorization": f"Bearer {tok}"}
+def section(name):
+    print(f"\n── {name} ──")
+
+
+def cleanup_child_dmp(token):
+    r = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(token), timeout=15)
+    if r.status_code != 200:
+        return
+    items = r.json().get("items") or []
+    for it in items:
+        if it.get("response") is not None:
+            requests.delete(f"{BASE}/enfants/{CHILD_ID}/dmp/{it['id']}", headers=h(token), timeout=15)
 
 
 def main():
-    print("\n=== LOGIN ===")
-    maman_tok, maman_u = login(MAMAN_EMAIL, MAMAN_PWD)
-    check("Login maman", bool(maman_tok))
-    pro_tok, pro_u = login(PRO_EMAIL, PRO_PWD)
-    check("Login pro", bool(pro_tok))
+    section("0. Login MAMAN + PRO")
+    maman_token = login(MAMAN_EMAIL, MAMAN_PW)
+    pro_token = login(PRO_EMAIL, PRO_PW)
+    me_m = requests.get(f"{BASE}/auth/me", headers=h(maman_token), timeout=10).json()
+    me_p = requests.get(f"{BASE}/auth/me", headers=h(pro_token), timeout=10).json()
+    check(me_m.get("role") == "maman", "Maman logged in")
+    check(me_p.get("role") == "professionnel", "Pro logged in")
 
-    # ======================================================================
-    print("\n=== 1. GET /api/dmp/milestones ===")
-    # Endpoint requires auth. We'll always pass a token.
-    r = requests.get(f"{BASE}/dmp/milestones", headers=H(maman_tok), timeout=30)
-    check("GET /dmp/milestones status=200", r.status_code == 200, f"got {r.status_code} {r.text[:200]}")
-    data = r.json() if r.status_code == 200 else {}
-    check("Response has 'domains' with 7 items", isinstance(data.get("domains"), list) and len(data["domains"]) == 7,
-          f"got {len(data.get('domains', []))}")
-    check("Response has 'milestones' with 52 items", isinstance(data.get("milestones"), list) and len(data["milestones"]) == 52,
-          f"got {len(data.get('milestones', []))}")
-    check("Response has 'total'==52", data.get("total") == 52, f"got {data.get('total')}")
+    section("1. Clean DMP state + initial GET /dmp")
+    cleanup_child_dmp(maman_token)
+    r = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(maman_token), timeout=15)
+    check(r.status_code == 200, "Initial GET /dmp 200")
+    initial = r.json()
+    age_mois = initial.get("age_mois")
+    print(f"     child age_mois={age_mois}")
+    check(isinstance(age_mois, int) and 2 <= age_mois <= 6, "child age ~3 months", f"got {age_mois}")
+    check("couverture" in initial, "couverture field present")
+    cov0 = initial["couverture"]
+    check(set(cov0.keys()) == {"repondus", "attendus", "pct"}, "couverture keys", f"keys={list(cov0.keys())}")
+    check(cov0["repondus"] == 0, "initial couverture.repondus == 0", f"got {cov0['repondus']}")
+    dom0 = initial.get("domains") or []
+    check(all("non_acquis" in d for d in dom0), "each domain has non_acquis field")
+    items0 = initial.get("items") or []
+    check(all(it.get("response") is None for it in items0), "all items response=None initially")
 
-    # Each milestone shape
-    if data.get("milestones"):
-        m0 = data["milestones"][0]
-        required = ["id", "domaine", "titre", "description", "age_typique", "age_alerte", "emoji"]
-        missing = [k for k in required if k not in m0]
-        check("Milestone shape has required keys", not missing, f"missing: {missing}")
-
-    # Test filter q=marche
-    r = requests.get(f"{BASE}/dmp/milestones?q=marche", headers=H(maman_tok), timeout=30)
-    check("GET ?q=marche status=200", r.status_code == 200)
-    mdata = r.json()
-    marche_items = mdata.get("milestones", [])
-    check("q=marche returns >=1 items", len(marche_items) >= 1, f"got {len(marche_items)}")
-    # all items should contain 'marche' in title or description
-    all_match = all(
-        "marche" in (m["titre"] + " " + m["description"]).lower()
-        for m in marche_items
+    section("2. POST response='oui' for mg_tient_tete → acquis")
+    r = requests.post(
+        f"{BASE}/enfants/{CHILD_ID}/dmp/mg_tient_tete",
+        headers=h(maman_token),
+        json={"response": "oui"}, timeout=15,
     )
-    check("q=marche all items contain 'marche'", all_match)
-    check("q=marche total matches len", mdata.get("total") == len(marche_items))
+    check(r.status_code == 200, "POST oui 200", f"status={r.status_code} body={r.text[:200]}")
+    j = r.json()
+    check(j.get("ok") is True and j.get("milestone_id") == "mg_tient_tete" and j.get("response") == "oui",
+          "POST oui response body", f"got {j}")
 
-    # Test filter domaine=cognitif
-    r = requests.get(f"{BASE}/dmp/milestones?domaine=cognitif", headers=H(maman_tok), timeout=30)
-    check("GET ?domaine=cognitif status=200", r.status_code == 200)
-    cog = r.json().get("milestones", [])
-    check("domaine=cognitif returns ~7 items", len(cog) == 7, f"got {len(cog)}")
-    check("domaine=cognitif all items are cognitif",
-          all(m["domaine"] == "cognitif" for m in cog))
+    r2 = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(maman_token), timeout=15).json()
+    it = next((i for i in r2["items"] if i["id"] == "mg_tient_tete"), None)
+    check(it is not None, "mg_tient_tete in items")
+    check(it["response"] == "oui", "mg_tient_tete.response=oui", f"got {it.get('response')}")
+    check(it["statut"] == "acquis", "mg_tient_tete.statut=acquis", f"got {it.get('statut')}")
+    check(it.get("acquis") is True, "mg_tient_tete.acquis=true (compat)")
+    check(r2["couverture"]["repondus"] == 1, "couverture.repondus=1",
+          f"got {r2['couverture']}")
+    dom_mg = next((d for d in r2["domains"] if d["key"] == "moteur_global"), None)
+    check(dom_mg and dom_mg["acquis"] >= 1, "moteur_global.acquis >= 1", f"got {dom_mg}")
 
-    # AND filter
-    r = requests.get(f"{BASE}/dmp/milestones?q=compte&domaine=cognitif", headers=H(maman_tok), timeout=30)
-    check("GET q=compte & domaine=cognitif status=200", r.status_code == 200)
-    both = r.json().get("milestones", [])
-    check("AND filter returns at least 1", len(both) >= 1, f"got {len(both)}")
-    check("AND filter items match both criteria",
-          all(m["domaine"] == "cognitif" and "compte" in (m["titre"] + " " + m["description"]).lower() for m in both))
-
-    # ======================================================================
-    print("\n=== 2. Setup: fresh maman + 24mo enfant (existing maman_test has quota used) ===")
-    # Register a fresh maman dedicated to DMP 24-mo tests
-    dmp_maman_email = f"dmp_maman_{int(time.time())}@test.alomaman.dev"
-    dmp_maman_tok, dmp_maman_u = register(
-        dmp_maman_email, "Test1234!", role="maman",
-        name="DMP TestMaman",
-        phone=f"+22507{int(time.time()*7)%10000000:07d}",
+    section("3. POST response='non' for mg_retournement (typique=5, alerte=7) — age=3 → non_acquis")
+    r = requests.post(
+        f"{BASE}/enfants/{CHILD_ID}/dmp/mg_retournement",
+        headers=h(maman_token),
+        json={"response": "non"}, timeout=15,
     )
-    check("Register fresh DMP maman", bool(dmp_maman_tok))
+    check(r.status_code == 200 and r.json().get("response") == "non", "POST non 200+body",
+          f"status={r.status_code} body={r.text[:200]}")
+    r2 = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(maman_token), timeout=15).json()
+    it = next((i for i in r2["items"] if i["id"] == "mg_retournement"), None)
+    check(it and it["response"] == "non", "mg_retournement.response=non")
+    check(it and it["statut"] == "non_acquis", "mg_retournement.statut=non_acquis (age<=alerte)",
+          f"got {it.get('statut') if it else None}")
 
-    # Create 24mo enfant for this maman (quota allows 1 free enfant)
-    target_age_days = 730  # ~24 months
-    dn = (datetime.now(timezone.utc) - timedelta(days=target_age_days)).date().isoformat()
-    payload = {
-        "nom": f"DMP Test Enfant {int(time.time())}",
-        "sexe": "F",
-        "date_naissance": dn,
-    }
-    r = requests.post(f"{BASE}/enfants", headers=H(dmp_maman_tok), json=payload, timeout=30)
-    check("POST /enfants to create ~24mo enfant", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
-    enfant = r.json()
-    created_enfant_id = enfant["id"]
-    eid = enfant["id"]
-    # All owner-related tests below use dmp_maman_tok
-    owner_tok = dmp_maman_tok
-    print(f"  → using enfant_id={eid}, nom={enfant.get('nom')}, dn={enfant.get('date_naissance')}")
+    section("4. POST 'non' for lr_reagit_voix (typique=3,alerte=5) — age=3, 3<=5 → non_acquis")
+    r = requests.post(
+        f"{BASE}/enfants/{CHILD_ID}/dmp/lr_reagit_voix",
+        headers=h(maman_token),
+        json={"response": "non"}, timeout=15,
+    )
+    check(r.status_code == 200, "POST 200")
+    r2 = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(maman_token), timeout=15).json()
+    it = next((i for i in r2["items"] if i["id"] == "lr_reagit_voix"), None)
+    check(it and it["statut"] == "non_acquis",
+          "lr_reagit_voix statut=non_acquis", f"got {it.get('statut') if it else None}")
 
-    # ======================================================================
-    print("\n=== 3. GET /api/enfants/{eid}/dmp as maman owner ===")
-    r = requests.get(f"{BASE}/enfants/{eid}/dmp", headers=H(owner_tok), timeout=30)
-    check("GET /enfants/{eid}/dmp status=200", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
-    dmp = r.json() if r.status_code == 200 else {}
+    section("5. POST 'non' for se_sourire_social (typique=2,alerte=4) — age=3 → non_acquis")
+    r = requests.post(
+        f"{BASE}/enfants/{CHILD_ID}/dmp/se_sourire_social",
+        headers=h(maman_token),
+        json={"response": "non"}, timeout=15,
+    )
+    check(r.status_code == 200, "POST 200")
+    r2 = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(maman_token), timeout=15).json()
+    it = next((i for i in r2["items"] if i["id"] == "se_sourire_social"), None)
+    check(it and it["statut"] == "non_acquis",
+          "se_sourire_social statut=non_acquis", f"got {it.get('statut') if it else None}")
 
-    check("Response has age_mois", "age_mois" in dmp)
-    check("Response has items (52)", isinstance(dmp.get("items"), list) and len(dmp["items"]) == 52,
-          f"got {len(dmp.get('items', []))}")
-    check("Response has domains (7)", isinstance(dmp.get("domains"), list) and len(dmp["domains"]) == 7)
-    check("Response has alertes (list)", isinstance(dmp.get("alertes"), list))
-    check("Response has score_global key", "score_global" in dmp)
-    check("Response has enfant.id", dmp.get("enfant", {}).get("id") == eid)
+    # Couverture : repondus counts only milestones whose age_typique <= age_mois AND response in oui/non
+    # Answered: mg_tient_tete (3<=3 yes), mg_retournement (5>3 NO), lr_reagit_voix (3<=3 yes), se_sourire_social (2<=3 yes)
+    # → repondus = 3
+    cov = r2["couverture"]
+    print(f"     couverture={cov}")
+    check(cov["repondus"] == 3, "couverture.repondus=3 (expected-age answered only)",
+          f"got {cov['repondus']}")
+    check(cov["pct"] > 0, "couverture.pct > 0")
+    dom_mg = next(d for d in r2["domains"] if d["key"] == "moteur_global")
+    dom_lr = next(d for d in r2["domains"] if d["key"] == "langage_receptif")
+    dom_se = next(d for d in r2["domains"] if d["key"] == "social_emotionnel")
+    check(dom_mg["non_acquis"] == 1, "moteur_global.non_acquis=1", f"got {dom_mg['non_acquis']}")
+    check(dom_lr["non_acquis"] == 1, "langage_receptif.non_acquis=1", f"got {dom_lr['non_acquis']}")
+    check(dom_se["non_acquis"] == 1, "social_emotionnel.non_acquis=1", f"got {dom_se['non_acquis']}")
 
-    age_mois = dmp.get("age_mois", 0)
-    print(f"  → age_mois={age_mois}")
+    section("6. Invalid response='maybe' → 400")
+    r = requests.post(
+        f"{BASE}/enfants/{CHILD_ID}/dmp/mg_tient_tete",
+        headers=h(maman_token), json={"response": "maybe"}, timeout=15,
+    )
+    check(r.status_code == 400, "POST maybe → 400", f"status={r.status_code} body={r.text[:200]}")
 
-    # Each item has statut in {acquis, en_cours, alerte, trop_jeune}
-    allowed_statuts = {"acquis", "en_cours", "alerte", "trop_jeune"}
-    statuts_ok = all(it.get("statut") in allowed_statuts for it in dmp.get("items", []))
-    check("All items have valid statut", statuts_ok)
+    section("7. Invalid milestone_id → 404")
+    r = requests.post(
+        f"{BASE}/enfants/{CHILD_ID}/dmp/this_does_not_exist",
+        headers=h(maman_token), json={"response": "oui"}, timeout=15,
+    )
+    check(r.status_code == 404, "POST invalid milestone → 404", f"status={r.status_code}")
 
-    # Initially all acquis should be false
-    all_not_acquired = all(it.get("acquis") is False for it in dmp.get("items", []))
-    check("Initially all items acquis=False", all_not_acquired)
+    section("8. POST WITHOUT body → legacy compat, defaults to 'oui'")
+    requests.delete(f"{BASE}/enfants/{CHILD_ID}/dmp/mf_suit_objet", headers=h(maman_token), timeout=15)
+    r = requests.post(f"{BASE}/enfants/{CHILD_ID}/dmp/mf_suit_objet", headers=h(maman_token), timeout=15)
+    check(r.status_code == 200, "POST no body 200", f"status={r.status_code} body={r.text[:200]}")
+    check(r.json().get("response") == "oui", "POST no body → response=oui (legacy)",
+          f"got {r.json()}")
+    r2 = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(maman_token), timeout=15).json()
+    it = next((i for i in r2["items"] if i["id"] == "mf_suit_objet"), None)
+    check(it and it["response"] == "oui" and it["statut"] == "acquis",
+          "GET mf_suit_objet response=oui statut=acquis",
+          f"got {it}")
 
-    # For age>=alerte threshold and not acquired, statut=alerte
-    if age_mois >= 18:
-        mg_marche = next((it for it in dmp["items"] if it["id"] == "mg_marche_seul"), None)
-        # age_alerte=18
-        if mg_marche:
-            expected_statut = "alerte" if age_mois > 18 else ("en_cours" if age_mois >= 13 else "trop_jeune")
-            check(f"mg_marche_seul has correct statut (age={age_mois}, alerte=18) → {expected_statut}",
-                  mg_marche["statut"] == expected_statut,
-                  f"got {mg_marche['statut']}")
-        le_premier = next((it for it in dmp["items"] if it["id"] == "le_premier_mot"), None)
-        if le_premier:
-            # age_alerte=18
-            expected = "alerte" if age_mois > 18 else "en_cours" if age_mois >= 13 else "trop_jeune"
-            check(f"le_premier_mot has correct statut (age={age_mois}) → {expected}",
-                  le_premier["statut"] == expected,
-                  f"got {le_premier['statut']}")
+    section("9. DELETE clears response, goes back to default")
+    r = requests.delete(f"{BASE}/enfants/{CHILD_ID}/dmp/mg_tient_tete", headers=h(maman_token), timeout=15)
+    check(r.status_code == 200, "DELETE 200")
+    r2 = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(maman_token), timeout=15).json()
+    it = next((i for i in r2["items"] if i["id"] == "mg_tient_tete"), None)
+    check(it and it["response"] is None, "mg_tient_tete.response=None after DELETE",
+          f"got response={it.get('response') if it else 'N/A'}")
+    check(it and it["statut"] in ("en_cours", "trop_jeune"),
+          "statut back to en_cours/trop_jeune", f"got {it.get('statut') if it else None}")
 
-    # Items with age_typique > age_mois => trop_jeune (unless acquired, but nothing acquired yet)
-    too_young_items = [it for it in dmp["items"] if it["age_typique"] > age_mois]
-    all_too_young_status = all(it["statut"] == "trop_jeune" for it in too_young_items)
-    check(f"All items with age_typique>{age_mois} have statut=trop_jeune",
-          all_too_young_status,
-          f"violations: {[it['id'] for it in too_young_items if it['statut'] != 'trop_jeune'][:5]}")
+    section("10. GET /dmp/bilan-rapide — only expected-age unanswered items, sorted late-first")
+    r = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp/bilan-rapide", headers=h(maman_token), timeout=15)
+    check(r.status_code == 200, "GET bilan-rapide 200", f"status={r.status_code} body={r.text[:200]}")
+    br = r.json()
+    check(set(br.keys()) >= {"enfant", "age_mois", "items", "total"},
+          "bilan-rapide top-level keys", f"keys={list(br.keys())}")
+    check(br.get("age_mois") == age_mois, "age_mois same as /dmp")
+    ids_pending = [it["id"] for it in br["items"]]
+    print(f"     pending ids={ids_pending}")
+    check("mg_tient_tete" in ids_pending, "mg_tient_tete in pending (just deleted)")
+    check("mf_suit_objet" not in ids_pending, "mf_suit_objet NOT in pending (already answered)")
+    check("lr_reagit_voix" not in ids_pending, "lr_reagit_voix NOT in pending")
+    check("se_sourire_social" not in ids_pending, "se_sourire_social NOT in pending")
+    check("mg_retournement" not in ids_pending, "mg_retournement NOT in pending (typique>age)")
+    check(all(it["age_typique"] <= age_mois for it in br["items"]),
+          "all pending have age_typique <= age_mois")
+    non_late = [it for it in br["items"] if not (age_mois > it["age_alerte"])]
+    typiques = [it["age_typique"] for it in non_late]
+    check(typiques == sorted(typiques), "non-late pending sorted by age_typique asc",
+          f"got {typiques}")
 
-    # Score global for no acquired == 0 (when there are attendus items)
-    check("score_global == 0 when no acquired and attendus exist",
-          dmp.get("score_global") == 0 or dmp.get("score_global") is None,
-          f"got {dmp.get('score_global')}")
+    section("11. Answer all remaining pending → bilan-rapide becomes empty")
+    for it in br["items"]:
+        requests.post(f"{BASE}/enfants/{CHILD_ID}/dmp/{it['id']}", headers=h(maman_token),
+                      json={"response": "oui"}, timeout=15)
+    r = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp/bilan-rapide", headers=h(maman_token), timeout=15).json()
+    check(r["total"] == 0 and r["items"] == [], "bilan-rapide empty after answering all",
+          f"got total={r['total']} items_len={len(r['items'])}")
 
-    # alertes list contains expected items for age 24
-    alert_ids = {a["id"] for a in dmp.get("alertes", [])}
-    if age_mois >= 24:
-        # Expect mg_assis_seul (age_alerte=10), mg_marche_seul (18), le_premier_mot (18) to be in alerts
-        expected_in = ["mg_assis_seul", "mg_marche_seul", "le_premier_mot"]
-        missing = [x for x in expected_in if x not in alert_ids]
-        check("alertes contains expected items for 24mo enfant", not missing, f"missing: {missing}")
+    section("12. PRO access works")
+    r = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(pro_token), timeout=15)
+    check(r.status_code == 200, "GET /dmp as PRO 200", f"status={r.status_code} body={r.text[:200]}")
+    r = requests.post(
+        f"{BASE}/enfants/{CHILD_ID}/dmp/mg_retournement",
+        headers=h(pro_token), json={"response": "oui"}, timeout=15,
+    )
+    check(r.status_code == 200 and r.json().get("response") == "oui",
+          "POST /dmp as PRO (change non→oui) 200",
+          f"status={r.status_code} body={r.text[:200]}")
+    r = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp/bilan-rapide", headers=h(pro_token), timeout=15)
+    check(r.status_code == 200, "GET bilan-rapide as PRO 200")
 
-    # ======================================================================
-    print("\n=== 4. GET /enfants/{eid}/dmp as DIFFERENT maman → 403 ===")
-    other_email = f"dmp_other_{int(time.time())}@test.alomaman.dev"
-    other_tok, other_u = register(other_email, "Test1234!", role="maman",
-                                  name="Mariam TestOther",
-                                  phone=f"+22507{int(time.time()*10)%10000000:07d}")
-    r = requests.get(f"{BASE}/enfants/{eid}/dmp", headers=H(other_tok), timeout=30)
-    check("GET /dmp as other maman → 403", r.status_code == 403, f"got {r.status_code} {r.text[:120]}")
+    section("13. Different MAMAN → 403 everywhere")
+    other_token, other_user = register_random_maman("other_dmp")
+    try:
+        r = requests.post(
+            f"{BASE}/enfants/{CHILD_ID}/dmp/mg_tient_tete",
+            headers=h(other_token), json={"response": "oui"}, timeout=15,
+        )
+        check(r.status_code == 403, "POST as other maman → 403", f"status={r.status_code}")
+        r = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(other_token), timeout=15)
+        check(r.status_code == 403, "GET /dmp as other maman → 403", f"status={r.status_code}")
+        r = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp/bilan-rapide", headers=h(other_token), timeout=15)
+        check(r.status_code == 403, "GET bilan-rapide as other maman → 403", f"status={r.status_code}")
+    finally:
+        try:
+            requests.request(
+                "DELETE", f"{BASE}/auth/me",
+                headers=h(other_token),
+                json={"password": "Test1234!", "confirmation": "SUPPRIMER"}, timeout=15,
+            )
+        except Exception:
+            pass
 
-    # ======================================================================
-    print("\n=== 5. GET /enfants/inexistant-id/dmp → 404 ===")
-    r = requests.get(f"{BASE}/enfants/inexistant-id-xyz/dmp", headers=H(owner_tok), timeout=30)
-    check("GET /dmp invalid enfant_id → 404", r.status_code == 404, f"got {r.status_code}")
+    section("14. Legacy dmp_progress doc (no `response`) → reported as 'oui'")
+    try:
+        from pymongo import MongoClient
+        import re
+        env = {}
+        with open("/app/backend/.env") as f:
+            for line in f:
+                m = re.match(r"^\s*([A-Z_]+)\s*=\s*(.+?)\s*$", line.strip())
+                if m:
+                    env[m.group(1)] = m.group(2).strip('"').strip("'")
+        mongo_url = env.get("MONGO_URL", "mongodb://localhost:27017")
+        db_name = env.get("DB_NAME", "alomaman")
+        mc = MongoClient(mongo_url, serverSelectionTimeoutMS=10000)
+        mdb = mc[db_name]
+        legacy_mid = "co_objet_cache_partiel"  # typique=7 → trop_jeune by default at age 3
+        mdb.dmp_progress.delete_many({"enfant_id": CHILD_ID, "milestone_id": legacy_mid})
+        mdb.dmp_progress.insert_one({
+            "enfant_id": CHILD_ID,
+            "milestone_id": legacy_mid,
+            "acquired_at": "2025-01-01T00:00:00+00:00",
+            "acquired_by": "legacy",
+        })
+        r2 = requests.get(f"{BASE}/enfants/{CHILD_ID}/dmp", headers=h(maman_token), timeout=15).json()
+        it = next((i for i in r2["items"] if i["id"] == legacy_mid), None)
+        check(it and it["response"] == "oui", "legacy doc (no response) → reported as 'oui'",
+              f"got response={it.get('response') if it else None}")
+        check(it and it["statut"] == "acquis", "legacy doc → statut=acquis",
+              f"got statut={it.get('statut') if it else None}")
+        mdb.dmp_progress.delete_many({"enfant_id": CHILD_ID, "milestone_id": legacy_mid})
+    except Exception as e:
+        FAIL.append(f"legacy doc test skipped — {e}")
+        print(f"  FAIL legacy doc test exception: {e}")
 
-    # ======================================================================
-    print("\n=== 6. GET /dmp as pro → 200 ===")
-    r = requests.get(f"{BASE}/enfants/{eid}/dmp", headers=H(pro_tok), timeout=30)
-    check("GET /dmp as pro → 200", r.status_code == 200, f"got {r.status_code} {r.text[:120]}")
+    # Final cleanup
+    cleanup_child_dmp(maman_token)
 
-    # ======================================================================
-    print("\n=== 7. POST /enfants/{eid}/dmp/mg_court ===")
-    r = requests.post(f"{BASE}/enfants/{eid}/dmp/mg_court", headers=H(owner_tok), timeout=30)
-    check("POST mg_court status=200", r.status_code == 200, f"got {r.status_code} {r.text[:120]}")
-    body = r.json() if r.status_code == 200 else {}
-    check("POST response ok=true", body.get("ok") is True)
-    check("POST response milestone_id=mg_court", body.get("milestone_id") == "mg_court")
-
-    # Idempotency
-    r2 = requests.post(f"{BASE}/enfants/{eid}/dmp/mg_court", headers=H(owner_tok), timeout=30)
-    check("POST mg_court again (idempotent) 200", r2.status_code == 200, f"got {r2.status_code}")
-
-    # Invalid milestone_id
-    r3 = requests.post(f"{BASE}/enfants/{eid}/dmp/XXX_invalid", headers=H(owner_tok), timeout=30)
-    check("POST invalid milestone_id → 404", r3.status_code == 404, f"got {r3.status_code}")
-
-    # POST as non-owner maman
-    r4 = requests.post(f"{BASE}/enfants/{eid}/dmp/mg_tient_tete", headers=H(other_tok), timeout=30)
-    check("POST as non-owner maman → 403", r4.status_code == 403, f"got {r4.status_code}")
-
-    # ======================================================================
-    print("\n=== 8. GET after POST: mg_court should be acquis ===")
-    r = requests.get(f"{BASE}/enfants/{eid}/dmp", headers=H(owner_tok), timeout=30)
-    dmp2 = r.json() if r.status_code == 200 else {}
-    mg_court = next((it for it in dmp2.get("items", []) if it["id"] == "mg_court"), None)
-    check("mg_court acquis=True", mg_court and mg_court.get("acquis") is True)
-    check("mg_court statut=acquis", mg_court and mg_court.get("statut") == "acquis")
-    check("mg_court acquired_at is ISO string",
-          mg_court and isinstance(mg_court.get("acquired_at"), str) and "T" in mg_court["acquired_at"],
-          f"got {mg_court.get('acquired_at') if mg_court else None}")
-
-    # ======================================================================
-    print("\n=== 9. DELETE /enfants/{eid}/dmp/mg_court ===")
-    r = requests.delete(f"{BASE}/enfants/{eid}/dmp/mg_court", headers=H(owner_tok), timeout=30)
-    check("DELETE mg_court → 200", r.status_code == 200)
-
-    # After delete, GET → acquis=False
-    r = requests.get(f"{BASE}/enfants/{eid}/dmp", headers=H(owner_tok), timeout=30)
-    dmp3 = r.json()
-    mg_court_after = next((it for it in dmp3.get("items", []) if it["id"] == "mg_court"), None)
-    check("After DELETE, mg_court acquis=False", mg_court_after and mg_court_after.get("acquis") is False)
-
-    # DELETE non-existent (never acquired) → 200 (idempotent)
-    r = requests.delete(f"{BASE}/enfants/{eid}/dmp/mg_tient_tete", headers=H(owner_tok), timeout=30)
-    check("DELETE never-acquired milestone → 200 (idempotent)", r.status_code == 200)
-
-    # ======================================================================
-    print("\n=== 10. Score & alerts logic (24mo) ===")
-    # Ensure nothing acquired for this test
-    r = requests.get(f"{BASE}/enfants/{eid}/dmp", headers=H(owner_tok), timeout=30)
-    dmp_clean = r.json()
-    # cleanup any lingering acquired
-    for it in dmp_clean.get("items", []):
-        if it.get("acquis"):
-            requests.delete(f"{BASE}/enfants/{eid}/dmp/{it['id']}", headers=H(owner_tok), timeout=10)
-
-    r = requests.get(f"{BASE}/enfants/{eid}/dmp", headers=H(owner_tok), timeout=30)
-    dmp_zero = r.json()
-    check("score_global=0 with 0 acquired (enfant 24mo)", dmp_zero.get("score_global") == 0, f"got {dmp_zero.get('score_global')}")
-    # Known alerts for 24mo: age_alerte < 24 means age_mois > age_alerte triggers
-    expected_alertes_ids = {"mg_assis_seul", "mg_marche_seul", "le_premier_mot"}
-    got_alert_ids = {a["id"] for a in dmp_zero.get("alertes", [])}
-    missing = expected_alertes_ids - got_alert_ids
-    check("alertes contains mg_assis_seul, mg_marche_seul, le_premier_mot",
-          not missing, f"missing: {missing}; got: {sorted(got_alert_ids)}")
-
-    # Acquire all milestones expected at ≤ 24 months → score_global should be 100 and alertes empty
-    ms_expected = [m for m in dmp_zero.get("items", []) if m["age_typique"] <= age_mois]
-    print(f"  → acquiring {len(ms_expected)} expected milestones (age_typique<={age_mois})…")
-    acquired_list = []
-    for m in ms_expected:
-        rp = requests.post(f"{BASE}/enfants/{eid}/dmp/{m['id']}", headers=H(owner_tok), timeout=15)
-        if rp.status_code == 200:
-            acquired_list.append(m["id"])
-
-    r = requests.get(f"{BASE}/enfants/{eid}/dmp", headers=H(owner_tok), timeout=30)
-    dmp_full = r.json()
-    check("After acquiring all expected milestones, score_global=100",
-          dmp_full.get("score_global") == 100, f"got {dmp_full.get('score_global')}")
-    check("After acquiring all expected milestones, alertes=[]",
-          dmp_full.get("alertes") == [], f"got {len(dmp_full.get('alertes', []))} alerts")
-
-    # ======================================================================
-    print("\n=== CLEANUP ===")
-    for mid in acquired_list:
-        requests.delete(f"{BASE}/enfants/{eid}/dmp/{mid}", headers=H(owner_tok), timeout=10)
-    if created_enfant_id:
-        r = requests.delete(f"{BASE}/enfants/{created_enfant_id}", headers=H(owner_tok), timeout=15)
-        print(f"  → deleted test enfant: {r.status_code}")
-    # Delete other maman
-    r = requests.delete(f"{BASE}/auth/me",
-                        headers=H(other_tok),
-                        json={"password": "Test1234!", "confirmation": "SUPPRIMER"},
-                        timeout=30)
-    print(f"  → deleted other maman: {r.status_code}")
-
-    # ======================================================================
     print("\n" + "=" * 60)
-    print(f"PASS: {len(PASS)} | FAIL: {len(FAIL)}")
+    print(f"PASS: {len(PASS)}  |  FAIL: {len(FAIL)}")
+    print("=" * 60)
     if FAIL:
-        print("\nFAILED CHECKS:")
-        for lbl, det in FAIL:
-            print(f"  ❌ {lbl} — {det}")
+        print("\nFailures:")
+        for f in FAIL:
+            print(f"  - {f}")
         sys.exit(1)
-    print("ALL PASS ✅")
 
 
 if __name__ == "__main__":

@@ -124,27 +124,50 @@ def search_milestones(query: str = "", domain: str = ""):
     return items
 
 
-def compute_dmp_status(age_mois: int, acquired_ids: set):
+def compute_dmp_status(age_mois: int, responses: dict):
     """
     Calcule le statut DMP pour un enfant donné.
 
-    Pour chaque jalon : statut acquis / en_cours / a_alerte / trop_jeune.
-    Calcule le score par domaine (% de jalons acquis parmi ceux dont age_typique ≤ age_mois).
-    Génère la liste des alertes (jalons non acquis dont age_mois > age_alerte).
+    `responses` est un dict {milestone_id: "oui" | "non"} (réponse explicite des parents/pro).
+    L'absence de réponse = jalon non encore évalué.
+
+    Statuts possibles :
+      - "acquis"      : réponse "oui" → 🟢
+      - "non_acquis"  : réponse "non" explicite → 🟠 (orange) — différent de "alerte"
+      - "alerte"      : pas de "oui" ET (réponse "non" OU age_mois > age_alerte) → 🔴
+      - "en_cours"    : pas de réponse, age >= age_typique → 🟡
+      - "trop_jeune"  : age < age_typique, sans réponse → ⚪
+
+    Le score d'un domaine = % de jalons "acquis" parmi ceux attendus pour l'âge.
     """
     # Statut global
     items = []
     for m in MILESTONES:
-        is_acquired = m["id"] in acquired_ids
+        resp = responses.get(m["id"])  # "oui" | "non" | None
+        is_acquired = resp == "oui"
+        is_negative = resp == "non"
+
         if is_acquired:
             statut = "acquis"
+        elif is_negative:
+            # Réponse Non explicite : alerte si l'âge dépasse le seuil, sinon "non_acquis" (orange)
+            if age_mois > m["age_alerte"]:
+                statut = "alerte"
+            else:
+                statut = "non_acquis"
         elif age_mois > m["age_alerte"]:
-            statut = "alerte"  # 🔴 retard significatif
+            statut = "alerte"  # 🔴 retard significatif (sans réponse mais trop âgé)
         elif age_mois >= m["age_typique"]:
             statut = "en_cours"  # 🟡 attendu mais pas encore acquis
         else:
             statut = "trop_jeune"  # ⚪ sera évalué plus tard
-        items.append({**m, "statut": statut, "acquis": is_acquired})
+
+        items.append({
+            **m,
+            "statut": statut,
+            "acquis": is_acquired,
+            "response": resp,  # "oui" | "non" | None — utile au front
+        })
 
     # Scores par domaine : sur les jalons attendus pour son âge (age_typique ≤ age_mois)
     domains_scores = []
@@ -153,11 +176,13 @@ def compute_dmp_status(age_mois: int, acquired_ids: set):
         attendus = [it for it in d_items if it["age_typique"] <= age_mois]
         acquis_count = sum(1 for it in attendus if it["acquis"])
         alerts_count = sum(1 for it in d_items if it["statut"] == "alerte")
+        non_acquis_count = sum(1 for it in d_items if it["statut"] == "non_acquis")
         score = round(100 * acquis_count / len(attendus)) if attendus else None
         domains_scores.append({
             **d,
             "total_attendus": len(attendus),
             "acquis": acquis_count,
+            "non_acquis": non_acquis_count,
             "alertes": alerts_count,
             "score": score,  # peut être None si trop jeune pour ce domaine
             "total_milestones": len(d_items),
@@ -165,6 +190,11 @@ def compute_dmp_status(age_mois: int, acquired_ids: set):
 
     # Alertes globales
     alertes = [it for it in items if it["statut"] == "alerte"]
+
+    # Couverture : combien de jalons attendus pour l'âge ont été répondus (Oui ou Non)
+    attendus_total = [it for it in items if it["age_typique"] <= age_mois]
+    repondus = [it for it in attendus_total if it.get("response") in ("oui", "non")]
+    couverture_pct = round(100 * len(repondus) / len(attendus_total)) if attendus_total else 0
 
     # Score global (moyenne pondérée des scores de domaine)
     valid_scores = [d["score"] for d in domains_scores if d["score"] is not None]
@@ -176,4 +206,9 @@ def compute_dmp_status(age_mois: int, acquired_ids: set):
         "domains": domains_scores,
         "alertes": alertes,
         "score_global": score_global,
+        "couverture": {
+            "repondus": len(repondus),
+            "attendus": len(attendus_total),
+            "pct": couverture_pct,
+        },
     }

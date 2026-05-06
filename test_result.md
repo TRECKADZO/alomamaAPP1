@@ -561,10 +561,89 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "DMP — réponses Oui/Non explicites + Bilan rapide"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend:
+  - task: "DMP Oui/Non explicit responses + Bilan rapide pending list"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/backend/dmp_data.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          56/56 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_dmp.py). All review scenarios validated against
+          Test 1 child (id=e41c8152-…, age_mois=3) with MAMAN + PRO credentials.
+
+          🅰 POST /api/enfants/{eid}/dmp/{milestone_id} (8/8):
+          • Body {"response":"oui"} for mg_tient_tete → 200 with {ok:true, milestone_id:"mg_tient_tete", response:"oui"} ✓.
+          • Body {"response":"non"} for mg_retournement → 200 with response:"non" ✓.
+          • POST WITHOUT body (legacy compat) → 200 with response:"oui" (default) ✓.
+          • Body {"response":"maybe"} → 400 "response doit être 'oui' ou 'non'" ✓.
+          • Invalid milestone_id "this_does_not_exist" → 404 "Jalon introuvable" ✓.
+          • POST as other maman (fresh account) → 403 "Accès refusé" ✓.
+
+          🅱 DELETE /api/enfants/{eid}/dmp/{milestone_id} (2/2):
+          • DELETE on mg_tient_tete → 200; next GET shows response=None and statut="en_cours" (age_mois=3 >= age_typique=3) ✓.
+
+          🅲 GET /api/enfants/{eid}/dmp (20/20):
+          • Each item has `response: "oui"|"non"|null` ✓.
+          • response="oui" → statut="acquis" (mg_tient_tete, mf_suit_objet) ✓.
+          • response="non" + age(3) <= age_alerte(7) for mg_retournement → statut="non_acquis" ✓.
+          • response="non" + age(3) <= age_alerte(5) for lr_reagit_voix → statut="non_acquis" ✓.
+          • response="non" + age(3) <= age_alerte(4) for se_sourire_social → statut="non_acquis" ✓.
+          • No response + age(3) < age_typique(5) → statut="trop_jeune" (verified implicitly in items0) ✓.
+          • No response + age(3) >= age_typique(3) → statut="en_cours" (after deleting mg_tient_tete) ✓.
+          • New field `couverture: {repondus, attendus, pct}` present with correct keys; repondus incremented to 3 after 3 expected-age answers (mg_tient_tete=3, lr_reagit_voix=3, se_sourire_social=2); mg_retournement (typique=5>age3) correctly NOT counted ✓.
+          • Domain stats include `non_acquis` count: moteur_global=1, langage_receptif=1, social_emotionnel=1 ✓.
+
+          🅳 GET /api/enfants/{eid}/dmp/bilan-rapide (11/11):
+          • Returns {enfant, age_mois, items, total} ✓; age_mois matches /dmp ✓.
+          • items = unanswered milestones where age_typique <= age_mois. For age=3 and after answering tient_tete+retournement+lr_reagit_voix+sourire_social+suit_objet, pending = [mg_tient_tete (deleted), le_areu] ✓.
+          • Already answered milestones (mf_suit_objet, lr_reagit_voix, se_sourire_social) NOT in pending ✓.
+          • mg_retournement (typique=5>age3) NOT in pending (future milestone) ✓.
+          • Sorted late-first via key=(0 if age>alerte else 1, age_typique) — non-late items sorted by age_typique asc ✓.
+          • After answering every pending item with "oui" → total=0, items=[] ✓.
+
+          🅴 PRO access (3/3):
+          • GET /dmp and GET /bilan-rapide and POST response="oui" on child Test 1 as pro.test (role=professionnel) all return 200. Pro bypass maman-ownership check at L4200/L4294/L4306.
+
+          🅵 Legacy backward compatibility (2/2):
+          • Inserted directly in db.dmp_progress a legacy doc {enfant_id, milestone_id:"co_objet_cache_partiel", acquired_at, acquired_by:"legacy"} with NO `response` field.
+          • GET /dmp now reports this milestone with response="oui" and statut="acquis" — legacy logic at server.py L4224-4225 correctly defaults response to "oui" when the DB doc lacks the field ✓.
+
+          CLEANUP: All DMP responses removed at end. Ad-hoc other-maman account deleted via DELETE /auth/me. Legacy doc removed. Script is idempotent.
+
+          NO BUGS DETECTED. Endpoint behavior matches spec exactly. Production-ready.
+      - working: "NA"
+        agent: "main"
+        comment: |
+          NEW: Added explicit Yes/No response tracking for DMP milestones.
+
+          Backend changes:
+          1. dmp_data.py — `compute_dmp_status(age_mois, responses)` now accepts {milestone_id: "oui"|"non"} dict instead of a set of acquired ids. New status `non_acquis` (response="non" + age <= age_alerte). If response="non" + age > age_alerte → still `alerte`. Returns new field `couverture: {repondus, attendus, pct}`. Items now include `response` field ("oui"|"non"|null).
+          2. `POST /api/enfants/{eid}/dmp/{milestone_id}` now accepts optional body `{response: "oui"|"non"}` (default "oui" for backward compat). Stores `response`, `answered_at`, `answered_by`, `answered_role`. If "oui", also stores legacy `acquired_at/acquired_by` for ascending compat.
+          3. `DELETE /api/enfants/{eid}/dmp/{milestone_id}` unchanged — clears the response.
+          4. NEW `GET /api/enfants/{eid}/dmp/bilan-rapide` — returns ONLY milestones expected for the child's age (age_typique <= age_mois) AND not yet answered, sorted with late items first. Used by the Bilan rapide carousel.
+          5. GET /api/enfants/{eid}/dmp now reads docs from dmp_progress and reconstructs responses dict (legacy docs without `response` are treated as "oui" for backward compat).
+
+          Tests required:
+          - As MAMAN: POST {response:"oui"} → 200, doc stored. GET /dmp returns response="oui", statut="acquis", couverture incremented.
+          - POST {response:"non"} on a young milestone → status "non_acquis" (orange). On an older milestone (age > age_alerte) → "alerte" (red). 
+          - DELETE → response cleared, returns to default (trop_jeune/en_cours/alerte by age).
+          - POST without body (legacy compat) → response="oui".
+          - POST with invalid response="maybe" → 400.
+          - GET /dmp/bilan-rapide → returns expected pending items, sorted late-first; once all answered → returns empty list.
+          - As PRO with consent/RDV → must be authorized. As another MAMAN → 403.
+          - Verify legacy dmp_progress documents (without `response` field) are reported as response="oui" by GET /dmp.
 
 backend:
   - task: "Pro→Maman consultation notes WITH attachment (PDF/IMAGE) — POST/GET /api/pro/consultation-notes + GET /api/enfants/{eid}/notes"
@@ -632,6 +711,11 @@ backend:
       - working: true
         agent: "testing"
         comment: |
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        DMP Oui/Non responses + Bilan rapide endpoint fully validated — 56/56 scenarios PASS on /app/backend_test_dmp.py. (1) POST /api/enfants/{eid}/dmp/{milestone_id} accepts {response:"oui"|"non"}, defaults to "oui" without body (legacy compat), returns 400 for "maybe", 404 for invalid milestone, 403 for other maman. (2) DELETE clears response and returns the item to its default statut. (3) GET /api/enfants/{eid}/dmp adds `response` field on each item (oui/non/null), new statut "non_acquis" for "non" + age<=age_alerte, plus new `couverture: {repondus, attendus, pct}` at root and `non_acquis` count per domain. (4) GET /api/enfants/{eid}/dmp/bilan-rapide returns {enfant, age_mois, items, total} with only age-expected unanswered items, sorted late-first; becomes empty when all answered. (5) PRO login can GET and POST on the maman's child. (6) Legacy backward compatibility confirmed: a pre-existing dmp_progress document without the `response` field is reported by GET /dmp as response="oui" + statut="acquis". No bugs. Production-ready.
           31/31 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
           (script: /app/backend_test_ring.py).
 

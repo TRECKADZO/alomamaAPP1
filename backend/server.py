@@ -4210,22 +4210,47 @@ async def dmp_for_enfant(eid: str, user=Depends(require_roles("maman", "professi
     except Exception:
         age_mois = 0
 
-    # Récupère les jalons acquis (collection dmp_progress)
+    # Récupère les réponses enregistrées (collection dmp_progress)
     progress = await db.dmp_progress.find({"enfant_id": eid}, {"_id": 0}).to_list(500)
-    acquired_ids = {p["milestone_id"] for p in progress}
-    acquired_dates = {p["milestone_id"]: p.get("acquired_at") for p in progress}
+    # Carte {milestone_id: "oui"|"non"}.
+    # Compatibilité ascendante : anciens documents sans champ `response` = "oui" (acquis).
+    responses: dict = {}
+    answered_dates: dict = {}
+    for p in progress:
+        mid = p.get("milestone_id")
+        if not mid:
+            continue
+        resp = p.get("response")
+        if resp not in ("oui", "non"):
+            resp = "oui"  # legacy : tout doc sans response était un "acquis"
+        responses[mid] = resp
+        answered_dates[mid] = p.get("answered_at") or p.get("acquired_at")
 
-    result = _dmp_compute(age_mois, acquired_ids)
-    # Enrichir items avec date d'acquisition
+    result = _dmp_compute(age_mois, responses)
+    # Enrichir items avec date de réponse
     for it in result["items"]:
-        it["acquired_at"] = acquired_dates.get(it["id"])
+        it["answered_at"] = answered_dates.get(it["id"])
+        # Compat front existant
+        it["acquired_at"] = answered_dates.get(it["id"]) if it.get("response") == "oui" else None
     result["enfant"] = {"id": eid, "nom": e.get("nom"), "sexe": e.get("sexe"), "date_naissance": e.get("date_naissance")}
     return result
 
 
+class DmpResponseBody(BaseModel):
+    response: str  # "oui" | "non"
+
+
 @api.post("/enfants/{eid}/dmp/{milestone_id}")
-async def dmp_mark_acquired(eid: str, milestone_id: str, user=Depends(require_roles("maman", "professionnel"))):
-    """Marque un jalon comme acquis pour un enfant."""
+async def dmp_mark_response(
+    eid: str,
+    milestone_id: str,
+    body: Optional[DmpResponseBody] = None,
+    user=Depends(require_roles("maman", "professionnel")),
+):
+    """Enregistre la réponse Oui/Non pour un jalon (mode bilan).
+
+    Body optionnel `{response: "oui" | "non"}`. Sans body → "oui" (compat ascendante).
+    """
     e = await db.enfants.find_one({"id": eid}, {"_id": 0})
     if not e:
         raise HTTPException(404, "Enfant introuvable")
@@ -4234,22 +4259,35 @@ async def dmp_mark_acquired(eid: str, milestone_id: str, user=Depends(require_ro
     if not _dmp_get(milestone_id):
         raise HTTPException(404, "Jalon introuvable")
 
+    response_value = (body.response if body else "oui") or "oui"
+    if response_value not in ("oui", "non"):
+        raise HTTPException(400, "response doit être 'oui' ou 'non'")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    set_doc = {
+        "enfant_id": eid,
+        "milestone_id": milestone_id,
+        "response": response_value,
+        "answered_at": now_iso,
+        "answered_by": user["id"],
+        "answered_role": user["role"],
+    }
+    # Compat ascendante : conserver acquired_at si réponse Oui
+    if response_value == "oui":
+        set_doc["acquired_at"] = now_iso
+        set_doc["acquired_by"] = user["id"]
+
     await db.dmp_progress.update_one(
         {"enfant_id": eid, "milestone_id": milestone_id},
-        {"$set": {
-            "enfant_id": eid,
-            "milestone_id": milestone_id,
-            "acquired_at": datetime.now(timezone.utc).isoformat(),
-            "acquired_by": user["id"],
-        }},
+        {"$set": set_doc},
         upsert=True,
     )
-    return {"ok": True, "milestone_id": milestone_id}
+    return {"ok": True, "milestone_id": milestone_id, "response": response_value}
 
 
 @api.delete("/enfants/{eid}/dmp/{milestone_id}")
 async def dmp_unmark(eid: str, milestone_id: str, user=Depends(require_roles("maman", "professionnel"))):
-    """Annule l'acquisition d'un jalon (en cas d'erreur)."""
+    """Annule la réponse pour un jalon (retour à 'non répondu')."""
     e = await db.enfants.find_one({"id": eid}, {"_id": 0})
     if not e:
         raise HTTPException(404, "Enfant introuvable")
@@ -4257,6 +4295,43 @@ async def dmp_unmark(eid: str, milestone_id: str, user=Depends(require_roles("ma
         raise HTTPException(403, "Accès refusé")
     await db.dmp_progress.delete_one({"enfant_id": eid, "milestone_id": milestone_id})
     return {"ok": True}
+
+
+@api.get("/enfants/{eid}/dmp/bilan-rapide")
+async def dmp_bilan_rapide_pending(eid: str, user=Depends(require_roles("maman", "professionnel"))):
+    """Retourne les jalons attendus pour l'âge ET non encore répondus → flux Bilan Rapide."""
+    e = await db.enfants.find_one({"id": eid}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+
+    try:
+        dn_str = str(e["date_naissance"]).replace("Z", "+00:00")
+        dn = datetime.fromisoformat(dn_str)
+        if dn.tzinfo is None:
+            dn = dn.replace(tzinfo=timezone.utc)
+        age_mois = max(0, int((datetime.now(timezone.utc) - dn).total_seconds() / (30.4375 * 86400)))
+    except Exception:
+        age_mois = 0
+
+    progress = await db.dmp_progress.find({"enfant_id": eid}, {"_id": 0}).to_list(500)
+    answered = {p["milestone_id"] for p in progress if p.get("milestone_id")}
+
+    # Jalons attendus pour l'âge ET non répondus (par groupes de domaine)
+    pending = [
+        m for m in DMP_MILESTONES
+        if m["age_typique"] <= age_mois and m["id"] not in answered
+    ]
+    # Tri : les "alertes" (age > age_alerte) d'abord, puis les attendus
+    pending.sort(key=lambda m: (0 if age_mois > m["age_alerte"] else 1, m["age_typique"]))
+
+    return {
+        "enfant": {"id": eid, "nom": e.get("nom"), "date_naissance": e.get("date_naissance")},
+        "age_mois": age_mois,
+        "items": pending,
+        "total": len(pending),
+    }
 
 
 

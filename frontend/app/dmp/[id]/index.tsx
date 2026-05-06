@@ -10,11 +10,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { api } from "../../lib/api";
-import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import { api } from "../../../lib/api";
+import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
 
-type Domain = { key: string; label: string; emoji: string; color: string; score: number | null; acquis: number; total_attendus: number; total_milestones: number; alertes: number };
-type Item = { id: string; domaine: string; titre: string; description: string; age_typique: number; age_alerte: number; emoji: string; statut: "acquis" | "en_cours" | "alerte" | "trop_jeune"; acquis: boolean; acquired_at?: string };
+type Domain = { key: string; label: string; emoji: string; color: string; score: number | null; acquis: number; non_acquis?: number; total_attendus: number; total_milestones: number; alertes: number };
+type Item = { id: string; domaine: string; titre: string; description: string; age_typique: number; age_alerte: number; emoji: string; statut: "acquis" | "en_cours" | "alerte" | "trop_jeune" | "non_acquis"; acquis: boolean; response?: "oui" | "non" | null; acquired_at?: string; answered_at?: string };
 
 export default function DmpEnfant() {
   const router = useRouter();
@@ -24,7 +24,7 @@ export default function DmpEnfant() {
   const [refreshing, setRefreshing] = useState(false);
   const [q, setQ] = useState("");
   const [activeDomain, setActiveDomain] = useState<string>("all"); // "all" ou clé domaine
-  const [activeTab, setActiveTab] = useState<"all" | "alerte" | "acquis">("all");
+  const [activeTab, setActiveTab] = useState<"all" | "alerte" | "acquis" | "non_acquis">("all");
 
   const load = async () => {
     try {
@@ -40,12 +40,13 @@ export default function DmpEnfant() {
 
   useFocusEffect(useCallback(() => { load(); }, [id]));
 
-  const toggleAcquis = async (item: Item) => {
+  const setResponse = async (item: Item, value: "oui" | "non") => {
     try {
-      if (item.acquis) {
+      // Si même réponse → on annule (toggle)
+      if (item.response === value) {
         await api.delete(`/enfants/${id}/dmp/${item.id}`);
       } else {
-        await api.post(`/enfants/${id}/dmp/${item.id}`);
+        await api.post(`/enfants/${id}/dmp/${item.id}`, { response: value });
       }
       load();
     } catch (e: any) {
@@ -65,6 +66,7 @@ export default function DmpEnfant() {
     if (activeDomain !== "all" && it.domaine !== activeDomain) return false;
     if (activeTab === "alerte" && it.statut !== "alerte") return false;
     if (activeTab === "acquis" && !it.acquis) return false;
+    if (activeTab === "non_acquis" && it.response !== "non") return false;
     if (q.trim()) {
       const ql = q.toLowerCase();
       if (!it.titre.toLowerCase().includes(ql) && !it.description.toLowerCase().includes(ql)) return false;
@@ -75,6 +77,8 @@ export default function DmpEnfant() {
   const ageMois = data.age_mois;
   const enfant = data.enfant;
   const scoreGlobal = data.score_global;
+  const couverture = data.couverture || { repondus: 0, attendus: 0, pct: 0 };
+  const nonAcquisCount = items.filter((it) => it.response === "non").length;
 
   const ageLabel = (() => {
     if (ageMois < 12) return `${ageMois} mois`;
@@ -117,6 +121,25 @@ export default function DmpEnfant() {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* CTA Bilan rapide + Couverture */}
+        <TouchableOpacity
+          style={styles.bilanCta}
+          onPress={() => router.push(`/dmp/${id}/bilan` as any)}
+          testID="btn-bilan-rapide"
+        >
+          <View style={styles.bilanIcon}><Ionicons name="rocket" size={22} color="#fff" /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.bilanTitle}>🚀 Faire le bilan rapide</Text>
+            <Text style={styles.bilanSub}>
+              {couverture.repondus}/{couverture.attendus} répondus · {couverture.pct}% de couverture
+            </Text>
+            <View style={styles.bilanBar}>
+              <View style={[styles.bilanFill, { width: `${couverture.pct}%` }]} />
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={22} color="#fff" />
+        </TouchableOpacity>
 
         {/* Scores par domaine */}
         <Text style={styles.sectionTitle}>Scores par domaine</Text>
@@ -170,8 +193,9 @@ export default function DmpEnfant() {
         {/* Tabs filtres */}
         <View style={styles.tabsRow}>
           <Tab label="Tous" active={activeTab === "all"} count={items.length} onPress={() => setActiveTab("all")} />
-          <Tab label="🔴 Alertes" active={activeTab === "alerte"} count={alertes.length} color="#EF4444" onPress={() => setActiveTab("alerte")} />
-          <Tab label="✅ Acquis" active={activeTab === "acquis"} count={items.filter((it) => it.acquis).length} color="#10B981" onPress={() => setActiveTab("acquis")} />
+          <Tab label="✅ Oui" active={activeTab === "acquis"} count={items.filter((it) => it.acquis).length} color="#10B981" onPress={() => setActiveTab("acquis")} />
+          <Tab label="❌ Non" active={activeTab === "non_acquis"} count={nonAcquisCount} color="#F97316" onPress={() => setActiveTab("non_acquis")} />
+          <Tab label="🔴" active={activeTab === "alerte"} count={alertes.length} color="#EF4444" onPress={() => setActiveTab("alerte")} />
         </View>
 
         {/* Liste jalons */}
@@ -180,45 +204,64 @@ export default function DmpEnfant() {
         ) : (
           filtered.map((it) => {
             const domain = domains.find((d) => d.key === it.domaine);
-            const colorByStatut = it.statut === "alerte" ? "#EF4444" : it.statut === "acquis" ? "#10B981" : it.statut === "en_cours" ? "#F59E0B" : "#9CA3AF";
+            const colorByStatut = it.statut === "alerte" ? "#EF4444" : it.statut === "acquis" ? "#10B981" : it.statut === "non_acquis" ? "#F97316" : it.statut === "en_cours" ? "#F59E0B" : "#9CA3AF";
+            const isOui = it.response === "oui";
+            const isNon = it.response === "non";
             return (
-              <TouchableOpacity
+              <View
                 key={it.id}
                 style={[
                   styles.itemCard,
                   it.statut === "alerte" && { borderColor: "#FCA5A5", borderWidth: 1.5, backgroundColor: "#FEF2F2" },
-                  it.acquis && { borderColor: "#A7F3D0", backgroundColor: "#ECFDF5" },
+                  isOui && { borderColor: "#A7F3D0", backgroundColor: "#ECFDF5" },
+                  isNon && it.statut !== "alerte" && { borderColor: "#FED7AA", backgroundColor: "#FFF7ED" },
                 ]}
-                onPress={() => toggleAcquis(it)}
                 testID={`item-${it.id}`}
               >
-                <View style={styles.itemLeft}>
-                  <Text style={{ fontSize: 24 }}>{it.emoji}</Text>
-                  <View style={[styles.itemDomainPill, { backgroundColor: `${domain?.color || "#9CA3AF"}22` }]}>
-                    <Text style={[styles.itemDomainPillText, { color: domain?.color || "#9CA3AF" }]}>
-                      {domain?.emoji}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.itemTitle}>{it.titre}</Text>
-                  <Text style={styles.itemDesc} numberOfLines={2}>{it.description}</Text>
-                  <View style={styles.itemMeta}>
-                    <View style={[styles.itemStatut, { backgroundColor: `${colorByStatut}22` }]}>
-                      <View style={[styles.itemDot, { backgroundColor: colorByStatut }]} />
-                      <Text style={[styles.itemStatutText, { color: colorByStatut }]}>
-                        {it.statut === "alerte" ? "Retard" : it.statut === "acquis" ? "Acquis" : it.statut === "en_cours" ? "En cours" : "À venir"}
+                <View style={styles.itemTop}>
+                  <View style={styles.itemLeft}>
+                    <Text style={{ fontSize: 24 }}>{it.emoji}</Text>
+                    <View style={[styles.itemDomainPill, { backgroundColor: `${domain?.color || "#9CA3AF"}22` }]}>
+                      <Text style={[styles.itemDomainPillText, { color: domain?.color || "#9CA3AF" }]}>
+                        {domain?.emoji}
                       </Text>
                     </View>
-                    <Text style={styles.itemAge}>≈ {it.age_typique} mois (alerte si {it.age_alerte}+)</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.itemTitle}>{it.titre}</Text>
+                    <Text style={styles.itemDesc} numberOfLines={2}>{it.description}</Text>
+                    <View style={styles.itemMeta}>
+                      <View style={[styles.itemStatut, { backgroundColor: `${colorByStatut}22` }]}>
+                        <View style={[styles.itemDot, { backgroundColor: colorByStatut }]} />
+                        <Text style={[styles.itemStatutText, { color: colorByStatut }]}>
+                          {it.statut === "alerte" ? "Retard" : it.statut === "acquis" ? "Acquis" : it.statut === "non_acquis" ? "Pas encore" : it.statut === "en_cours" ? "Attendu" : "À venir"}
+                        </Text>
+                      </View>
+                      <Text style={styles.itemAge}>≈ {it.age_typique}m (alerte {it.age_alerte}m+)</Text>
+                    </View>
                   </View>
                 </View>
 
-                <View style={[styles.checkBox, it.acquis && { backgroundColor: "#10B981", borderColor: "#10B981" }]}>
-                  {it.acquis && <Ionicons name="checkmark" size={18} color="#fff" />}
+                {/* Boutons Oui / Non — segmentés inline */}
+                <View style={styles.segRow}>
+                  <TouchableOpacity
+                    style={[styles.segBtn, styles.segOui, isOui && styles.segOuiActive]}
+                    onPress={() => setResponse(it, "oui")}
+                    testID={`btn-oui-${it.id}`}
+                  >
+                    <Ionicons name={isOui ? "checkmark-circle" : "checkmark"} size={16} color={isOui ? "#fff" : "#10B981"} />
+                    <Text style={[styles.segText, { color: isOui ? "#fff" : "#10B981" }]}>Oui</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.segBtn, styles.segNon, isNon && styles.segNonActive]}
+                    onPress={() => setResponse(it, "non")}
+                    testID={`btn-non-${it.id}`}
+                  >
+                    <Ionicons name={isNon ? "close-circle" : "close"} size={16} color={isNon ? "#fff" : "#F97316"} />
+                    <Text style={[styles.segText, { color: isNon ? "#fff" : "#F97316" }]}>Pas encore</Text>
+                  </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
+              </View>
             );
           })
         )}
@@ -265,6 +308,13 @@ const styles = StyleSheet.create({
   alertCta: { paddingHorizontal: 12, paddingVertical: 7, backgroundColor: "#fff", borderRadius: 999 },
   alertCtaText: { color: "#EF4444", fontWeight: "800", fontSize: 12 },
 
+  bilanCta: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: RADIUS.lg, backgroundColor: "#0EA5E9", marginBottom: 14, ...SHADOW },
+  bilanIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
+  bilanTitle: { color: "#fff", fontWeight: "800", fontSize: 14 },
+  bilanSub: { color: "rgba(255,255,255,0.95)", fontSize: 11, marginTop: 2 },
+  bilanBar: { height: 5, backgroundColor: "rgba(255,255,255,0.25)", borderRadius: 3, marginTop: 6, overflow: "hidden" },
+  bilanFill: { height: "100%", borderRadius: 3, backgroundColor: "#fff" },
+
   sectionTitle: { fontSize: 13, fontWeight: "800", color: COLORS.textSecondary, marginTop: 8, marginBottom: 10, textTransform: "uppercase" },
 
   domainGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 },
@@ -288,7 +338,8 @@ const styles = StyleSheet.create({
   tabCount: { backgroundColor: COLORS.bgSecondary, borderRadius: 8, paddingHorizontal: 5, minWidth: 18, alignItems: "center" },
   tabCountText: { fontSize: 10, fontWeight: "800", color: COLORS.textPrimary },
 
-  itemCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
+  itemCard: { padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
+  itemTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   itemLeft: { alignItems: "center", gap: 4 },
   itemDomainPill: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 6 },
   itemDomainPillText: { fontSize: 10 },
@@ -299,6 +350,14 @@ const styles = StyleSheet.create({
   itemDot: { width: 6, height: 6, borderRadius: 3 },
   itemStatutText: { fontSize: 10, fontWeight: "700" },
   itemAge: { fontSize: 9, color: COLORS.textMuted },
+
+  segRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+  segBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 10, borderWidth: 1.5, backgroundColor: "#fff" },
+  segOui: { borderColor: "#10B981" },
+  segOuiActive: { backgroundColor: "#10B981", borderColor: "#10B981" },
+  segNon: { borderColor: "#F97316" },
+  segNonActive: { backgroundColor: "#F97316", borderColor: "#F97316" },
+  segText: { fontSize: 13, fontWeight: "800" },
 
   checkBox: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: COLORS.border, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" },
 
