@@ -561,11 +561,63 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "DMP — réponses Oui/Non explicites + Bilan rapide"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+frontend:
+  - task: "DMP Yes/No responses UI + Bilan rapide carousel (mobile)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/dmp/[id]/index.tsx, /app/frontend/app/dmp/[id]/bilan.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Full UI validation on https://cycle-tracker-pro.preview.emergentagent.com at viewport 390x844
+          (MAMAN: maman.test@alomaman.dev, child Test 1 e41c8152-…). All scenarios PASS.
+
+          A. /dmp/{eid} layout:
+          - Header "Test 1 • 3 mois" + "Bilan développemental — DMP" + global score badge (0% then 20% then 40%) ✓
+          - Blue CTA card "🚀 Faire le bilan rapide" with "X/Y répondus · Z% de couverture" + progress bar that updates in real-time (0/5 → 1/5 → 3/5; 0% → 20% → 60%) ✓
+          - 7 domain score cards (Moteur global, Moteur fin, Langage réceptif, Langage expressif, Cognitif, Social-émotionnel, Autonomie) with progress bars ✓
+          - Search bar "Rechercher un jalon..." ✓
+          - 4 filter tabs visible with counts: "Tous 52", "✅ Oui 0/1/2", "❌ Non 0/1/2", "🔴 0" ✓
+          - Each milestone card has emoji, title, description, age info, Acquis/Pas encore/À venir badge, and the two segmented buttons (testID `btn-oui-{id}` and `btn-non-{id}`) ✓
+
+          B. Toggle Yes/No:
+          - Click `btn-oui-mg_tient_tete` → card turns light green, Oui button filled green w/ check icon ✓
+          - Click `btn-non-mg_retournement` → card turns light orange, Pas encore button filled orange w/ X icon, badge "Pas encore" w/ orange dot ✓
+          - Re-click filled Oui on tient_tete → cleared back to default white state ✓
+          - Re-click cleared Oui again → re-applied (toggle works) ✓
+          - Couverture progress bar + global score badge update after each interaction ✓
+
+          C. Filter tabs:
+          - "✅ Oui" → shows only Oui-marked milestones (2 visible: Tient sa tête + Sourire social) ✓
+          - "❌ Non" → shows only Non-marked milestones (2 visible: Se retourne + Suit un objet du regard) ✓
+          - "🔴" → clickable, no alert items at age 3m (expected) ✓
+          - "Tous" → returns to full 52 list ✓
+
+          D. /dmp/{eid}/bilan carousel:
+          - URL navigated correctly via CTA ✓
+          - Header: X close (left), "Bilan rapide" title, "3 / 4 · Test 1 (3m)" subtitle ✓
+          - Green/cyan gradient header + thin progress bar ✓
+          - Card shows domain pill ("LANGAGE RÉCEPTIF"), big 👂 emoji, bold "Réagit à la voix" title, description, age info, "Test 1 y arrive ?" question ✓
+          - Two BIG buttons side-by-side: green "Oui" with checkmark-circle (testID `bilan-btn-oui`) + orange "Pas encore" with close-circle (testID `bilan-btn-non`) ✓
+          - Bottom row: "Précédent" (testID `bilan-btn-back`) + "Passer ▶" (testID `bilan-btn-skip`) ✓
+          - Click Oui → advances to next milestone with animation ✓
+          - Click Pas encore → advances ✓
+          - Click Passer → advances without recording ✓
+          - Click Précédent → returns to previous card ✓
+
+          E. Persistence:
+          - After page reload at /dmp/{eid}, the couverture 3/5 (60%) + Moteur global 100% + Social-émotionnel 100% all remain → backend persistence working ✓
+
+          Console errors: 0. No red-screen, no blocking issues. Production-ready.
 
 backend:
   - task: "DMP Oui/Non explicit responses + Bilan rapide pending list"
