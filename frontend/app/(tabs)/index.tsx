@@ -171,6 +171,56 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
     });
   }
 
+  // 🎯 Score Santé : 5 facteurs × 20 pts
+  const scoreFactors = {
+    profil: !!(user?.name && user?.phone),
+    suivi: !!g || enfants.length > 0,
+    rdv: prochainsRDV.length > 0,
+    dossier: documents.length > 0 || (g?.poids_initial && g?.taille) || enfants.some((e: any) => (e.vaccins || []).length > 0),
+    consent: !!user?.consent_donnees_sante,
+  };
+  const scoreSante = Object.values(scoreFactors).filter(Boolean).length * 20;
+  const scoreColor = scoreSante >= 80 ? "#10B981" : scoreSante >= 60 ? "#F59E0B" : "#EF4444";
+
+  // 🎨 Favoris contextuels : 6 outils prioritaires selon le profil
+  type Tool = { icon: string; label: string; route: string; color: string; key: string };
+  const ALL_TOOLS: Record<string, Tool> = {
+    rdv: { icon: "calendar", label: "RDV", route: "/(tabs)/rdv", color: "#EC4899", key: "rdv" },
+    assistant: { icon: "sparkles", label: "Assistant IA", route: "/(tabs)/assistant", color: "#A855F7", key: "assistant" },
+    cycle: { icon: "flower", label: "Cycle", route: "/cycle", color: "#E11D48", key: "cycle" },
+    foetus: { icon: "heart", label: "Foetus S/S", route: "/foetus", color: "#F472B6", key: "foetus" },
+    echo: { icon: "scan", label: "Échographie", route: "/tele-echo", color: "#8B5CF6", key: "echo" },
+    plan_naissance: { icon: "clipboard", label: "Plan naissance", route: "/plan-naissance", color: "#EC4899", key: "plan_naissance" },
+    enfants: { icon: "people", label: "Enfants", route: "/(tabs)/enfants", color: "#3B82F6", key: "enfants" },
+    dmp: { icon: "pulse", label: "DMP — 7 axes", route: "/dmp", color: "#0EA5E9", key: "dmp" },
+    diversification: { icon: "restaurant", label: "Diversification", route: "/diversification", color: "#F59E0B", key: "diversification" },
+    activites: { icon: "game-controller", label: "Activités", route: "/activites", color: "#10B981", key: "activites" },
+    contraception: { icon: "shield-checkmark", label: "Contraception", route: "/contraception", color: "#F59E0B", key: "contraception" },
+    medecins: { icon: "medical", label: "Médecins", route: "/search", color: "#6366F1", key: "medecins" },
+    dossier: { icon: "document-text", label: "Mon dossier", route: "/dossier-medical", color: "#14B8A6", key: "dossier" },
+    cmu: { icon: "shield", label: "CMU", route: "/cmu", color: "#16A34A", key: "cmu" },
+    naissance: { icon: "balloon", label: "Déclarer naissance", route: "/naissance", color: "#14B8A6", key: "naissance" },
+  };
+
+  // Choix contextuel des 6 favoris
+  let favoritesKeys: string[];
+  if (g) {
+    // Enceinte
+    if (trimestre === 1) favoritesKeys = ["assistant", "rdv", "foetus", "echo", "dossier", "medecins"];
+    else if (trimestre === 2) favoritesKeys = ["rdv", "echo", "foetus", "assistant", "dossier", "diversification"];
+    else favoritesKeys = ["rdv", "plan_naissance", "naissance", "echo", "assistant", "dossier"];
+  } else if (enfants.length > 0) {
+    // Maman avec enfants
+    favoritesKeys = ["enfants", "dmp", "rdv", "diversification", "activites", "assistant"];
+  } else {
+    // Onboarding — ni grossesse ni enfants
+    favoritesKeys = ["assistant", "cycle", "contraception", "medecins", "rdv", "cmu"];
+  }
+  const favorites = favoritesKeys.map((k) => ALL_TOOLS[k]).filter(Boolean);
+
+  // Prochain RDV (1 seul, le plus proche)
+  const prochainRDV = prochainsRDV[0];
+
   return (
     <View>
       {/* 🔴 BANNIÈRE URGENTE — Demande d'accès au dossier médical */}
@@ -194,8 +244,7 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
                 🔐 {demandesPending.length} demande{demandesPending.length > 1 ? "s" : ""} d&apos;accès en attente
               </Text>
               <Text style={styles.accessRequestSub} numberOfLines={2}>
-                Dr {demandesPending[0].pro_nom || "un professionnel"} souhaite consulter {demandesPending.length > 1 ? "des dossiers" : "votre dossier"}.
-                Touchez pour valider.
+                Dr {demandesPending[0].pro_nom || "un professionnel"} souhaite consulter votre dossier.
               </Text>
             </View>
             <View style={styles.accessRequestCta}>
@@ -206,279 +255,226 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
         </TouchableOpacity>
       )}
 
-      {/* Bienvenue — gradient pink-purple comme la source */}
-      <LinearGradient
-        colors={["#FCE7F3", "#F3E8FF"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.welcomeCard}
-      >
-        <View style={styles.welcomeRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.welcomeTitle} testID="dashboard-name">
-              Bonjour {user?.name?.split(" ")[0] || "Maman"} ! 👋
-            </Text>
-            <Text style={styles.welcomeSub}>Votre tableau de bord personnalisé</Text>
+      {/* 👋 HEADER — Salutation + score santé + actions */}
+      <View style={styles.heroV2}>
+        <LinearGradient colors={["#FCE7F3", "#F3E8FF"]} style={styles.heroV2Gradient}>
+          <View style={styles.heroV2Top}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.heroV2Hi}>Bonjour {user?.name?.split(" ")[0] || "Maman"} 👋</Text>
+              <Text style={styles.heroV2Sub}>
+                {g ? `${weeks} SA · Trimestre ${trimestre}` : enfants.length > 0 ? `${enfants.length} enfant${enfants.length > 1 ? "s" : ""} suivi${enfants.length > 1 ? "s" : ""}` : "Bienvenue dans À lo Maman"}
+              </Text>
+            </View>
+            <View style={styles.heroV2Actions}>
+              <TouchableOpacity style={styles.heroV2Btn} onPress={() => router.push("/(tabs)/profil")} testID="settings-btn">
+                <Ionicons name="settings-outline" size={18} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.heroV2Btn} onPress={() => router.push("/notifications")} testID="notif-btn">
+                <Ionicons name="notifications-outline" size={18} color={COLORS.textPrimary} />
+                {unreadNotif > 0 && (
+                  <View style={styles.notifBadge}>
+                    <Text style={styles.notifBadgeText}>{unreadNotif > 9 ? "9+" : unreadNotif}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <TouchableOpacity
-              style={styles.welcomeBtn}
-              onPress={() => router.push("/dossier-medical")}
-              testID="rapport-pdf-btn"
-            >
-              <Ionicons name="sparkles" size={18} color={COLORS.textPrimary} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.welcomeBtn}
-              onPress={() => router.push("/(tabs)/profil")}
-              testID="settings-btn"
-            >
-              <Ionicons name="settings-outline" size={18} color={COLORS.textPrimary} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.welcomeBtn}
-              onPress={() => router.push("/notifications")}
-              testID="notif-btn"
-            >
-              <Ionicons name="notifications-outline" size={18} color={COLORS.textPrimary} />
-              {unreadNotif > 0 && (
-                <View style={styles.notifBadge}>
-                  <Text style={styles.notifBadgeText}>{unreadNotif > 9 ? "9+" : unreadNotif}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </LinearGradient>
+
+          {/* Score santé compact */}
+          <TouchableOpacity onPress={() => router.push("/(tabs)/profil")} style={styles.scoreCard}>
+            <View style={[styles.scoreCircle, { borderColor: scoreColor }]}>
+              <Text style={[styles.scoreCircleText, { color: scoreColor }]}>{scoreSante}%</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.scoreLabel}>Profil santé</Text>
+              <Text style={styles.scoreSub}>
+                {scoreSante === 100 ? "Parfait ! 🎉" : `${5 - Object.values(scoreFactors).filter(Boolean).length} étape${5 - Object.values(scoreFactors).filter(Boolean).length > 1 ? "s" : ""} pour le compléter`}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+          </TouchableOpacity>
+        </LinearGradient>
+      </View>
 
       <View style={styles.body}>
-        {/* SectionSuiviGrossesse — affichée seulement si grossesse active */}
-        {g ? (
-          <LinearGradient
-            colors={
-              trimestre === 1
-                ? ["#FCE7F3", "#FBCFE8"]
-                : trimestre === 2
-                ? ["#F3E8FF", "#E9D5FF"]
-                : ["#DBEAFE", "#BFDBFE"]
-            }
-            style={styles.grossesseCard}
-          >
-            <View style={styles.grossesseHead}>
-              <View>
-                <Text style={[styles.trimBadge, { color: trimestre === 1 ? "#BE185D" : trimestre === 2 ? "#7E22CE" : "#1D4ED8" }]}>
-                  TRIMESTRE {trimestre}
+        {/* 📅 SECTION : AUJOURD'HUI */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitleV2}>Aujourd&apos;hui</Text>
+          <Text style={styles.sectionDate}>
+            {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+          </Text>
+        </View>
+
+        {/* Suivi grossesse condensé */}
+        {g && (
+          <TouchableOpacity onPress={() => router.push("/(tabs)/grossesse")} testID="grossesse-card">
+            <LinearGradient
+              colors={trimestre === 1 ? ["#FCE7F3", "#FBCFE8"] : trimestre === 2 ? ["#F3E8FF", "#E9D5FF"] : ["#DBEAFE", "#BFDBFE"]}
+              style={styles.todayCard}
+            >
+              <View style={styles.todayCardLeft}>
+                <Text style={styles.todayBadge}>TRIMESTRE {trimestre}</Text>
+                <Text style={styles.todayBigValue}>{weeks} SA</Text>
+                <Text style={styles.todaySub}>
+                  {dpa ? `DPA ${dpa.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })} · ${joursRestants} j restants` : "Bébé grandit chaque jour 💛"}
                 </Text>
-                <Text style={styles.grossesseWeeks}>{weeks} SA</Text>
-                <Text style={styles.grossesseSub}>Votre bébé grandit chaque jour 💛</Text>
               </View>
               <View style={styles.progressRing}>
                 <Text style={styles.progressRingValue}>{progression}%</Text>
               </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {/* Prochain RDV */}
+        {prochainRDV ? (
+          <TouchableOpacity style={styles.todayMiniCard} onPress={() => router.push("/(tabs)/rdv")}>
+            <View style={[styles.todayMiniIcon, { backgroundColor: "#FCE7F3" }]}>
+              <Ionicons name="calendar" size={20} color="#EC4899" />
             </View>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { width: `${progression}%` }]} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.todayMiniLabel}>Prochain RDV</Text>
+              <Text style={styles.todayMiniValue}>{prochainRDV.pro_name || "Professionnel"}</Text>
+              <Text style={styles.todayMiniSub}>
+                {new Date(prochainRDV.date).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </Text>
             </View>
-            <View style={styles.grossesseInfos}>
-              {dpa && (
-                <View style={styles.grossesseInfoItem}>
-                  <Text style={styles.grossesseInfoLabel}>DPA</Text>
-                  <Text style={styles.grossesseInfoValue}>
-                    {dpa.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}
-                  </Text>
-                </View>
-              )}
-              <View style={styles.grossesseInfoItem}>
-                <Text style={styles.grossesseInfoLabel}>Restants</Text>
-                <Text style={styles.grossesseInfoValue}>{joursRestants} j</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.grossesseAction}
-                onPress={() => router.push("/(tabs)/grossesse")}
-              >
-                <Text style={styles.grossesseActionText}>Voir le suivi</Text>
-                <Ionicons name="arrow-forward" size={14} color="#fff" />
-              </TouchableOpacity>
+            <View style={[styles.todayMiniStatus, { backgroundColor: prochainRDV.statut === "confirme" ? "#DCFCE7" : "#FEF3C7" }]}>
+              <Text style={[styles.todayMiniStatusText, { color: prochainRDV.statut === "confirme" ? "#166534" : "#92400E" }]}>
+                {prochainRDV.statut || prochainRDV.status || "en attente"}
+              </Text>
             </View>
-          </LinearGradient>
+          </TouchableOpacity>
         ) : (
-          <View style={styles.heroCard} testID="hero-card">
-            <Image source={{ uri: IMAGES.heroMaman }} style={styles.heroImg} />
-            <View style={styles.heroOverlay} />
-            <View style={styles.heroContent}>
-              <Text style={styles.heroLabel}>BIENVENUE</Text>
-              <Text style={styles.heroTitle}>Votre santé compte</Text>
-              <Text style={styles.heroSub}>Démarrez votre suivi grossesse</Text>
-              <TouchableOpacity
-                style={styles.heroBtn}
-                onPress={() => router.push("/(tabs)/grossesse")}
-                testID="start-grossesse-btn"
-              >
-                <Text style={styles.heroBtnText}>Démarrer</Text>
-                <Ionicons name="arrow-forward" size={16} color={COLORS.primary} />
-              </TouchableOpacity>
+          <TouchableOpacity style={[styles.todayMiniCard, styles.todayMiniEmpty]} onPress={() => router.push("/(tabs)/rdv")}>
+            <Ionicons name="calendar-outline" size={20} color={COLORS.textMuted} />
+            <Text style={styles.todayMiniEmptyText}>Aucun RDV à venir — prendre rendez-vous</Text>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+        )}
+
+        {/* Rappels du jour (max 2) */}
+        {reminders.slice(0, 2).map((r: any) => (
+          <TouchableOpacity key={r.id} style={styles.todayMiniCard} onPress={() => router.push("/reminders")}>
+            <View style={[styles.todayMiniIcon, { backgroundColor: "#FEE2E2" }]}>
+              <Ionicons name="alarm" size={20} color="#DC2626" />
             </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.todayMiniLabel}>Rappel</Text>
+              <Text style={styles.todayMiniValue} numberOfLines={1}>{r.title}</Text>
+              <Text style={styles.todayMiniSub}>
+                {new Date(r.due_at).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {/* Alertes IA si présentes */}
+        {alertes.length > 0 && (
+          <View style={styles.alertsBlock}>
+            {alertes.map((a, i) => (
+              <View key={i} style={[styles.alertChip, { borderLeftColor: a.color, backgroundColor: `${a.color}15` }]}>
+                <Ionicons name="information-circle" size={16} color={a.color} />
+                <Text style={[styles.alertChipText, { color: a.color }]}>{a.text}</Text>
+              </View>
+            ))}
           </View>
         )}
 
-        {/* Grille de widgets : Prochains RDV + Alertes IA + Enfants + Documents */}
-        <Text style={styles.sectionTitle}>Mes widgets</Text>
-
-        {/* Widget Prochains RDV */}
-        <View style={styles.widget}>
-          <View style={styles.widgetHead}>
-            <View style={styles.widgetTitleWrap}>
-              <View style={[styles.widgetIcon, { backgroundColor: "#FCE7F3" }]}>
-                <Ionicons name="calendar" size={18} color="#EC4899" />
-              </View>
-              <Text style={styles.widgetTitle}>Prochains rendez-vous</Text>
+        {/* 👶 SECTION ENFANTS */}
+        {enfants.length > 0 && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitleV2}>Mes enfants</Text>
+              <TouchableOpacity onPress={() => router.push("/(tabs)/enfants")}>
+                <Text style={styles.linkText}>Voir tout</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={() => router.push("/(tabs)/rdv")}>
-              <Text style={styles.linkText}>Voir tout</Text>
-            </TouchableOpacity>
-          </View>
-          {prochainsRDV.length === 0 ? (
-            <Text style={styles.emptyMini}>Aucun rendez-vous à venir</Text>
-          ) : (
-            prochainsRDV.map((r: any) => (
-              <View key={r.id} style={styles.widgetRow}>
-                <View style={[styles.widgetRowIcon, { backgroundColor: "#FCE7F3" }]}>
-                  <Ionicons name="medical" size={16} color="#EC4899" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.widgetRowTitle}>{r.pro_name || "Professionnel"}</Text>
-                  <Text style={styles.widgetRowSub}>
-                    {r.motif || "RDV"} · {new Date(r.date).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}
-                  </Text>
-                </View>
-                <Text style={[styles.statusBadge, { backgroundColor: r.statut === "confirme" ? "#DCFCE7" : "#FEF3C7", color: r.statut === "confirme" ? "#166534" : "#92400E" }]}>
-                  {r.statut || r.status || "en_attente"}
-                </Text>
-              </View>
-            ))
-          )}
-        </View>
-
-        {/* Widget Alertes IA */}
-        <View style={styles.widget}>
-          <View style={styles.widgetHead}>
-            <View style={styles.widgetTitleWrap}>
-              <View style={[styles.widgetIcon, { backgroundColor: "#FEF3C7" }]}>
-                <Ionicons name="alert-circle" size={18} color="#D97706" />
-              </View>
-              <Text style={styles.widgetTitle}>Alertes & conseils IA</Text>
-            </View>
-          </View>
-          {alertes.length === 0 ? (
-            <Text style={styles.emptyMini}>Tout va bien, aucune alerte</Text>
-          ) : (
-            alertes.map((a, i) => (
-              <View key={i} style={[styles.alertRow, { borderLeftColor: a.color }]}>
-                <Ionicons name="information-circle" size={18} color={a.color} />
-                <Text style={styles.alertText}>{a.text}</Text>
-              </View>
-            ))
-          )}
-        </View>
-
-        {/* Widget Enfants */}
-        <View style={styles.widget}>
-          <View style={styles.widgetHead}>
-            <View style={styles.widgetTitleWrap}>
-              <View style={[styles.widgetIcon, { backgroundColor: "#DBEAFE" }]}>
-                <Ionicons name="people" size={18} color="#2563EB" />
-              </View>
-              <Text style={styles.widgetTitle}>Mes enfants ({enfants.length})</Text>
-            </View>
-            <TouchableOpacity onPress={() => router.push("/(tabs)/enfants")}>
-              <Text style={styles.linkText}>Voir tout</Text>
-            </TouchableOpacity>
-          </View>
-          {enfants.length === 0 ? (
-            <Text style={styles.emptyMini}>Aucun enfant enregistré</Text>
-          ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
               {enfants.map((e: any) => {
-                const ans = Math.floor((Date.now() - new Date(e.date_naissance).getTime()) / (365 * 86400000));
+                const ageMois = Math.floor((Date.now() - new Date(e.date_naissance).getTime()) / (30.4375 * 86400000));
+                const ageLabel = ageMois < 12 ? `${ageMois} mois` : `${Math.floor(ageMois / 12)} an${Math.floor(ageMois / 12) > 1 ? "s" : ""}`;
                 return (
                   <TouchableOpacity
                     key={e.id}
-                    style={styles.childChip}
-                    onPress={() => router.push("/(tabs)/enfants")}
+                    style={styles.childCardV2}
+                    onPress={() => router.push(`/dmp/${e.id}`)}
+                    testID={`child-card-${e.id}`}
                   >
-                    <Text style={styles.childEmoji}>{e.sexe === "F" ? "👧" : "👦"}</Text>
-                    <Text style={styles.childName} numberOfLines={1}>{e.nom || e.prenom}</Text>
-                    <Text style={styles.childAge}>{ans} an(s)</Text>
+                    <Text style={styles.childEmojiV2}>{e.sexe === "F" ? "👧" : "👦"}</Text>
+                    <Text style={styles.childNameV2} numberOfLines={1}>{e.nom || e.prenom}</Text>
+                    <Text style={styles.childAgeV2}>{ageLabel}</Text>
+                    <View style={styles.childCta}>
+                      <Ionicons name="pulse" size={11} color="#0EA5E9" />
+                      <Text style={styles.childCtaText}>DMP</Text>
+                    </View>
                   </TouchableOpacity>
                 );
               })}
             </ScrollView>
-          )}
-        </View>
+          </>
+        )}
 
-        {/* Widget Rappels */}
-        <View style={styles.widget}>
-          <View style={styles.widgetHead}>
-            <View style={styles.widgetTitleWrap}>
-              <View style={[styles.widgetIcon, { backgroundColor: "#FEE2E2" }]}>
-                <Ionicons name="alarm" size={18} color="#DC2626" />
+        {/* 🎯 SECTION OUTILS ESSENTIELS — 6 favoris contextuels */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitleV2}>Outils essentiels</Text>
+          <TouchableOpacity onPress={() => router.push("/outils")}>
+            <Text style={styles.linkText}>Tous les outils →</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.favGrid}>
+          {favorites.map((f) => (
+            <TouchableOpacity
+              key={f.key}
+              style={styles.favCard}
+              onPress={() => router.push(f.route as any)}
+              testID={`fav-${f.key}`}
+            >
+              <View style={[styles.favIcon, { backgroundColor: `${f.color}22` }]}>
+                <Ionicons name={f.icon as any} size={22} color={f.color} />
               </View>
-              <Text style={styles.widgetTitle}>Mes rappels</Text>
-            </View>
-            <TouchableOpacity onPress={() => router.push("/reminders")}>
-              <Text style={styles.linkText}>Voir tout</Text>
+              <Text style={styles.favLabel}>{f.label}</Text>
             </TouchableOpacity>
-          </View>
-          {reminders.length === 0 ? (
-            <Text style={styles.emptyMini}>Aucun rappel actif</Text>
-          ) : (
-            reminders.map((r: any) => (
-              <View key={r.id} style={styles.widgetRow}>
-                <View style={[styles.widgetRowIcon, { backgroundColor: "#FEE2E2" }]}>
-                  <Ionicons name="alarm" size={16} color="#DC2626" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.widgetRowTitle}>{r.title}</Text>
-                  <Text style={styles.widgetRowSub}>{new Date(r.due_at).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
-                </View>
-              </View>
-            ))
-          )}
+          ))}
         </View>
 
-        {/* Accès rapide complet */}
-        <Text style={styles.sectionTitle}>Accès rapide</Text>
-        <View style={styles.quickGrid}>
-          <QuickAction icon="calendar" label="RDV" onPress={() => router.push("/(tabs)/rdv")} testID="qa-rdv" color="#EC4899" />
-          <QuickAction icon="sparkles" label="Assistant" onPress={() => router.push("/(tabs)/assistant")} testID="qa-ia" color="#A855F7" />
-          <QuickAction icon="people" label="Enfants" onPress={() => router.push("/(tabs)/enfants")} testID="qa-enfants" color="#3B82F6" />
-          <QuickAction icon="chatbubbles" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} testID="qa-com" color="#10B981" />
-          <QuickAction icon="flower" label="Cycle" onPress={() => router.push("/cycle")} testID="qa-cycle" color="#E11D48" />
-          <QuickAction icon="shield-checkmark" label="Contracep." onPress={() => router.push("/contraception")} testID="qa-contra" color="#F59E0B" />
-          <QuickAction icon="heart-circle" label="Post-partum" onPress={() => router.push("/post-partum")} testID="qa-postpartum" color="#06B6D4" />
-          <QuickAction icon="medical" label="Médecins" onPress={() => router.push("/search")} testID="qa-search" color="#6366F1" />
-          <QuickAction icon="document-text" label="Dossier" onPress={() => router.push("/dossier-medical")} testID="qa-dossier" color="#14B8A6" />
-          <QuickAction icon="grid" label="Espace" onPress={() => router.push("/mon-espace-sante")} testID="qa-espace" color="#EC4899" />
-          <QuickAction icon="help-circle" label="Questions" onPress={() => router.push("/questions")} testID="qa-questions" color="#10B981" />
-          <QuickAction icon="search" label="Centres" onPress={() => router.push("/centres")} testID="qa-centres" color="#A855F7" />
-          <QuickAction icon="people-circle" label="Famille" onPress={() => router.push("/famille")} testID="qa-famille" color="#F59E0B" />
-          <QuickAction icon="scan" label="Échographie" onPress={() => router.push("/tele-echo")} testID="qa-echo" color="#8B5CF6" />
-          <QuickAction icon="document-text" label="Déclarer naissance" onPress={() => router.push("/naissance")} testID="qa-naiss" color="#14B8A6" />
-          <QuickAction icon="shield" label="Dossier" onPress={() => router.push("/fhir")} testID="qa-fhir" color="#0EA5E9" />
-          <QuickAction icon="medical" label="CMU" onPress={() => router.push("/cmu")} testID="qa-cmu" color="#16A34A" />
-          <QuickAction icon="school" label="Ressources" onPress={() => router.push("/ressources")} testID="qa-ressources" color="#10B981" />
-          <QuickAction icon="heart" label="Foetus S/S" onPress={() => router.push("/foetus")} testID="qa-foetus" color="#F472B6" />
-          <QuickAction icon="restaurant" label="Diversification" onPress={() => router.push("/diversification")} testID="qa-diversif" color="#F59E0B" />
-          <QuickAction icon="checkmark-done" label="Étapes dévelop." onPress={() => router.push("/jalons")} testID="qa-jalons" color="#10B981" />
-          <QuickAction icon="pulse" label="DMP — 7 axes" onPress={() => router.push("/dmp")} testID="qa-dmp" color="#0EA5E9" />
-          <QuickAction icon="clipboard" label="Plan naissance" onPress={() => router.push("/plan-naissance")} testID="qa-plan-naissance" color="#EC4899" />
-          <QuickAction icon="mail" label="Infolettre" onPress={() => router.push("/infolettre")} testID="qa-infolettre" color="#7C3AED" />
-          <QuickAction icon="home" label="Maison sûre" onPress={() => router.push("/maison-securisee")} testID="qa-maison" color="#0EA5E9" />
-          <QuickAction icon="book" label="Glossaire" onPress={() => router.push("/glossaire")} testID="qa-glossaire" color="#6366F1" />
-          <QuickAction icon="game-controller" label="Activités" onPress={() => router.push("/activites")} testID="qa-activites" color="#10B981" />
-          <QuickAction icon="calculator" label="Outils" onPress={() => router.push("/outils")} testID="qa-outils" color="#3B82F6" />
-          <QuickAction icon="pulse" label="Auto-tests" onPress={() => router.push("/quiz")} testID="qa-quiz" color="#0EA5E9" />
-          <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} testID="qa-premium" color="#F59E0B" />
+        {/* 🎁 SECTION CONNECT — Communauté + Famille + Premium */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitleV2}>Communauté</Text>
+        </View>
+        <View style={{ gap: 8 }}>
+          <TouchableOpacity style={styles.connectCard} onPress={() => router.push("/(tabs)/communaute")}>
+            <View style={[styles.connectIcon, { backgroundColor: "#D1FAE5" }]}>
+              <Ionicons name="chatbubbles" size={20} color="#059669" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.connectTitle}>Communauté</Text>
+              <Text style={styles.connectSub}>Échanger avec d&apos;autres mamans</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.connectCard} onPress={() => router.push("/famille")}>
+            <View style={[styles.connectIcon, { backgroundColor: "#FEF3C7" }]}>
+              <Ionicons name="people-circle" size={20} color="#D97706" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.connectTitle}>Mon cercle famille</Text>
+              <Text style={styles.connectSub}>Inviter le papa et les proches</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.connectCard} onPress={() => router.push("/parrainage")}>
+            <View style={[styles.connectIcon, { backgroundColor: "#FCE7F3" }]}>
+              <Ionicons name="gift" size={20} color="#DB2777" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.connectTitle}>Parrainez et gagnez</Text>
+              <Text style={styles.connectSub}>+7 jours Premium par filleule invitée</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -845,32 +841,76 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     ...SHADOW,
   },
-  accessRequestGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    padding: 14,
-  },
-  accessRequestIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.25)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  accessRequestGradient: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14 },
+  accessRequestIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
   accessRequestTitle: { color: "#fff", fontWeight: "800", fontSize: 14 },
   accessRequestSub: { color: "rgba(255,255,255,0.95)", fontSize: 12, marginTop: 3, lineHeight: 16 },
-  accessRequestCta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#fff",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-  },
+  accessRequestCta: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#fff", paddingHorizontal: 10, paddingVertical: 7, borderRadius: 999 },
   accessRequestCtaText: { color: "#DC2626", fontWeight: "800", fontSize: 12 },
+
+  // 👋 Hero V2 — Salutation + score santé
+  heroV2: { marginHorizontal: SPACING.lg, marginTop: SPACING.lg, borderRadius: RADIUS.xl, overflow: "hidden", ...SHADOW },
+  heroV2Gradient: { padding: SPACING.lg },
+  heroV2Top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
+  heroV2Hi: { fontSize: 20, fontWeight: "800", color: "#831843" },
+  heroV2Sub: { fontSize: 12, color: "#9D174D", marginTop: 2 },
+  heroV2Actions: { flexDirection: "row", gap: 8 },
+  heroV2Btn: { width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.7)", alignItems: "center", justifyContent: "center", position: "relative" },
+  notifBadge: { position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: "#EF4444", alignItems: "center", justifyContent: "center", paddingHorizontal: 4, borderWidth: 1.5, borderColor: "#fff" },
+  notifBadgeText: { color: "#fff", fontSize: 9, fontWeight: "800" },
+  scoreCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, backgroundColor: "rgba(255,255,255,0.7)", borderRadius: RADIUS.md },
+  scoreCircle: { width: 52, height: 52, borderRadius: 26, borderWidth: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" },
+  scoreCircleText: { fontSize: 14, fontWeight: "900" },
+  scoreLabel: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary },
+  scoreSub: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
+
+  // Section headers V2
+  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 18, marginBottom: 10 },
+  sectionTitleV2: { fontSize: 16, fontWeight: "800", color: COLORS.textPrimary },
+  sectionDate: { fontSize: 11, color: COLORS.textMuted, fontWeight: "600", textTransform: "capitalize" },
+
+  // Aujourd'hui — gros bloc (grossesse)
+  todayCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderRadius: RADIUS.lg, marginBottom: 10 },
+  todayCardLeft: { flex: 1 },
+  todayBadge: { fontSize: 10, fontWeight: "800", color: "#7E22CE", letterSpacing: 1 },
+  todayBigValue: { fontSize: 28, fontWeight: "900", color: COLORS.textPrimary, marginTop: 4 },
+  todaySub: { fontSize: 12, color: COLORS.textSecondary, marginTop: 4 },
+
+  // Aujourd'hui — mini cards (RDV, rappels)
+  todayMiniCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
+  todayMiniIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  todayMiniLabel: { fontSize: 10, fontWeight: "800", color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: 0.5 },
+  todayMiniValue: { fontSize: 14, fontWeight: "700", color: COLORS.textPrimary, marginTop: 2 },
+  todayMiniSub: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
+  todayMiniStatus: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  todayMiniStatusText: { fontSize: 10, fontWeight: "700", textTransform: "capitalize" },
+  todayMiniEmpty: { borderStyle: "dashed", justifyContent: "space-between" },
+  todayMiniEmptyText: { flex: 1, fontSize: 12, color: COLORS.textSecondary, marginLeft: 8 },
+
+  // Alertes condensées
+  alertsBlock: { gap: 6, marginBottom: 8 },
+  alertChip: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderLeftWidth: 3 },
+  alertChipText: { flex: 1, fontSize: 12, fontWeight: "600" },
+
+  // Mes enfants V2
+  childCardV2: { width: 110, padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: "center" },
+  childEmojiV2: { fontSize: 32 },
+  childNameV2: { fontSize: 12, fontWeight: "700", color: COLORS.textPrimary, marginTop: 4 },
+  childAgeV2: { fontSize: 10, color: COLORS.textSecondary, marginTop: 2 },
+  childCta: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 8, backgroundColor: "#E0F2FE", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999 },
+  childCtaText: { fontSize: 9, fontWeight: "800", color: "#0369A1" },
+
+  // Outils essentiels (favoris)
+  favGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  favCard: { width: "31%", aspectRatio: 1, padding: 10, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: "center", justifyContent: "center", gap: 8 },
+  favIcon: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  favLabel: { fontSize: 11, fontWeight: "700", color: COLORS.textPrimary, textAlign: "center" },
+
+  // Connect cards (communauté, famille, parrainage)
+  connectCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border },
+  connectIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  connectTitle: { fontSize: 14, fontWeight: "700", color: COLORS.textPrimary },
+  connectSub: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
 
   // Welcome card (gradient)
   welcomeCard: {
