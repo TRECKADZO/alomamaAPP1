@@ -486,11 +486,41 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
    =========================================================== */
 function ProDash({ user, data, router }: any) {
   const patients = data.patients || [];
-  const rdvToday = (data.rdv || []).filter((r: any) => {
-    const d = new Date(r.date);
-    const today = new Date();
-    return d.toDateString() === today.toDateString();
+  const rdvAll = data.rdv || [];
+  const today = new Date();
+  const todayStr = today.toDateString();
+  const weekFromNow = new Date(today.getTime() + 7 * 86400000);
+
+  const rdvToday = rdvAll.filter((r: any) => {
+    try { return new Date(r.date).toDateString() === todayStr; } catch { return false; }
   });
+  const rdvWeek = rdvAll.filter((r: any) => {
+    try { const d = new Date(r.date); return d >= today && d <= weekFromNow; } catch { return false; }
+  });
+
+  // 📨 Messagerie : total non-lus + patientes avec non-lus
+  const patientsUnread = patients.filter((p: any) => (p.unread_count || 0) > 0);
+  const totalUnread = patients.reduce((s: number, p: any) => s + (p.unread_count || 0), 0);
+
+  // 📊 Score d'activité : 4 facteurs × 25 pts
+  const scoreFactors = {
+    rdv_today: rdvToday.length > 0,
+    patients: patients.length > 0,
+    messages_actif: totalUnread === 0 || patientsUnread.length < 3,  // pas trop de retard
+    profil: !!(user?.specialite && user?.phone),
+  };
+  const scoreActivite = Object.values(scoreFactors).filter(Boolean).length * 25;
+  const scoreColor = scoreActivite >= 75 ? "#10B981" : scoreActivite >= 50 ? "#F59E0B" : "#EF4444";
+
+  // 🎨 6 favoris pros essentiels
+  const favorites = [
+    { icon: "people", label: "Patientes", route: "/(tabs)/patients", color: "#2DD4BF", badge: patientsUnread.length },
+    { icon: "calendar", label: "Agenda", route: "/pro/disponibilites", color: "#06B6D4", badge: 0 },
+    { icon: "chatbubbles", label: "Messages", route: "/(tabs)/messages", color: "#3B82F6", badge: totalUnread },
+    { icon: "sparkles", label: "IA Pro", route: "/pro/ia", color: "#A855F7", badge: 0 },
+    { icon: "videocam", label: "Téléconsult.", route: "/(tabs)/rdv", color: "#EC4899", badge: 0 },
+    { icon: "alarm", label: "Rappels", route: "/pro/rappels", color: "#F59E0B", badge: 0 },
+  ];
 
   // Partage du lien Play Store aux patientes / collègues
   const inviterPatientes = async () => {
@@ -506,76 +536,220 @@ function ProDash({ user, data, router }: any) {
     } catch {}
   };
 
+  const proName = user?.name?.split(" ").slice(-1)[0] || "Pro";
+  const nextRdv = rdvAll
+    .filter((r: any) => { try { return new Date(r.date) >= today; } catch { return false; } })
+    .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
+
   return (
     <View>
-      <LinearGradient colors={["#DBEAFE", "#BFDBFE"]} style={styles.welcomeCard}>
-        <View style={styles.welcomeRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.welcomeTitle}>Bonjour Dr. {user?.name?.split(" ").slice(-1)[0] || ""}</Text>
-            <Text style={styles.welcomeSub}>Espace professionnel</Text>
+      {/* 👋 HEADER PRO — Salutation + score activité */}
+      <View style={styles.heroV2}>
+        <LinearGradient colors={["#DBEAFE", "#E0F2FE"]} style={styles.heroV2Gradient}>
+          <View style={styles.heroV2Top}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.heroV2Hi, { color: "#1E3A8A" }]}>Bonjour Dr. {proName} 🩺</Text>
+              <Text style={[styles.heroV2Sub, { color: "#1E40AF" }]}>
+                {user?.specialite || "Professionnel de santé"} · {patients.length} patiente{patients.length > 1 ? "s" : ""}
+              </Text>
+            </View>
+            <View style={styles.heroV2Actions}>
+              <TouchableOpacity style={styles.heroV2Btn} onPress={() => router.push("/(tabs)/profil")} testID="settings-btn">
+                <Ionicons name="settings-outline" size={18} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.heroV2Btn} onPress={() => router.push("/notifications")} testID="notif-btn">
+                <Ionicons name="notifications-outline" size={18} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            </View>
           </View>
-          <TouchableOpacity style={styles.welcomeBtn} onPress={() => router.push("/notifications")}>
-            <Ionicons name="notifications-outline" size={18} color={COLORS.textPrimary} />
+
+          {/* Score activité compact */}
+          <TouchableOpacity onPress={() => router.push("/(tabs)/profil")} style={styles.scoreCard}>
+            <View style={[styles.scoreCircle, { borderColor: scoreColor }]}>
+              <Text style={[styles.scoreCircleText, { color: scoreColor }]}>{scoreActivite}%</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.scoreLabel}>Activité du cabinet</Text>
+              <Text style={styles.scoreSub}>
+                {scoreActivite === 100 ? "Excellent niveau d'activité 🎉" : `${4 - Object.values(scoreFactors).filter(Boolean).length} levier${4 - Object.values(scoreFactors).filter(Boolean).length > 1 ? "s" : ""} à actionner`}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
           </TouchableOpacity>
-        </View>
-      </LinearGradient>
+        </LinearGradient>
+      </View>
 
       <View style={styles.body}>
-        <View style={styles.metricsRow}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{patients.length}</Text>
-            <Text style={styles.metricLabel}>Patientes</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{(data.rdv || []).length}</Text>
-            <Text style={styles.metricLabel}>RDV Total</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{rdvToday.length}</Text>
-            <Text style={styles.metricLabel}>Aujourd'hui</Text>
-          </View>
+        {/* 📅 SECTION : AUJOURD'HUI */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitleV2}>Aujourd&apos;hui</Text>
+          <Text style={styles.sectionDate}>
+            {today.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+          </Text>
         </View>
 
-        <View style={styles.widget}>
-          <Text style={styles.widgetTitle}>RDV du jour</Text>
-          {rdvToday.length === 0 ? (
-            <Text style={styles.emptyMini}>Aucun RDV aujourd'hui</Text>
-          ) : (
-            rdvToday.map((r: any) => (
-              <View key={r.id} style={styles.widgetRow}>
-                <View style={[styles.widgetRowIcon, { backgroundColor: "#DBEAFE" }]}>
-                  <Ionicons name="time" size={16} color="#2563EB" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.widgetRowTitle}>{r.maman_name}</Text>
-                  <Text style={styles.widgetRowSub}>
-                    {r.motif} ·{" "}
-                    {new Date(r.date).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-                  </Text>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-
-        <TouchableOpacity
-          style={[styles.btn, { backgroundColor: COLORS.primary, marginTop: 16 }]}
-          onPress={() => router.push("/(tabs)/patients")}
-        >
-          <Text style={styles.btnText}>Voir mes patientes</Text>
+        {/* Card RDV du jour */}
+        <TouchableOpacity onPress={() => router.push("/(tabs)/rdv")} testID="rdv-today-card">
+          <LinearGradient
+            colors={rdvToday.length > 0 ? ["#DBEAFE", "#BFDBFE"] : ["#F3F4F6", "#E5E7EB"]}
+            style={styles.todayCard}
+          >
+            <View style={styles.todayCardLeft}>
+              <Text style={[styles.todayBadge, { color: "#1E40AF" }]}>RDV DU JOUR</Text>
+              <Text style={styles.todayBigValue}>{rdvToday.length}</Text>
+              <Text style={styles.todaySub}>
+                {rdvToday.length === 0 ? "Aucun RDV aujourd'hui" : rdvToday.length === 1 ? "1 patient à recevoir" : `${rdvToday.length} patientes à recevoir`}
+              </Text>
+            </View>
+            <View style={[styles.progressRing, { backgroundColor: "#1E40AF" }]}>
+              <Ionicons name="calendar" size={26} color="#fff" />
+            </View>
+          </LinearGradient>
         </TouchableOpacity>
 
-        <Text style={styles.sectionTitle}>Accès rapide Pro</Text>
-        <View style={styles.quickGrid}>
-          <QuickAction icon="people" label="Patientes" onPress={() => router.push("/(tabs)/patients")} color="#2DD4BF" />
-          <QuickAction icon="calendar" label="Dispo." onPress={() => router.push("/pro/disponibilites")} color="#06B6D4" />
-          <QuickAction icon="alarm" label="Rappels" onPress={() => router.push("/pro/rappels")} color="#F59E0B" />
-          <QuickAction icon="sparkles" label="IA Pro" onPress={() => router.push("/pro/ia")} color="#A855F7" />
-          <QuickAction icon="chatbubbles" label="Messages" onPress={() => router.push("/(tabs)/messages")} color="#3B82F6" />
-          <QuickAction icon="chatbubbles-outline" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} color="#10B981" />
-          <QuickAction icon="videocam" label="Téléconsult." onPress={() => router.push("/(tabs)/rdv")} color="#EC4899" />
-          <QuickAction icon="share-social" label="Inviter" onPress={inviterPatientes} color="#10B981" />
-          <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} color="#F59E0B" />
+        {/* Liste des RDV du jour (max 3) */}
+        {rdvToday.slice(0, 3).map((r: any) => (
+          <TouchableOpacity key={r.id} style={styles.todayMiniCard} onPress={() => router.push("/(tabs)/rdv")}>
+            <View style={[styles.todayMiniIcon, { backgroundColor: "#DBEAFE" }]}>
+              <Ionicons name="time" size={20} color="#2563EB" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.todayMiniLabel}>
+                {new Date(r.date).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+              </Text>
+              <Text style={styles.todayMiniValue}>{r.maman_name || "Patiente"}</Text>
+              <Text style={styles.todayMiniSub} numberOfLines={1}>{r.motif || "Consultation"}</Text>
+            </View>
+            <View style={[styles.todayMiniStatus, { backgroundColor: r.statut === "confirme" ? "#DCFCE7" : "#FEF3C7" }]}>
+              <Text style={[styles.todayMiniStatusText, { color: r.statut === "confirme" ? "#166534" : "#92400E" }]}>
+                {r.statut || "en attente"}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {/* Prochain RDV si pas aujourd'hui */}
+        {rdvToday.length === 0 && nextRdv && (
+          <TouchableOpacity style={styles.todayMiniCard} onPress={() => router.push("/(tabs)/rdv")}>
+            <View style={[styles.todayMiniIcon, { backgroundColor: "#FEF3C7" }]}>
+              <Ionicons name="calendar-outline" size={20} color="#D97706" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.todayMiniLabel}>Prochain RDV</Text>
+              <Text style={styles.todayMiniValue}>{nextRdv.maman_name || "Patiente"}</Text>
+              <Text style={styles.todayMiniSub}>
+                {new Date(nextRdv.date).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+        )}
+
+        {/* Card Messages non lus si applicable */}
+        {totalUnread > 0 && (
+          <TouchableOpacity style={styles.todayMiniCard} onPress={() => router.push("/(tabs)/messages")}>
+            <View style={[styles.todayMiniIcon, { backgroundColor: "#FEE2E2" }]}>
+              <Ionicons name="mail-unread" size={20} color="#DC2626" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.todayMiniLabel}>Messages non lus</Text>
+              <Text style={styles.todayMiniValue}>
+                {totalUnread} message{totalUnread > 1 ? "s" : ""} de {patientsUnread.length} patiente{patientsUnread.length > 1 ? "s" : ""}
+              </Text>
+              <Text style={styles.todayMiniSub} numberOfLines={1}>
+                {patientsUnread[0]?.last_message || "Toucher pour répondre"}
+              </Text>
+            </View>
+            <View style={[styles.todayMiniStatus, { backgroundColor: "#DC2626" }]}>
+              <Text style={[styles.todayMiniStatusText, { color: "#fff" }]}>{totalUnread}</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* 📊 SECTION STATISTIQUES */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitleV2}>Mes statistiques</Text>
+        </View>
+        <View style={styles.metricsRowV2}>
+          <View style={styles.metricCardV2}>
+            <Text style={[styles.metricValueV2, { color: "#3B82F6" }]}>{patients.length}</Text>
+            <Text style={styles.metricLabelV2}>Patientes</Text>
+          </View>
+          <View style={styles.metricCardV2}>
+            <Text style={[styles.metricValueV2, { color: "#10B981" }]}>{rdvWeek.length}</Text>
+            <Text style={styles.metricLabelV2}>Cette semaine</Text>
+          </View>
+          <View style={styles.metricCardV2}>
+            <Text style={[styles.metricValueV2, { color: "#A855F7" }]}>{rdvAll.length}</Text>
+            <Text style={styles.metricLabelV2}>RDV Total</Text>
+          </View>
+        </View>
+
+        {/* 🎯 SECTION OUTILS ESSENTIELS */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitleV2}>Outils essentiels</Text>
+          <TouchableOpacity onPress={() => router.push("/outils")}>
+            <Text style={styles.linkText}>Tous les outils →</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.favGrid}>
+          {favorites.map((f) => (
+            <TouchableOpacity
+              key={f.label}
+              style={styles.favCard}
+              onPress={() => router.push(f.route as any)}
+              testID={`fav-${f.label}`}
+            >
+              <View style={[styles.favIcon, { backgroundColor: `${f.color}22` }]}>
+                <Ionicons name={f.icon as any} size={22} color={f.color} />
+                {f.badge > 0 && (
+                  <View style={styles.favBadge}>
+                    <Text style={styles.favBadgeText}>{f.badge > 9 ? "9+" : f.badge}</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={styles.favLabel}>{f.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* 🎁 SECTION CONNECT */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitleV2}>Plus</Text>
+        </View>
+        <View style={{ gap: 8 }}>
+          <TouchableOpacity style={styles.connectCard} onPress={inviterPatientes}>
+            <View style={[styles.connectIcon, { backgroundColor: "#D1FAE5" }]}>
+              <Ionicons name="share-social" size={20} color="#059669" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.connectTitle}>Inviter mes patientes</Text>
+              <Text style={styles.connectSub}>Partager le lien Google Play personnalisé</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.connectCard} onPress={() => router.push("/(tabs)/communaute")}>
+            <View style={[styles.connectIcon, { backgroundColor: "#DBEAFE" }]}>
+              <Ionicons name="chatbubbles-outline" size={20} color="#2563EB" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.connectTitle}>Communauté pro</Text>
+              <Text style={styles.connectSub}>Échanger avec d&apos;autres soignants</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.connectCard} onPress={() => router.push("/premium")}>
+            <View style={[styles.connectIcon, { backgroundColor: "#FEF3C7" }]}>
+              <Ionicons name="diamond" size={20} color="#D97706" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.connectTitle}>Passer Premium</Text>
+              <Text style={styles.connectSub}>Patientes illimitées · IA avancée · Statistiques</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -911,6 +1085,23 @@ const styles = StyleSheet.create({
   connectIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   connectTitle: { fontSize: 14, fontWeight: "700", color: COLORS.textPrimary },
   connectSub: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+
+  // Liens "Voir tout / Tous les outils"
+  linkText: { fontSize: 12, fontWeight: "700", color: COLORS.primary },
+
+  // Progress ring (grossesse %, RDV count, etc.)
+  progressRing: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.7)" },
+  progressRingValue: { fontSize: 14, fontWeight: "900", color: COLORS.textPrimary },
+
+  // Métriques V2 (3 chiffres clés pour le pro)
+  metricsRowV2: { flexDirection: "row", gap: 10 },
+  metricCardV2: { flex: 1, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: "center" },
+  metricValueV2: { fontSize: 26, fontWeight: "900" },
+  metricLabelV2: { fontSize: 11, fontWeight: "700", color: COLORS.textSecondary, marginTop: 4, textAlign: "center" },
+
+  // Badge sur favori (compteur non-lus, alertes...)
+  favBadge: { position: "absolute", top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: "#EF4444", paddingHorizontal: 4, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: "#fff" },
+  favBadgeText: { color: "#fff", fontSize: 9, fontWeight: "800" },
 
   // Welcome card (gradient)
   welcomeCard: {
