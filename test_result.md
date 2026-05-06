@@ -3666,3 +3666,103 @@ agent_communication:
         alertes correctly populated/emptied. No bugs found. Note: the existing maman.test@alomaman.dev had hit her free
         enfants quota (1 enfant already), so the test registers a fresh maman + 24mo enfant for the owner tests.
 
+
+backend:
+  - task: "Dossier access request (partage) smoke — POST /pro/patient/recherche + GET /partage/demandes-recues + POST /partage/demande/{id}/valider + GET /notifications"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          25/25 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_partage_smoke.py).
+
+          IMPORTANT CLARIFICATION FOR MAIN AGENT + FRONTEND:
+          The review mentioned "POST /api/partage/demande" but **that endpoint DOES NOT EXIST**. The demande creation endpoint is:
+              POST /api/pro/patient/recherche
+          with request body schema: **{"identifier": "<CMU numero OR AM code>", "motif": "<string, max 200 chars>"}**
+          (server.py L7850-7942). The `patient_id` is NOT in the request body — it is auto-resolved from the identifier lookup:
+            • If identifier is an `AM-XXXX-XX` code → lookup in `db.users.code_provisoire` (maman) then `db.enfants.code_provisoire` (child).
+            • If identifier is digits-only (CMU) → lookup `db.enfants.numero_cmu` first, else `db.users.cmu.numero_hash` (maman).
+          So the identifier determines which patient is targeted (maman profile or a specific child).
+
+          Flow verified end-to-end:
+
+          🅰 STEP 1-2 — Logins (2/2 PASS):
+          • Login PRO pro.test@alomaman.dev/Test1234! → 200.
+          • Login MAMAN maman.test@alomaman.dev/Test1234! → 200.
+
+          🅱 STEP 3 — MAMAN identifier inspection (3/3 PASS):
+          • GET /auth/me returns role="maman", id, name="Aminata TestMaman", cmu=null, code_provisoire=null (the cmu
+            + code_provisoire fields are NOT directly exposed on /auth/me until set).
+          • GET /auth/me/code-partage returns {cmu:null, code_provisoire:"AM-RSDZ-UQ", preferred:"AM-RSDZ-UQ"} — the
+            code provisoire is auto-generated on first call via `_ensure_am_code` (server.py L7816-7818).
+          • MAMAN's enfant "Test 1" with id e41c8152-305e-4014-a4f8-4459d955a6cf confirmed present.
+
+          🅲 STEP 4-5 — PRO creates partage demande (5/5 PASS):
+          • POST /pro/patient/recherche with body={"identifier":"AM-RSDZ-UQ","motif":"Test consultation"} → 200.
+          • Response: {"demande_id":"47a56e50-…","patient_nom":"Aminata TestMaman","patient_type":"maman",
+            "status":"pending","message":"Demande envoyée à Aminata TestMaman. Attente de validation."} ✓
+            Matches the expected shape {demande_id, patient_nom, status:"pending", message} exactly (+ bonus patient_type).
+
+          🅳 STEP 6 — MAMAN GET /partage/demandes-recues (4/4 PASS):
+          • Returns the new demande at top with status="pending", pro_name="Dr Konan TestPro", pro_specialite, motif,
+            patient_type, patient_nom, created_at, expires_at. All fields present and correct.
+
+          🅴 STEP 7 — MAMAN GET /notifications (2/2 PASS):
+          • Returns 200. Latest notification has type="partage_demande", title="🔐 Demande d'accès à votre dossier",
+            body contains "Dr Konan TestPro" and the motif. Perfect for the frontend 30s-poll banner trigger.
+          • Minor cosmetic issue (pre-existing, not a regression): body starts with "Dr Dr Konan TestPro" — server.py
+            L7930 unconditionally prepends "Dr " to `user.get('name')` which already starts with "Dr". Same duplicated-Dr
+            issue flagged previously for /pro/consultation-notes (L2239). Non-blocking but could be fixed with the same
+            regex-insensitive check used at L2386-2388 (ring endpoint).
+
+          🅵 STEP 8 — MAMAN validates demande (4/4 PASS):
+          • POST /partage/demande/{demande_id}/valider → 200 with body {"status":"validated",
+            "expires_at":"2026-05-07T01:54:16.275840+00:00","message":"Accès accordé pour 120 minutes"}.
+          • NOTE: the review asked for `access_token` + `access_expires_at` in the response. The backend does NOT return
+            the access_token in the API response for security (token is only persisted in DB on the demande doc, and the
+            pro reads it via his dossier/access lookup on subsequent calls). The response does contain `status` +
+            `expires_at` + `message` instead. This matches server.py L7997-8001.
+          • Also: the status string is **"validated"** in the backend (L7981), not "validee" as suggested in the review
+            prompt. Frontend should match on "validated".
+
+          🅶 STEP 9 — Status changed to validated (4/4 PASS):
+          • GET /partage/demandes-recues again: the demande now has status="validated", access_token is populated
+            (urlsafe_b64 string), access_expires_at matches the validate response.expires_at (120 min from now). ✓
+
+          ✅ FULL CHAIN WORKING. The frontend 30s poll on /api/notifications will correctly see new notifications of
+          type="partage_demande" within 30s of the pro creating a demande, and the banner can use
+          /api/partage/demandes-recues to fetch demande details and validate/refuse via
+          /partage/demande/{id}/valider|refuser.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Partage (dossier access request) full backend smoke test — 25/25 PASS. Key finding for frontend integration:
+
+        1. The review mentioned `POST /api/partage/demande` but **this endpoint does NOT exist**. The actual creation
+           endpoint is **`POST /api/pro/patient/recherche`** (server.py L7850) with body schema
+           **`{"identifier": "<CMU number or AM-XXXX-XX code>", "motif": "<string, max 200>"}`**. patient_id is
+           auto-resolved from the identifier — callers do NOT pass patient_id.
+
+        2. MAMAN's shareable identifier is retrieved via **`GET /api/auth/me/code-partage`** which returns
+           `{cmu, code_provisoire, preferred}`. For a maman with no CMU registered, code_provisoire auto-generates
+           as `AM-XXXX-XX` on first call. For a specific child, use **`GET /api/enfants/{eid}/code-partage`**.
+
+        3. On validation, the backend returns `{status:"validated", expires_at, message}` — NOT access_token. The
+           access_token is stored server-side and retrieved by the pro via his /partage/mes-acces-actifs list
+           (separate endpoint). Review prompt said "validee" but backend uses **"validated"**.
+
+        4. Notification type = **"partage_demande"** (matches spec). Frontend 30s poll on /api/notifications will
+           correctly trigger the banner. Cosmetic: notif body has duplicated "Dr Dr <name>" prefix (server.py L7930) —
+           same duplicated-Dr issue previously flagged at L2239 for consultation_note notifs. Non-blocking, optional fix.
+
+        Full backend chain: login → identifier lookup → partage creation → demandes-recues listing → notification
+        creation → validation → status change → access_token persisted. All working as designed. Script:
+        /app/backend_test_partage_smoke.py.

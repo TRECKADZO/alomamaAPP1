@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -29,10 +29,11 @@ import { buildShareAppText } from "../../constants/links";
 export default function DashboardHome() {
   const { user } = useAuth();
   const router = useRouter();
-  const { unreadCount: unreadNotif } = useNotifications();
+  const { unreadCount: unreadNotif, notifications } = useNotifications();
   const [data, setData] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const loadRef = useRef<() => void>(() => {});
 
   // Bouton retour matériel Android : double-tap pour quitter l'app
   // (évite le saut vers une page blanche / Landing si l'historique est vide)
@@ -94,6 +95,32 @@ export default function DashboardHome() {
   };
 
   useFocusEffect(useCallback(() => { load(); loadUnread(); }, [user]));
+
+  // Garder une réf à load() pour les effets sans recréer l'effet à chaque render
+  loadRef.current = load;
+
+  // 🔔 Auto-rechargement quand une nouvelle notif arrive (ex : demande d'accès au dossier).
+  // Le NotificationsProvider poll /notifications toutes les 30s ; on profite de ce signal.
+  const lastReloadByNotifRef = useRef<number>(0);
+  const lastNotifIdsRef = useRef<string>("");
+  useEffect(() => {
+    if (!user) return;
+    if (user.role !== "maman" && user.role !== "professionnel") return;
+    // Détecte les notifications "actionnables" (demande de dossier, RDV…)
+    const actionable = notifications.filter((n) =>
+      ["partage_demande", "partage_validee", "rdv_confirmation", "rdv_creation"].includes(n.type)
+    );
+    if (actionable.length === 0) return;
+    // Signature courte pour détecter un changement (ajout d'une notif)
+    const sig = actionable.map((n) => `${n.id}:${n.read ? 1 : 0}`).join("|");
+    if (sig === lastNotifIdsRef.current) return;
+    lastNotifIdsRef.current = sig;
+    // Throttle 3s pour éviter rechargements en cascade
+    const now = Date.now();
+    if (now - lastReloadByNotifRef.current < 3000) return;
+    lastReloadByNotifRef.current = now;
+    loadRef.current();
+  }, [notifications, user]);
 
   const onRefresh = () => {
     setRefreshing(true);
