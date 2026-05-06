@@ -151,7 +151,7 @@ export default function DossierMedical() {
           <StatCard icon="happy" label="Enfants" value={String((data.enfants || []).length)} color="#3B82F6" onPress={() => router.push("/(tabs)/enfants")} />
           <StatCard icon="medkit" label="Vaccins" value={String(totalVaccins)} color="#10B981" onPress={() => router.push("/(tabs)/enfants")} />
           <StatCard icon="calendar" label="RDV" value={String((data.rdv || []).length)} color="#A855F7" onPress={() => router.push("/(tabs)/rdv")} />
-          <StatCard icon="alarm" label="Rappels" value={String(remindersActifs)} color="#F59E0B" onPress={() => router.push("/reminders")} />
+          <StatCard icon="alarm" label="Rappels" value={String(remindersActifs)} color="#F59E0B" onPress={() => router.push("/grossesse/rappels")} />
           <StatCard icon="flower" label="Cycles" value={String((data.cycles || []).length)} color="#E11D48" onPress={() => router.push("/cycle")} />
         </View>
 

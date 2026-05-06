@@ -355,7 +355,7 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
 
         {/* Rappels du jour (max 2) */}
         {reminders.slice(0, 2).map((r: any) => (
-          <TouchableOpacity key={r.id} style={styles.todayMiniCard} onPress={() => router.push("/reminders")}>
+          <TouchableOpacity key={r.id} style={styles.todayMiniCard} onPress={() => router.push("/grossesse/rappels")}>
             <View style={[styles.todayMiniIcon, { backgroundColor: "#FEE2E2" }]}>
               <Ionicons name="alarm" size={20} color="#DC2626" />
             </View>
