@@ -418,7 +418,7 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
         {/* 🎯 SECTION OUTILS ESSENTIELS — 6 favoris contextuels */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitleV2}>Outils essentiels</Text>
-          <TouchableOpacity onPress={() => router.push("/outils")}>
+          <TouchableOpacity onPress={() => router.push("/mon-espace-sante")} testID="link-tous-outils-maman">
             <Text style={styles.linkText}>Tous les outils →</Text>
           </TouchableOpacity>
         </View>
