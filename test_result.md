@@ -2189,35 +2189,22 @@ test_plan:
 backend:
   - task: "DMP — Catalogue 52 jalons / 7 domaines + endpoints"
     implemented: true
-    working: "NA"
+    working: true
     file: "/app/backend/server.py + /app/backend/dmp_data.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
+        comment: "Implémentation complète DMP : 52 jalons / 7 domaines, scores, alertes, persistance MongoDB."
+      - working: true
+        agent: "testing"
         comment: |
-          Nouveau module DMP (Détection Multi-domaine du Précoce) :
-          - 52 jalons dans 7 domaines (moteur global/fin, langage réceptif/expressif,
-            cognitif, social-émotionnel, autonomie)
-          - Chaque jalon : age_typique (médiane) + age_alerte (seuil retard)
-
-          Endpoints à tester :
-          1. GET /api/dmp/milestones (catalogue + recherche q + filtre domaine)
-          2. GET /api/enfants/{eid}/dmp (status enfant, scores par domaine, alertes)
-             - Maman : 200 si propriétaire de l'enfant ; 403 sinon
-             - Pro : 200 (accès libre, vérif consentement faite ailleurs)
-             - 404 si enfant inexistant
-          3. POST /api/enfants/{eid}/dmp/{milestone_id} (marquer acquis, idempotent)
-          4. DELETE /api/enfants/{eid}/dmp/{milestone_id} (annuler acquisition)
-
-          Cas critiques :
-          - Calcul score : enfant 24 mois marque "mg_court" (age_typique 20) → score
-            moteur_global doit augmenter
-          - Alerte : enfant 30 mois sans "le_premier_mot" (age_alerte 18) → alerte
-            apparaît dans data.alertes
-          - Trop jeune : enfant 5 mois → tous les jalons de 12+ mois ont statut "trop_jeune"
+          51/51 PASS. Catalogue (7 domaines + 52 jalons), recherche q + filtre domaine,
+          calcul status (acquis/en_cours/alerte/trop_jeune), scores par domaine + global,
+          alertes auto, auth guards (403/404), idempotence POST/DELETE — tout OK.
+          Script : /app/backend_test_dmp.py
 
 
   - task: "Pro Patients enrichissement messagerie (unread_count, last_message, tri non-lus)"
