@@ -808,10 +808,12 @@ function AdminDash({ user, data, router }: any) {
    =========================================================== */
 function CentreDash({ user, router }: any) {
   const centreName = user?.name || "Centre";
+  const [centre, setCentre] = useState<any>(null);
+  const [stats, setStats] = useState<{ pros: any[]; patientes: any[] }>({ pros: [], patientes: [] });
 
   // Partage du lien Play Store aux patientes/pros
   const inviter = async () => {
-    const intro = `Bonjour,\n\nLe centre *${centreName}* vous invite à rejoindre l'application *À lo Maman*, votre compagnon santé maternelle et pédiatrique.\n\n✓ Suivi grossesse semaine par semaine\n✓ Carnet de santé enfants\n✓ Téléconsultations & RDV en ligne\n✓ Assistant IA & communauté\n✓ Intégration CMU & remboursements`;
+    const intro = `Bonjour,\n\nLe centre *${centre?.nom_centre || centreName}* vous invite à rejoindre l'application *À lo Maman*, votre compagnon santé maternelle et pédiatrique.\n\n✓ Suivi grossesse semaine par semaine\n✓ Carnet de santé enfants\n✓ Téléconsultations & RDV en ligne\n✓ Assistant IA & communauté\n✓ Intégration CMU & remboursements`;
     const msg = buildShareAppText(intro);
     try {
       if (Platform.OS === "web") {
@@ -822,110 +824,265 @@ function CentreDash({ user, router }: any) {
       }
     } catch {}
   };
-  const [centre, setCentre] = useState<any>(null);
-  const loadCentre = async () => {
+
+  const partagerCode = async () => {
+    if (!centre?.code_invitation) return;
+    const msg = `Code d'invitation au centre *${centre.nom_centre || centreName}* sur À lo Maman :\n\n  ${centre.code_invitation}  \n\nUtilisez ce code à l'inscription pour rejoindre notre équipe.`;
     try {
-      const { data } = await api.get("/centres/mine");
-      setCentre(data);
+      if (Platform.OS === "web") {
+        await Clipboard.setStringAsync(msg);
+        Alert.alert("✓ Code copié", "Le code et les instructions ont été copiés.");
+      } else {
+        await Share.share({ message: msg });
+      }
+    } catch {}
+  };
+
+  const loadAll = async () => {
+    try {
+      const [cRes, ctcRes] = await Promise.all([
+        api.get("/centres/mine").catch(() => ({ data: null })),
+        api.get("/centre/contacts").catch(() => ({ data: { pros: [], patientes: [] } })),
+      ]);
+      setCentre(cRes.data);
+      setStats(ctcRes.data || { pros: [], patientes: [] });
     } catch {
       setCentre(null);
     }
   };
-  useFocusEffect(useCallback(() => { loadCentre(); }, []));
+  useFocusEffect(useCallback(() => { loadAll(); }, []));
+
+  // 📨 Compteurs messagerie
+  const totalUnread =
+    stats.pros.reduce((s, p: any) => s + (p.unread_count || 0), 0) +
+    stats.patientes.reduce((s, p: any) => s + (p.unread_count || 0), 0);
+  const prosUnread = stats.pros.filter((p: any) => (p.unread_count || 0) > 0).length;
+  const patientesUnread = stats.patientes.filter((p: any) => (p.unread_count || 0) > 0).length;
+
+  // 📊 Score de santé du centre — 4 facteurs × 25 pts
+  const scoreFactors = {
+    pros: stats.pros.length > 0,
+    patientes: stats.patientes.length > 0,
+    profil: !!(centre?.adresse && centre?.email_contact),
+    tarifs: !!centre?.tarifs_count, // remplir si collection tarifs vide
+  };
+  const scoreCentre = Object.values(scoreFactors).filter(Boolean).length * 25;
+  const scoreColor = scoreCentre >= 75 ? "#10B981" : scoreCentre >= 50 ? "#F59E0B" : "#EF4444";
+
+  // 🎨 6 favoris essentiels du centre
+  const favorites = [
+    { icon: "people", label: "Pros", route: "/(tabs)/patients", color: "#A855F7", badge: prosUnread },
+    { icon: "heart", label: "Patientes", route: "/(tabs)/patientes", color: "#EC4899", badge: patientesUnread },
+    { icon: "calendar", label: "Agenda", route: "/centre/calendrier", color: "#3B82F6", badge: 0 },
+    { icon: "pricetag", label: "Tarifs", route: "/centre/tarifs", color: "#10B981", badge: 0 },
+    { icon: "chatbubbles", label: "Messages", route: "/(tabs)/messages", color: "#0EA5E9", badge: totalUnread },
+    { icon: "sparkles", label: "Assistant", route: "/(tabs)/assistant", color: "#F59E0B", badge: 0 },
+  ];
 
   return (
     <View>
-      <LinearGradient colors={["#A855F7", "#6366F1"]} style={styles.welcomeCard}>
-        <View style={styles.welcomeRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.welcomeTitle, { color: "#fff" }]}>
-              {centre?.nom_centre || user?.name}
-            </Text>
-            <Text style={[styles.welcomeSub, { color: "#E9D5FF" }]}>Espace centre de santé</Text>
+      {/* 👋 HEADER CENTRE — Salutation + score + actions */}
+      <View style={styles.heroV2}>
+        <LinearGradient colors={["#F3E8FF", "#E0E7FF"]} style={styles.heroV2Gradient}>
+          <View style={styles.heroV2Top}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.heroV2Hi, { color: "#4C1D95" }]}>
+                {centre?.nom_centre || centreName} 🏥
+              </Text>
+              <Text style={[styles.heroV2Sub, { color: "#5B21B6" }]}>
+                {centre?.type_etablissement || "Centre de santé"}
+                {centre?.ville ? ` · ${centre.ville}` : ""}
+              </Text>
+            </View>
+            <View style={styles.heroV2Actions}>
+              <TouchableOpacity style={styles.heroV2Btn} onPress={() => router.push("/(tabs)/profil")}>
+                <Ionicons name="settings-outline" size={18} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.heroV2Btn} onPress={() => router.push("/notifications")}>
+                <Ionicons name="notifications-outline" size={18} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            </View>
           </View>
-          <TouchableOpacity style={styles.welcomeBtn} onPress={() => router.push("/(tabs)/profil")}>
-            <Ionicons name="settings-outline" size={18} color={COLORS.textPrimary} />
+
+          <TouchableOpacity onPress={() => router.push("/(tabs)/profil")} style={styles.scoreCard}>
+            <View style={[styles.scoreCircle, { borderColor: scoreColor }]}>
+              <Text style={[styles.scoreCircleText, { color: scoreColor }]}>{scoreCentre}%</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.scoreLabel}>Configuration du centre</Text>
+              <Text style={styles.scoreSub}>
+                {scoreCentre === 100 ? "Centre opérationnel ✓" : `${4 - Object.values(scoreFactors).filter(Boolean).length} étape${4 - Object.values(scoreFactors).filter(Boolean).length > 1 ? "s" : ""} à compléter`}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
           </TouchableOpacity>
-        </View>
-      </LinearGradient>
+        </LinearGradient>
+      </View>
 
       <View style={styles.body}>
-        {centre ? (
-          <>
-            <View style={styles.widget}>
-              <View style={styles.widgetHead}>
-                <View style={styles.widgetTitleWrap}>
-                  <View style={[styles.widgetIcon, { backgroundColor: "#F3E8FF" }]}>
-                    <Ionicons name="key" size={18} color="#7E22CE" />
-                  </View>
-                  <Text style={styles.widgetTitle}>Code d'invitation</Text>
-                </View>
-              </View>
-              <Text style={[styles.welcomeTitle, { color: "#7E22CE", textAlign: "center", letterSpacing: 4, marginTop: 8 }]}>
-                {centre.code_invitation}
-              </Text>
-              <Text style={{ color: COLORS.textSecondary, fontSize: 12, textAlign: "center", marginTop: 6 }}>
-                Partagez ce code avec vos professionnels pour qu'ils rejoignent votre centre
-              </Text>
-            </View>
-
-            <View style={styles.widget}>
-              <Text style={styles.widgetTitle}>Informations du centre</Text>
-              {centre.type_etablissement && (
-                <View style={styles.widgetRow}>
-                  <View style={[styles.widgetRowIcon, { backgroundColor: "#F3E8FF" }]}>
-                    <Ionicons name="business" size={16} color="#7E22CE" />
-                  </View>
-                  <Text style={{ color: COLORS.textSecondary, flex: 1 }}>Type</Text>
-                  <Text style={styles.widgetRowTitle}>{centre.type_etablissement}</Text>
-                </View>
-              )}
-              {centre.adresse && (
-                <View style={styles.widgetRow}>
-                  <View style={[styles.widgetRowIcon, { backgroundColor: "#F3E8FF" }]}>
-                    <Ionicons name="location" size={16} color="#7E22CE" />
-                  </View>
-                  <Text style={[styles.widgetRowTitle, { flex: 1 }]} numberOfLines={2}>{centre.adresse}</Text>
-                </View>
-              )}
-              {centre.ville && (
-                <View style={styles.widgetRow}>
-                  <View style={[styles.widgetRowIcon, { backgroundColor: "#F3E8FF" }]}>
-                    <Ionicons name="map" size={16} color="#7E22CE" />
-                  </View>
-                  <Text style={[styles.widgetRowTitle, { flex: 1 }]}>{centre.ville} · {centre.region}</Text>
-                </View>
-              )}
-              {centre.email_contact && (
-                <View style={styles.widgetRow}>
-                  <View style={[styles.widgetRowIcon, { backgroundColor: "#F3E8FF" }]}>
-                    <Ionicons name="mail" size={16} color="#7E22CE" />
-                  </View>
-                  <Text style={[styles.widgetRowTitle, { flex: 1 }]}>{centre.email_contact}</Text>
-                </View>
-              )}
-            </View>
-
-            <Text style={styles.sectionTitle}>Actions</Text>
-            <View style={styles.quickGrid}>
-              <QuickAction icon="people" label="Pros" onPress={() => router.push("/centre/membres")} color="#A855F7" />
-              <QuickAction icon="heart" label="Patientes" onPress={() => router.push("/(tabs)/patientes")} color="#EC4899" />
-              <QuickAction icon="calendar" label="Agenda" onPress={() => router.push("/centre/calendrier")} color="#3B82F6" />
-              <QuickAction icon="pricetag" label="Tarifs" onPress={() => router.push("/centre/tarifs")} color="#10B981" />
-              <QuickAction icon="chatbubbles" label="Messages" onPress={() => router.push("/(tabs)/messages")} color="#3B82F6" />
-              <QuickAction icon="share-social" label="Inviter" onPress={inviter} color="#10B981" />
-              <QuickAction icon="chatbubbles-outline" label="Communauté" onPress={() => router.push("/(tabs)/communaute")} color="#F59E0B" />
-              <QuickAction icon="sparkles" label="Assistant" onPress={() => router.push("/(tabs)/assistant")} color="#EC4899" />
-              <QuickAction icon="diamond" label="Premium" onPress={() => router.push("/premium")} color="#F59E0B" />
-            </View>
-          </>
-        ) : (
-          <View style={styles.widget}>
-            <Text style={styles.widgetTitle}>Centre non trouvé</Text>
-            <Text style={{ color: COLORS.textSecondary, marginTop: 8 }}>
-              Recréez votre profil ou contactez le support.
+        {!centre ? (
+          <View style={styles.todayMiniCard}>
+            <Ionicons name="warning" size={22} color="#EF4444" />
+            <Text style={{ flex: 1, color: COLORS.textSecondary }}>
+              Centre non trouvé. Recréez votre profil ou contactez le support.
             </Text>
           </View>
+        ) : (
+          <>
+            {/* 🔑 SECTION : MON CENTRE — Code d'invitation */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitleV2}>Code d&apos;invitation</Text>
+              <TouchableOpacity onPress={partagerCode}>
+                <Text style={styles.linkText}>Partager →</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity onPress={partagerCode} testID="centre-code-card">
+              <LinearGradient colors={["#F3E8FF", "#E9D5FF"]} style={styles.todayCard}>
+                <View style={styles.todayCardLeft}>
+                  <Text style={[styles.todayBadge, { color: "#6B21A8" }]}>POUR LES PROS</Text>
+                  <Text style={[styles.todayBigValue, { fontSize: 24, color: "#6B21A8", letterSpacing: 4, marginTop: 6 }]}>
+                    {centre.code_invitation}
+                  </Text>
+                  <Text style={styles.todaySub}>
+                    Partagez avec vos médecins pour qu&apos;ils rejoignent
+                  </Text>
+                </View>
+                <View style={[styles.progressRing, { backgroundColor: "#A855F7" }]}>
+                  <Ionicons name="key" size={26} color="#fff" />
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Card "Messages non lus" si applicable */}
+            {totalUnread > 0 && (
+              <TouchableOpacity style={styles.todayMiniCard} onPress={() => router.push("/(tabs)/messages")}>
+                <View style={[styles.todayMiniIcon, { backgroundColor: "#FEE2E2" }]}>
+                  <Ionicons name="mail-unread" size={20} color="#DC2626" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.todayMiniLabel}>Messages non lus</Text>
+                  <Text style={styles.todayMiniValue}>
+                    {totalUnread} message{totalUnread > 1 ? "s" : ""}
+                  </Text>
+                  <Text style={styles.todayMiniSub} numberOfLines={1}>
+                    {prosUnread > 0 && `${prosUnread} pro${prosUnread > 1 ? "s" : ""}`}
+                    {prosUnread > 0 && patientesUnread > 0 && " · "}
+                    {patientesUnread > 0 && `${patientesUnread} patiente${patientesUnread > 1 ? "s" : ""}`}
+                  </Text>
+                </View>
+                <View style={[styles.todayMiniStatus, { backgroundColor: "#DC2626" }]}>
+                  <Text style={[styles.todayMiniStatusText, { color: "#fff" }]}>{totalUnread}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* Card adresse / contact si renseigné */}
+            {(centre.adresse || centre.email_contact) && (
+              <TouchableOpacity style={styles.todayMiniCard} onPress={() => router.push("/(tabs)/profil")}>
+                <View style={[styles.todayMiniIcon, { backgroundColor: "#F3E8FF" }]}>
+                  <Ionicons name="business" size={20} color="#7E22CE" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.todayMiniLabel}>Mon centre</Text>
+                  <Text style={styles.todayMiniValue} numberOfLines={1}>
+                    {centre.adresse || centre.email_contact}
+                  </Text>
+                  {centre.ville && centre.region && (
+                    <Text style={styles.todayMiniSub}>{centre.ville} · {centre.region}</Text>
+                  )}
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+              </TouchableOpacity>
+            )}
+
+            {/* 📊 SECTION STATISTIQUES */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitleV2}>Mon réseau</Text>
+            </View>
+            <View style={styles.metricsRowV2}>
+              <View style={styles.metricCardV2}>
+                <Text style={[styles.metricValueV2, { color: "#A855F7" }]}>{stats.pros.length}</Text>
+                <Text style={styles.metricLabelV2}>Pros</Text>
+              </View>
+              <View style={styles.metricCardV2}>
+                <Text style={[styles.metricValueV2, { color: "#EC4899" }]}>{stats.patientes.length}</Text>
+                <Text style={styles.metricLabelV2}>Patientes</Text>
+              </View>
+              <View style={styles.metricCardV2}>
+                <Text style={[styles.metricValueV2, { color: "#3B82F6" }]}>
+                  {stats.patientes.filter((p: any) => p.has_grossesse).length}
+                </Text>
+                <Text style={styles.metricLabelV2}>Grossesses</Text>
+              </View>
+            </View>
+
+            {/* 🎯 SECTION OUTILS ESSENTIELS */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitleV2}>Outils essentiels</Text>
+              <TouchableOpacity onPress={() => router.push("/outils")}>
+                <Text style={styles.linkText}>Tous les outils →</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.favGrid}>
+              {favorites.map((f) => (
+                <TouchableOpacity
+                  key={f.label}
+                  style={styles.favCard}
+                  onPress={() => router.push(f.route as any)}
+                  testID={`fav-${f.label}`}
+                >
+                  <View style={[styles.favIcon, { backgroundColor: `${f.color}22` }]}>
+                    <Ionicons name={f.icon as any} size={22} color={f.color} />
+                    {f.badge > 0 && (
+                      <View style={styles.favBadge}>
+                        <Text style={styles.favBadgeText}>{f.badge > 9 ? "9+" : f.badge}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.favLabel}>{f.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* 🎁 SECTION PLUS */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitleV2}>Plus</Text>
+            </View>
+            <View style={{ gap: 8 }}>
+              <TouchableOpacity style={styles.connectCard} onPress={inviter}>
+                <View style={[styles.connectIcon, { backgroundColor: "#D1FAE5" }]}>
+                  <Ionicons name="share-social" size={20} color="#059669" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.connectTitle}>Inviter sur À lo Maman</Text>
+                  <Text style={styles.connectSub}>Partager le lien Google Play personnalisé</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.connectCard} onPress={() => router.push("/(tabs)/communaute")}>
+                <View style={[styles.connectIcon, { backgroundColor: "#FEF3C7" }]}>
+                  <Ionicons name="chatbubbles-outline" size={20} color="#D97706" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.connectTitle}>Communauté</Text>
+                  <Text style={styles.connectSub}>Échanger avec d&apos;autres centres</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.connectCard} onPress={() => router.push("/premium")}>
+                <View style={[styles.connectIcon, { backgroundColor: "#FCE7F3" }]}>
+                  <Ionicons name="diamond" size={20} color="#DB2777" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.connectTitle}>Passer Premium</Text>
+                  <Text style={styles.connectSub}>Pros illimités · Statistiques avancées · API</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+              </TouchableOpacity>
+            </View>
+          </>
         )}
       </View>
     </View>
