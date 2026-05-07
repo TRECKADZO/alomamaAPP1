@@ -1046,7 +1046,7 @@ function CentreDash({ user, router }: any) {
             {/* 🎯 SECTION OUTILS ESSENTIELS */}
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitleV2}>Outils essentiels</Text>
-              <TouchableOpacity onPress={() => router.push("/outils")}>
+              <TouchableOpacity onPress={() => router.push("/centre/mon-espace-centre")} testID="link-tous-outils-centre">
                 <Text style={styles.linkText}>Tous les outils →</Text>
               </TouchableOpacity>
             </View>
