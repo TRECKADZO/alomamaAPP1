@@ -715,7 +715,7 @@ function ProDash({ user, data, router }: any) {
         {/* 🎯 SECTION OUTILS ESSENTIELS */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitleV2}>Outils essentiels</Text>
-          <TouchableOpacity onPress={() => router.push("/outils")}>
+          <TouchableOpacity onPress={() => router.push("/pro/mon-espace-pro")} testID="link-tous-outils-pro">
             <Text style={styles.linkText}>Tous les outils →</Text>
           </TouchableOpacity>
         </View>

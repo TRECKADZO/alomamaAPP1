@@ -120,6 +120,14 @@ const CATEGORIES: Category[] = [
       { id: "support", label: "Aide & Support", sub: "FAQ, contact", icon: "headset", color: "#06B6D4", path: "/aide-support" },
     ],
   },
+  {
+    key: "calculs",
+    label: "Calculateurs",
+    emoji: "🧮",
+    tools: [
+      { id: "outils", label: "Boîte à outils", sub: "DPA, poids, IMC, température", icon: "calculator", color: "#6366F1", path: "/outils", keywords: ["dpa", "poids", "imc", "temperature", "calcul"] },
+    ],
+  },
 ];
 
 export default function MonEspaceSante() {
