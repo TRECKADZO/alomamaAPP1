@@ -129,6 +129,7 @@ const CATEGORIES: Category[] = [
     emoji: "🧮",
     tools: [
       { id: "outils", label: "Boîte à outils", sub: "DPA, poids, IMC, température", icon: "calculator", color: "#6366F1", path: "/outils", keywords: ["dpa", "poids", "imc", "temperature", "calcul"] },
+      { id: "sync", label: "Synchronisation", sub: "File hors ligne, sync auto", icon: "sync", color: "#0EA5E9", path: "/sync", keywords: ["offline", "queue", "synchro"] },
     ],
   },
 ];

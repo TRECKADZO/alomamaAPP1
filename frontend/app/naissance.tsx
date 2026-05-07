@@ -552,23 +552,49 @@ function Detail({ icon, label, value }: any) {
 }
 
 function BigField({ label, icon, value, onChange, placeholder, keyboard, speak, small, testID }: any) {
+  // Hook STT pour la dictée vocale
+  const stt = require("../lib/voice").useSpeechToText();
+  useEffect(() => {
+    if (stt.transcript) {
+      const next = (value || "") + (value ? " " : "") + stt.transcript;
+      onChange(next);
+      stt.reset();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stt.transcript]);
+
+  const onMic = () => {
+    if (!stt.isSupported) {
+      Alert.alert("🎤 Dictée vocale", "Disponible sur navigateur web (Chrome/Edge). Sur mobile, utilisez le clavier vocal natif (icône micro du clavier).");
+      return;
+    }
+    if (stt.isListening) stt.stop();
+    else stt.start("fr-FR");
+  };
+
   return (
     <View>
       <View style={styles.fieldHead}>
         <Text style={styles.label}>{icon} {label}</Text>
-        <TouchableOpacity onPress={() => speak?.(label)} style={styles.speakIcon}>
-          <Ionicons name="volume-medium" size={14} color={COLORS.textMuted} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          <TouchableOpacity onPress={onMic} style={[styles.speakIcon, stt.isListening && { backgroundColor: "#EF4444" }]} testID={`${testID}-mic`}>
+            <Ionicons name={stt.isListening ? "mic-off" : "mic"} size={14} color={stt.isListening ? "#fff" : "#10B981"} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => speak?.(label)} style={styles.speakIcon}>
+            <Ionicons name="volume-medium" size={14} color={COLORS.textMuted} />
+          </TouchableOpacity>
+        </View>
       </View>
       <TextInput
         style={[styles.bigInput, small && { padding: 10, fontSize: 14 }]}
-        value={value}
+        value={value + (stt.interim ? " " + stt.interim : "")}
         onChangeText={onChange}
         placeholder={placeholder}
         placeholderTextColor={COLORS.textMuted}
         keyboardType={keyboard || "default"}
         testID={testID}
       />
+      {stt.isListening && <Text style={{ fontSize: 11, color: "#EF4444", marginTop: 4, fontWeight: "700" }}>🎤 Écoute en cours…</Text>}
     </View>
   );
 }
