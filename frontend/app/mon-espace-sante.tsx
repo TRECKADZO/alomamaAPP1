@@ -43,6 +43,8 @@ const CATEGORIES: Category[] = [
       { id: "agenda", label: "Agenda complet", sub: "Tous mes rappels", icon: "calendar-outline", color: "#F59E0B", path: "/agenda" },
       { id: "questions", label: "Questions au pro", sub: "Demander à un spécialiste", icon: "help-circle", color: "#10B981", path: "/questions" },
       { id: "partage", label: "Partage sécurisé", sub: "Code CMU pour pros", icon: "shield-checkmark", color: "#EF4444", path: "/partage-dossier", keywords: ["acces", "consentement"] },
+      { id: "consentements", label: "Consentements", sub: "Pilotez qui voit quoi", icon: "lock-closed", color: "#10B981", path: "/consentements", keywords: ["consent", "rgpd", "vie privee"] },
+      { id: "audit", label: "Journal d'accès", sub: "Qui a vu mes données ?", icon: "search", color: "#6366F1", path: "/audit-log", keywords: ["audit", "transparence"] },
       { id: "fhir", label: "Interopérabilité (FHIR)", sub: "Export santé universel", icon: "swap-horizontal", color: "#6366F1", path: "/fhir", keywords: ["export", "hl7"] },
     ],
   },

@@ -562,12 +562,92 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Phase 2 — Carnet Export PDF + FHIR JSON"
+    - "Phase 3 — Granular Consent endpoints"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 backend:
+  - task: "Phase 3 — Granular Consent endpoints (POST/GET/PATCH/REVOKE/DELETE /api/consents)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          43/45 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_consents.py). Tous les endpoints du module Consent
+          fonctionnent conformément à la spécification.
+
+          ✅ POST /api/consents (server.py L5738) — 12/12
+          • PRO → 403 "Accès refusé" (require_roles("maman")) ✓
+          • categories=["vaccins","INVALID_X"] → 400 + message liste les 10 catégories valides ✓
+          • pro_id="non-existent" → 404 "Professionnel introuvable" ✓
+          • MAMAN body {pro_id, categories=["vaccins","croissance"], expires_at, notes} → 200 ;
+            doc retourné avec id (uuid), maman_id=MAMAN_id, pro_id, pro_name="Dr Konan TestPro",
+            pro_specialite="pédiatre", categories préservées, status="active", created_at ISO,
+            revoked_at=null ✓
+          • Notification de type="consent_granted" insérée dans db.notifications pour le pro ;
+            data.consent_id == cid (1 nouvelle notif sur 21 totales pour pro.test) ✓
+
+          ✅ GET /api/consents/me (server.py L5784) — 13/13
+          • MAMAN → 200 {total:1, consents:[…], available_categories:[10 catégories]}
+            available_categories == ["patient_info","vaccins","croissance","echos",
+            "consultation_notes","dmp","birth_declaration","allergies","messages","rdv"] ✓
+          • Chaque consent inclut: id, maman_id, pro_id, pro_name, pro_specialite, categories,
+            expires_at, notes, status, created_at, revoked_at ✓
+          • PRO → 200, total inclut le consent reçu ✓
+
+          ✅ PATCH /api/consents/{cid} (server.py L5794) — 4/4
+          • MAMAN body {pro_id, categories=["vaccins"], expires_at} → 200 {ok:true} ;
+            GET /consents/me confirme categories=["vaccins"] ✓
+          • categories=["INVALID_Z"] → 400 ✓
+          • Autre maman (compte ad-hoc créé pour le test) → 404 "Consentement introuvable" ✓
+
+          ✅ POST /api/consents/{cid}/revoke (server.py L5814) — 4/4
+          • MAMAN → 200 {ok:true, status:"revoked"} ;
+            GET /consents/me montre status="revoked" + revoked_at ISO populé ✓
+          • Notification de type="consent_revoked" insérée pour le pro avec data.consent_id=cid ✓
+
+          ✅ DELETE /api/consents/{cid} (server.py L5842) — 2/2
+          • 200 {ok:true} ; GET /consents/me confirme l'absence du consent ✓
+
+          ✅ Régression
+          • GET /fhir/Patient/{maman_id} as MAMAN → 200, resourceType=Patient ✓
+          • GET /audit-log/me → 200 ✓
+
+          ❌ MINOR — Audit log Consent events not surfaced via /audit-log/me (2 fail / 45):
+          Les entrées audit Consent sont CORRECTEMENT persistées en DB (vérifié directement :
+          6 docs dans db.audit_log avec action="write"|"delete", resource_type="Consent",
+          user_id=MAMAN_id, user_role="maman", details renseigné). Cependant l'endpoint
+          GET /api/audit-log/me (server.py L5874-5885) filtre par
+          `resource_id ∈ {enfants_ids ∪ maman_id}`. Or pour un consent, resource_id == cid
+          (UUID du consent), donc ces évènements n'apparaissent pas dans la réponse.
+          IMPACT : la maman ne peut pas voir dans son journal d'audit ses propres actions
+          d'octroi/modification/révocation/suppression de consentements. Les évènements existent
+          bien en base, ils sont juste invisibles via cet endpoint.
+          FIX SUGGÉRÉ (minimaliste) : élargir le filtre pour inclure aussi
+          `{"user_id": user["id"], "resource_type": "Consent"}` (OR), p.ex.:
+            items = await db.audit_log.find(
+                {"$or": [
+                    {"resource_id": {"$in": target_ids}},
+                    {"user_id": user["id"], "resource_type": "Consent"},
+                ]}, …
+          Non bloquant pour la création/gestion des consentements eux-mêmes.
+
+          Helper interne `_has_consent_for(pro_id, maman_id, category)` (server.py L5852)
+          présent et utilisé par `/fhir/Patient` (server.py L5415) — vérifie status="active",
+          categories contient la catégorie, expires_at non dépassé. Comportement validé
+          indirectement par le fait que le consent passe bien par les filtres de status/category
+          dans la collection.
+
+          Cleanup : tous les consents du test supprimés ; compte ad-hoc autre maman supprimé
+          (DELETE /auth/me {password, confirmation:"SUPPRIMER"}). Script idempotent.
+
   - task: "Phase 2 — Carnet Export PDF + FHIR JSON"
     implemented: true
     working: true

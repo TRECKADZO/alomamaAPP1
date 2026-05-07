@@ -5713,6 +5713,164 @@ async def carnet_module(enfant_id: str, module: str, user=Depends(get_current_us
 
 # --- Audit log lisible -----------------------------------------------------
 
+# Catégories de données protégées par le consentement granulaire
+CONSENT_CATEGORIES = [
+    "patient_info",         # Identité de base (nom, âge, photo, CMU)
+    "vaccins",              # Immunization (vaccins EPI)
+    "croissance",           # Observations (poids/taille/PC/temp)
+    "echos",                # DiagnosticReport (échographies)
+    "consultation_notes",   # Notes des Pros
+    "dmp",                  # Suivi du développement
+    "birth_declaration",    # Acte de naissance
+    "allergies",            # AllergyIntolerance
+    "messages",             # Conversations
+    "rdv",                  # RDV passés/futurs
+]
+
+
+class ConsentIn(BaseModel):
+    pro_id: str
+    categories: List[str]            # cf. CONSENT_CATEGORIES
+    expires_at: Optional[str] = None  # ISO; None = sans expiration
+    notes: Optional[str] = None
+
+
+@api.post("/consents")
+async def consent_create(payload: ConsentIn, user=Depends(require_roles("maman"))):
+    """Maman crée un consentement granulaire envers un Pro."""
+    # Validation
+    invalid = [c for c in payload.categories if c not in CONSENT_CATEGORIES]
+    if invalid:
+        raise HTTPException(400, f"Catégories invalides : {invalid}. Valides : {CONSENT_CATEGORIES}")
+    pro = await db.users.find_one({"id": payload.pro_id, "role": "professionnel"}, {"_id": 0})
+    if not pro:
+        raise HTTPException(404, "Professionnel introuvable")
+
+    cid = str(uuid.uuid4())
+    doc = {
+        "id": cid,
+        "maman_id": user["id"],
+        "pro_id": payload.pro_id,
+        "pro_name": pro.get("name"),
+        "pro_specialite": pro.get("specialite"),
+        "categories": payload.categories,
+        "expires_at": payload.expires_at,
+        "notes": payload.notes,
+        "status": "active",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "revoked_at": None,
+    }
+    await db.consents.insert_one(doc)
+
+    # Notifier le pro
+    try:
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": payload.pro_id,
+            "type": "consent_granted",
+            "title": "✅ Nouveau consentement reçu",
+            "body": f"{user.get('name', 'Une maman')} vous a accordé l'accès à : {', '.join(payload.categories[:3])}{'…' if len(payload.categories) > 3 else ''}",
+            "data": {"consent_id": cid, "maman_id": user["id"]},
+            "read": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+
+    await _audit_log(user=user, action="write", resource_type="Consent", resource_id=cid, details={"pro_id": payload.pro_id, "categories": payload.categories})
+    return {**doc, "_id": None}
+
+
+@api.get("/consents/me")
+async def consent_list_mine(user=Depends(require_roles("maman", "professionnel"))):
+    """Liste les consents : maman → ceux qu'elle a donnés ; pro → ceux reçus."""
+    if user["role"] == "maman":
+        items = await db.consents.find({"maman_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    else:
+        items = await db.consents.find({"pro_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"total": len(items), "consents": items, "available_categories": CONSENT_CATEGORIES}
+
+
+@api.patch("/consents/{cid}")
+async def consent_update(cid: str, payload: ConsentIn, user=Depends(require_roles("maman"))):
+    """Modifie un consentement (catégories, expiration). Réservé à la maman propriétaire."""
+    c = await db.consents.find_one({"id": cid, "maman_id": user["id"]})
+    if not c:
+        raise HTTPException(404, "Consentement introuvable")
+    invalid = [cat for cat in payload.categories if cat not in CONSENT_CATEGORIES]
+    if invalid:
+        raise HTTPException(400, f"Catégories invalides : {invalid}")
+    update = {
+        "categories": payload.categories,
+        "expires_at": payload.expires_at,
+        "notes": payload.notes,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.consents.update_one({"id": cid}, {"$set": update})
+    await _audit_log(user=user, action="write", resource_type="Consent", resource_id=cid, details={"updated": True})
+    return {"ok": True}
+
+
+@api.post("/consents/{cid}/revoke")
+async def consent_revoke(cid: str, user=Depends(require_roles("maman"))):
+    """Révoque un consentement (statut → revoked)."""
+    c = await db.consents.find_one({"id": cid, "maman_id": user["id"]})
+    if not c:
+        raise HTTPException(404, "Consentement introuvable")
+    await db.consents.update_one({"id": cid}, {"$set": {
+        "status": "revoked",
+        "revoked_at": datetime.now(timezone.utc).isoformat(),
+    }})
+    # Notifier le pro de la révocation
+    try:
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": c["pro_id"],
+            "type": "consent_revoked",
+            "title": "⚠️ Consentement révoqué",
+            "body": f"{user.get('name', 'Une maman')} a retiré son consentement.",
+            "data": {"consent_id": cid},
+            "read": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+    await _audit_log(user=user, action="write", resource_type="Consent", resource_id=cid, details={"revoked": True})
+    return {"ok": True, "status": "revoked"}
+
+
+@api.delete("/consents/{cid}")
+async def consent_delete(cid: str, user=Depends(require_roles("maman"))):
+    """Supprime définitivement un consentement."""
+    res = await db.consents.delete_one({"id": cid, "maman_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Consentement introuvable")
+    await _audit_log(user=user, action="delete", resource_type="Consent", resource_id=cid)
+    return {"ok": True}
+
+
+async def _has_consent_for(pro_id: str, maman_id: str, category: str) -> bool:
+    """Vérifie qu'un consent actif et non expiré existe pour la catégorie demandée."""
+    c = await db.consents.find_one({
+        "maman_id": maman_id,
+        "pro_id": pro_id,
+        "status": "active",
+        "categories": category,
+    })
+    if not c:
+        return False
+    if c.get("expires_at"):
+        try:
+            exp = datetime.fromisoformat(str(c["expires_at"]).replace("Z", "+00:00"))
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > exp:
+                return False
+        except Exception:
+            pass
+    return True
+
+
 @api.get("/audit-log/me")
 async def audit_log_me(limit: int = 100, user=Depends(get_current_user)):
     """Maman récupère le journal d'audit la concernant (qui a vu/modifié quoi)."""
