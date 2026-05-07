@@ -5727,6 +5727,80 @@ async def audit_log_me(limit: int = 100, user=Depends(get_current_user)):
     return {"total": len(items), "events": items}
 
 
+# --- Export PDF + JSON FHIR du carnet médical ------------------------------
+
+@api.get("/enfants/{enfant_id}/carnet/export/pdf")
+async def carnet_export_pdf(enfant_id: str, user=Depends(get_current_user)):
+    """Exporte le carnet médical complet de l'enfant en PDF officiel."""
+    e = await db.enfants.find_one({"id": enfant_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    if user["role"] == "professionnel":
+        ok = await _check_pro_access_to_enfant(user, e)
+        if not ok:
+            raise HTTPException(403, "Accès refusé")
+
+    maman = await db.users.find_one({"id": e["user_id"]}, {"_id": 0}) or {}
+
+    # Calcul âge
+    try:
+        dn = datetime.fromisoformat(str(e["date_naissance"]).replace("Z", "+00:00"))
+        if dn.tzinfo is None:
+            dn = dn.replace(tzinfo=timezone.utc)
+        age_mois = max(0, int((datetime.now(timezone.utc) - dn).total_seconds() / (30.4375 * 86400)))
+    except Exception:
+        age_mois = 0
+
+    immunizations = [to_fhir_immunization(v, enfant_id) for v in (e.get("vaccins") or [])]
+    observations: list[dict] = []
+    for m in (e.get("mesures") or []):
+        observations.extend(to_fhir_observations_from_mesure(m, enfant_id))
+
+    diagnostic_reports: list[dict] = []
+    async for echo in db.tele_echo.find({"maman_id": e.get("user_id")}, {"_id": 0}):
+        diagnostic_reports.append(to_fhir_diagnostic_report_echo(echo, e.get("user_id")))
+
+    # DMP summary
+    dmp_summary = None
+    try:
+        progress = await db.dmp_progress.find({"enfant_id": enfant_id}, {"_id": 0}).to_list(500)
+        responses = {p["milestone_id"]: p.get("response", "oui") for p in progress if p.get("milestone_id")}
+        from dmp_data import compute_dmp_status as _dmp_compute
+        dmp_summary = _dmp_compute(age_mois, responses)
+    except Exception:
+        dmp_summary = None
+
+    composition = build_carnet_composition(
+        enfant=e, maman=maman,
+        immunizations=immunizations,
+        observations=observations,
+        diagnostic_reports=diagnostic_reports,
+        dmp_summary=dmp_summary,
+    )
+
+    from pdf_generator import generate_carnet_pdf
+    pdf_bytes = generate_carnet_pdf(
+        enfant=e, maman=maman, composition=composition,
+        immunizations=immunizations, observations=observations,
+        diagnostic_reports=diagnostic_reports, age_mois=age_mois,
+        dmp_summary=dmp_summary,
+    )
+    await _audit_log(user=user, action="export", resource_type="Carnet.pdf", resource_id=enfant_id)
+    safe_nom = (e.get("nom") or "enfant").replace(" ", "_")
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=carnet_{safe_nom}.pdf"},
+    )
+
+
+@api.get("/enfants/{enfant_id}/carnet/export/fhir")
+async def carnet_export_fhir(enfant_id: str, user=Depends(get_current_user)):
+    """Exporte le carnet en JSON FHIR R4 (Bundle document) — proxy sur /fhir/everything."""
+    return await fhir_everything(enfant_id, user)
+
+
 # ----------------------------------------------------------------------
 # Dossier médical lisible (pour UI + PDF + lien partageable)
 # ----------------------------------------------------------------------

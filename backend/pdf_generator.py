@@ -289,3 +289,252 @@ def _image_reader(buf: io.BytesIO):
     """Wrap a BytesIO buffer for ReportLab drawImage."""
     from reportlab.lib.utils import ImageReader
     return ImageReader(buf)
+
+
+
+# ============================================================================
+# CARNET MÉDICAL DE L'ENFANT — PDF
+# ============================================================================
+
+def generate_carnet_pdf(
+    enfant: Dict[str, Any],
+    maman: Dict[str, Any],
+    composition: Dict[str, Any],
+    immunizations: list,
+    observations: list,
+    diagnostic_reports: list,
+    age_mois: int,
+    dmp_summary: Optional[Dict[str, Any]] = None,
+) -> bytes:
+    """Génère un PDF du carnet médical complet de l'enfant.
+
+    Sections : Identité enfant, Identité maman, Vaccinations EPI, Croissance,
+    Examens & Imagerie, Suivi DMP, Allergies. Format A4 vert/orange.
+    """
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    # ---------- HEADER ----------
+    c.setFillColor(COLOR_GREEN)
+    c.rect(0, height - 3 * cm, width, 3 * cm, fill=1, stroke=0)
+    c.setFillColor(COLOR_ORANGE)
+    c.rect(0, height - 3 * cm - 0.3 * cm, width, 0.3 * cm, fill=1, stroke=0)
+
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(2 * cm, height - 1.5 * cm, "À LO MAMAN")
+    c.setFont("Helvetica", 9)
+    c.drawString(2 * cm, height - 2.0 * cm, "Carnet médical pédiatrique")
+    c.setFont("Helvetica-Bold", 14)
+    c.drawRightString(width - 2 * cm, height - 1.5 * cm, "CARNET DE SANTÉ")
+    c.setFont("Helvetica", 9)
+    c.drawRightString(width - 2 * cm, height - 2.0 * cm, f"Édité le {_format_datetime_fr(datetime.now(timezone.utc).isoformat())}")
+
+    y = height - 4.2 * cm
+
+    # ---------- IDENTITÉ ENFANT ----------
+    c.setFillColor(COLOR_DARK)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(2 * cm, y, "👶 Identité de l'enfant")
+    y -= 0.6 * cm
+    c.setStrokeColor(COLOR_GREEN)
+    c.setLineWidth(1.5)
+    c.line(2 * cm, y, width - 2 * cm, y)
+    y -= 0.5 * cm
+
+    c.setFont("Helvetica", 11)
+    c.setFillColor(COLOR_DARK)
+    annees, mois = divmod(age_mois, 12)
+    age_str = f"{annees} an(s) {mois} mois" if annees else f"{age_mois} mois"
+    rows = [
+        ("Nom", enfant.get("nom", "—")),
+        ("Sexe", "Fille" if (enfant.get("sexe") == "F") else "Garçon"),
+        ("Né(e) le", _format_date_fr(enfant.get("date_naissance"))),
+        ("Âge", age_str),
+        ("N° CMU enfant", enfant.get("numero_cmu") or "—"),
+        ("Groupe sanguin", enfant.get("groupe_sanguin") or "—"),
+    ]
+    for label, val in rows:
+        c.setFillColor(COLOR_GRAY)
+        c.drawString(2 * cm, y, label + " :")
+        c.setFillColor(COLOR_DARK)
+        c.drawString(5.5 * cm, y, str(val))
+        y -= 0.5 * cm
+    y -= 0.3 * cm
+
+    # ---------- IDENTITÉ MAMAN ----------
+    c.setFillColor(COLOR_DARK)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(2 * cm, y, "👩 Mère")
+    y -= 0.5 * cm
+    c.setStrokeColor(COLOR_GREEN)
+    c.line(2 * cm, y, width - 2 * cm, y)
+    y -= 0.5 * cm
+    c.setFont("Helvetica", 11)
+    c.setFillColor(COLOR_GRAY)
+    c.drawString(2 * cm, y, "Nom :")
+    c.setFillColor(COLOR_DARK)
+    c.drawString(5.5 * cm, y, str(maman.get("name", "—")))
+    y -= 0.5 * cm
+    c.setFillColor(COLOR_GRAY)
+    c.drawString(2 * cm, y, "Téléphone :")
+    c.setFillColor(COLOR_DARK)
+    c.drawString(5.5 * cm, y, str(maman.get("phone", "—")))
+    y -= 0.7 * cm
+
+    # ---------- VACCINATIONS ----------
+    if immunizations:
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(2 * cm, y, f"💉 Vaccinations ({len(immunizations)})")
+        y -= 0.5 * cm
+        c.setStrokeColor(COLOR_GREEN)
+        c.line(2 * cm, y, width - 2 * cm, y)
+        y -= 0.4 * cm
+        c.setFont("Helvetica-Bold", 9)
+        c.setFillColor(COLOR_GREEN)
+        c.drawString(2 * cm, y, "VACCIN")
+        c.drawString(8 * cm, y, "DATE")
+        c.drawString(13 * cm, y, "STATUT")
+        y -= 0.4 * cm
+        c.setFont("Helvetica", 10)
+        for v in immunizations:
+            if y < 3 * cm:
+                c.showPage()
+                y = height - 2 * cm
+            c.setFillColor(COLOR_DARK)
+            nom = v.get("vaccineCode", {}).get("text", "—")
+            occ = _format_date_fr(v.get("occurrenceDateTime"))
+            statut = "✓ Fait" if v.get("status") == "completed" else "À faire"
+            statut_color = COLOR_GREEN if v.get("status") == "completed" else COLOR_ORANGE
+            c.drawString(2 * cm, y, str(nom)[:35])
+            c.drawString(8 * cm, y, occ)
+            c.setFillColor(statut_color)
+            c.drawString(13 * cm, y, statut)
+            y -= 0.45 * cm
+        y -= 0.3 * cm
+
+    # ---------- CROISSANCE ----------
+    if observations:
+        if y < 5 * cm:
+            c.showPage()
+            y = height - 2 * cm
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(2 * cm, y, f"📈 Croissance ({len(observations)} mesures)")
+        y -= 0.5 * cm
+        c.setStrokeColor(COLOR_GREEN)
+        c.line(2 * cm, y, width - 2 * cm, y)
+        y -= 0.4 * cm
+        c.setFont("Helvetica-Bold", 9)
+        c.setFillColor(COLOR_GREEN)
+        c.drawString(2 * cm, y, "DATE")
+        c.drawString(7 * cm, y, "MESURE")
+        c.drawString(13 * cm, y, "VALEUR")
+        y -= 0.4 * cm
+        c.setFont("Helvetica", 10)
+        for o in observations:
+            if y < 3 * cm:
+                c.showPage()
+                y = height - 2 * cm
+            c.setFillColor(COLOR_DARK)
+            d = _format_date_fr(o.get("effectiveDateTime"))
+            label = (o.get("code") or {}).get("text", "—")
+            vq = o.get("valueQuantity") or {}
+            val = f"{vq.get('value', '')} {vq.get('unit', '')}".strip()
+            c.drawString(2 * cm, y, d)
+            c.drawString(7 * cm, y, str(label)[:30])
+            c.drawString(13 * cm, y, val)
+            y -= 0.45 * cm
+        y -= 0.3 * cm
+
+    # ---------- EXAMENS & IMAGERIE ----------
+    if diagnostic_reports:
+        if y < 4 * cm:
+            c.showPage()
+            y = height - 2 * cm
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(2 * cm, y, f"🔬 Examens & Imagerie ({len(diagnostic_reports)})")
+        y -= 0.5 * cm
+        c.setStrokeColor(COLOR_GREEN)
+        c.line(2 * cm, y, width - 2 * cm, y)
+        y -= 0.4 * cm
+        c.setFont("Helvetica", 10)
+        for d in diagnostic_reports:
+            if y < 3 * cm:
+                c.showPage()
+                y = height - 2 * cm
+            title = (d.get("code") or {}).get("text", "Rapport")
+            date = _format_date_fr(d.get("effectiveDateTime"))
+            conclusion = d.get("conclusion") or "—"
+            c.setFillColor(COLOR_DARK)
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(2 * cm, y, f"• {title} — {date}")
+            y -= 0.45 * cm
+            c.setFont("Helvetica", 9)
+            c.setFillColor(COLOR_GRAY)
+            for line in str(conclusion)[:200].split("\n"):
+                c.drawString(2.4 * cm, y, line[:80])
+                y -= 0.35 * cm
+            y -= 0.15 * cm
+
+    # ---------- DMP ----------
+    if dmp_summary:
+        if y < 4 * cm:
+            c.showPage()
+            y = height - 2 * cm
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(2 * cm, y, "🧠 Suivi du développement (DMP)")
+        y -= 0.5 * cm
+        c.setStrokeColor(COLOR_GREEN)
+        c.line(2 * cm, y, width - 2 * cm, y)
+        y -= 0.5 * cm
+        c.setFont("Helvetica", 11)
+        c.setFillColor(COLOR_DARK)
+        score = dmp_summary.get("score_global")
+        if score is None:
+            score = "—"
+        c.drawString(2 * cm, y, f"Score global : {score}%")
+        y -= 0.5 * cm
+        cov = dmp_summary.get("couverture") or {}
+        c.drawString(2 * cm, y, f"Couverture : {cov.get('repondus', 0)}/{cov.get('attendus', 0)} ({cov.get('pct', 0)}%)")
+        y -= 0.5 * cm
+        nb_alertes = len(dmp_summary.get("alertes") or [])
+        if nb_alertes:
+            c.setFillColor(HexColor("#EF4444"))
+            c.drawString(2 * cm, y, f"⚠️ {nb_alertes} jalon(s) en alerte — consulter pédiatre")
+            y -= 0.5 * cm
+
+    # ---------- ALLERGIES ----------
+    allergies = enfant.get("allergies")
+    if allergies:
+        if y < 3 * cm:
+            c.showPage()
+            y = height - 2 * cm
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(2 * cm, y, "⚠️ Allergies")
+        y -= 0.5 * cm
+        c.setStrokeColor(HexColor("#EF4444"))
+        c.line(2 * cm, y, width - 2 * cm, y)
+        y -= 0.5 * cm
+        c.setFont("Helvetica", 11)
+        c.setFillColor(HexColor("#DC2626"))
+        if isinstance(allergies, list):
+            for a in allergies:
+                c.drawString(2 * cm, y, f"• {a}")
+                y -= 0.4 * cm
+        else:
+            c.drawString(2 * cm, y, f"• {allergies}")
+
+    # ---------- FOOTER ----------
+    c.setFillColor(COLOR_GRAY)
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawCentredString(width / 2, 1.2 * cm, "Document généré par À lo Maman — Conforme FHIR R4 / HL7")
+    c.drawCentredString(width / 2, 0.8 * cm, "alomaman.com")
+
+    c.save()
+    return buf.getvalue()

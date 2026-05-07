@@ -67,6 +67,7 @@ const CATEGORIES: Category[] = [
     emoji: "👶",
     tools: [
       { id: "enfants", label: "Mes enfants", sub: "Carnets de santé", icon: "happy", color: "#3B82F6", path: "/(tabs)/enfants" },
+      { id: "carnet", label: "Carnet médical", sub: "Vue par âge + export FHIR/PDF", icon: "book", color: "#0E7C3E", path: "/(tabs)/enfants", keywords: ["interop", "fhir", "vaccin", "croissance"] },
       { id: "dmp", label: "DMP — 7 axes", sub: "Détection précoce", icon: "pulse", color: "#0EA5E9", path: "/dmp", keywords: ["developpement", "jalons"] },
       { id: "jalons", label: "Étapes de développement", sub: "Vue d'ensemble", icon: "checkmark-done", color: "#10B981", path: "/jalons" },
       { id: "diversification", label: "Diversification", sub: "Alimentation bébé", icon: "restaurant", color: "#F59E0B", path: "/diversification", keywords: ["aliments"] },
