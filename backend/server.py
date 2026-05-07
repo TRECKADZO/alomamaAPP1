@@ -5383,6 +5383,351 @@ async def fhir_export(user=Depends(get_current_user)):
 
 
 # ----------------------------------------------------------------------
+# 🌐 FHIR R4 Facade Endpoints — Phase 1 Architecture interopérable
+# ----------------------------------------------------------------------
+from fhir_facade import (  # noqa: E402
+    to_fhir_patient_maman,
+    to_fhir_patient_enfant,
+    to_fhir_allergy_intolerance,
+    to_fhir_immunization,
+    to_fhir_observations_from_mesure,
+    to_fhir_diagnostic_report_echo,
+    to_fhir_consent as _to_fhir_consent,
+    to_fhir_birth_composition,
+    build_carnet_composition,
+    to_fhir_bundle,
+    AGE_MODULES,
+    get_module_for_age,
+    relevant_modules_for_specialty,
+)
+
+
+async def _check_pro_access_to_enfant(pro_user: dict, enfant: dict) -> bool:
+    """Pro a-t-il un RDV ou un consent actif avec la maman ?"""
+    if pro_user.get("role") == "admin":
+        return True
+    maman_id = enfant.get("user_id")
+    if not maman_id:
+        return False
+    rdv = await db.rdv.find_one({"pro_id": pro_user["id"], "maman_id": maman_id})
+    if rdv:
+        return True
+    consent = await db.consents.find_one({
+        "maman_id": maman_id,
+        "pro_id": pro_user["id"],
+        "status": "active",
+    })
+    return bool(consent)
+
+
+async def _audit_log(*, user: dict, action: str, resource_type: str, resource_id: str, details: dict | None = None):
+    """Trace toute lecture/écriture sur ressources santé pour traçabilité GDPR."""
+    try:
+        await db.audit_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "user_role": user.get("role"),
+            "user_name": user.get("name"),
+            "action": action,  # read | write | delete
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "details": details or {},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass  # ne jamais casser un flux fonctionnel pour un audit
+
+
+@api.get("/fhir/Patient/{patient_id}")
+async def fhir_get_patient(patient_id: str, user=Depends(get_current_user)):
+    """Récupère un Patient FHIR (Maman ou Enfant)."""
+    # Cherche d'abord dans users
+    u = await db.users.find_one({"id": patient_id}, {"_id": 0})
+    if u and u.get("role") == "maman":
+        if user["role"] not in ("admin",) and user["id"] != patient_id:
+            # Pro doit avoir un RDV ou un consent
+            if user.get("role") == "professionnel":
+                rdv = await db.rdv.find_one({"pro_id": user["id"], "maman_id": patient_id})
+                if not rdv:
+                    raise HTTPException(403, "Accès refusé (pas de RDV ni consent)")
+            else:
+                raise HTTPException(403, "Accès refusé")
+        await _audit_log(user=user, action="read", resource_type="Patient", resource_id=patient_id)
+        return to_fhir_patient_maman(u)
+
+    e = await db.enfants.find_one({"id": patient_id}, {"_id": 0})
+    if e:
+        if user["role"] == "maman" and e.get("user_id") != user["id"]:
+            raise HTTPException(403, "Accès refusé")
+        if user["role"] == "professionnel":
+            ok = await _check_pro_access_to_enfant(user, e)
+            if not ok:
+                raise HTTPException(403, "Accès refusé (pas de RDV ni consent)")
+        await _audit_log(user=user, action="read", resource_type="Patient", resource_id=patient_id)
+        return to_fhir_patient_enfant(e)
+
+    raise HTTPException(404, "Patient introuvable")
+
+
+@api.get("/fhir/Immunization")
+async def fhir_list_immunizations(subject: str, user=Depends(get_current_user)):
+    """Liste les Immunization (vaccins) pour un enfant."""
+    e = await db.enfants.find_one({"id": subject}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Patient (enfant) introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    if user["role"] == "professionnel":
+        ok = await _check_pro_access_to_enfant(user, e)
+        if not ok:
+            raise HTTPException(403, "Accès refusé")
+    items = [to_fhir_immunization(v, subject) for v in (e.get("vaccins") or [])]
+    await _audit_log(user=user, action="read", resource_type="Immunization", resource_id=subject)
+    return to_fhir_bundle(resources=items, bundle_type="searchset")
+
+
+@api.get("/fhir/Observation")
+async def fhir_list_observations(
+    subject: str,
+    category: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Liste les Observation (mesures anthropo) pour un enfant.
+
+    `category` filtre par exemple `vital-signs` (par défaut) ou `imaging`.
+    """
+    e = await db.enfants.find_one({"id": subject}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Patient (enfant) introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    if user["role"] == "professionnel":
+        ok = await _check_pro_access_to_enfant(user, e)
+        if not ok:
+            raise HTTPException(403, "Accès refusé")
+
+    obs: list[dict] = []
+    for m in (e.get("mesures") or []):
+        obs.extend(to_fhir_observations_from_mesure(m, subject))
+    if category:
+        cat_l = category.lower()
+        obs = [o for o in obs if any((c.get("coding") or [{}])[0].get("code") == cat_l for c in o.get("category") or [])]
+    await _audit_log(user=user, action="read", resource_type="Observation", resource_id=subject, details={"category": category})
+    return to_fhir_bundle(resources=obs, bundle_type="searchset")
+
+
+@api.get("/fhir/DiagnosticReport")
+async def fhir_list_diagnostic_reports(subject: str, user=Depends(get_current_user)):
+    """Liste les DiagnosticReport (échographies) pour une maman."""
+    if user["role"] == "maman" and user["id"] != subject:
+        raise HTTPException(403, "Accès refusé")
+    if user["role"] == "professionnel":
+        rdv = await db.rdv.find_one({"pro_id": user["id"], "maman_id": subject})
+        if not rdv:
+            raise HTTPException(403, "Accès refusé")
+
+    reports = []
+    async for echo in db.tele_echo.find({"maman_id": subject}, {"_id": 0}):
+        reports.append(to_fhir_diagnostic_report_echo(echo, subject))
+    await _audit_log(user=user, action="read", resource_type="DiagnosticReport", resource_id=subject)
+    return to_fhir_bundle(resources=reports, bundle_type="searchset")
+
+
+@api.get("/fhir/Composition/{enfant_id}")
+async def fhir_carnet_composition(enfant_id: str, user=Depends(get_current_user)):
+    """Carnet médical complet de l'enfant en FHIR Composition."""
+    e = await db.enfants.find_one({"id": enfant_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    if user["role"] == "professionnel":
+        ok = await _check_pro_access_to_enfant(user, e)
+        if not ok:
+            raise HTTPException(403, "Accès refusé")
+
+    maman = await db.users.find_one({"id": e["user_id"]}, {"_id": 0}) or {}
+    immunizations = [to_fhir_immunization(v, enfant_id) for v in (e.get("vaccins") or [])]
+
+    observations: list[dict] = []
+    for m in (e.get("mesures") or []):
+        observations.extend(to_fhir_observations_from_mesure(m, enfant_id))
+
+    diagnostic_reports: list[dict] = []
+    async for echo in db.tele_echo.find({"maman_id": e.get("user_id")}, {"_id": 0}):
+        diagnostic_reports.append(to_fhir_diagnostic_report_echo(echo, e.get("user_id")))
+
+    birth = await db.birth_declarations.find_one({"enfant_id": enfant_id}, {"_id": 0})
+
+    # DMP summary
+    dmp_summary = None
+    try:
+        progress = await db.dmp_progress.find({"enfant_id": enfant_id}, {"_id": 0}).to_list(500)
+        responses = {p["milestone_id"]: p.get("response", "oui") for p in progress if p.get("milestone_id")}
+        try:
+            dn = datetime.fromisoformat(str(e["date_naissance"]).replace("Z", "+00:00"))
+            if dn.tzinfo is None:
+                dn = dn.replace(tzinfo=timezone.utc)
+            age_mois = max(0, int((datetime.now(timezone.utc) - dn).total_seconds() / (30.4375 * 86400)))
+        except Exception:
+            age_mois = 0
+        from dmp_data import compute_dmp_status as _dmp_compute
+        dmp_summary = _dmp_compute(age_mois, responses)
+    except Exception:
+        dmp_summary = None
+
+    composition = build_carnet_composition(
+        enfant=e, maman=maman,
+        immunizations=immunizations,
+        observations=observations,
+        diagnostic_reports=diagnostic_reports,
+        birth_declaration=birth,
+        dmp_summary=dmp_summary,
+    )
+    await _audit_log(user=user, action="read", resource_type="Composition", resource_id=f"carnet-{enfant_id}")
+    return composition
+
+
+@api.get("/fhir/everything/{enfant_id}")
+async def fhir_everything(enfant_id: str, user=Depends(get_current_user)):
+    """Bundle FHIR complet (Patient + Immunization + Observation + DiagnosticReport + Composition)."""
+    e = await db.enfants.find_one({"id": enfant_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    if user["role"] == "professionnel":
+        ok = await _check_pro_access_to_enfant(user, e)
+        if not ok:
+            raise HTTPException(403, "Accès refusé")
+
+    maman = await db.users.find_one({"id": e["user_id"]}, {"_id": 0}) or {}
+
+    resources: list[dict] = []
+    resources.append(to_fhir_patient_maman(maman))
+    resources.append(to_fhir_patient_enfant(e, maman_id=maman.get("id")))
+    for a in (e.get("allergies") or []):
+        resources.append(to_fhir_allergy_intolerance(enfant_id, a))
+    for v in (e.get("vaccins") or []):
+        resources.append(to_fhir_immunization(v, enfant_id))
+    for m in (e.get("mesures") or []):
+        resources.extend(to_fhir_observations_from_mesure(m, enfant_id))
+    async for echo in db.tele_echo.find({"maman_id": e.get("user_id")}, {"_id": 0}):
+        resources.append(to_fhir_diagnostic_report_echo(echo, e.get("user_id")))
+    birth = await db.birth_declarations.find_one({"enfant_id": enfant_id}, {"_id": 0})
+    if birth:
+        resources.append(to_fhir_birth_composition(birth, enfant_id))
+
+    await _audit_log(user=user, action="read", resource_type="Bundle.everything", resource_id=enfant_id)
+    return to_fhir_bundle(resources=resources, bundle_type="document")
+
+
+# --- Carnet modulaire par âge ----------------------------------------------
+
+@api.get("/fhir/age-modules")
+async def fhir_age_modules(user=Depends(get_current_user)):
+    """Liste les modules d'âge disponibles + adaptation par spécialité du pro."""
+    relevant = relevant_modules_for_specialty(user.get("specialite"))
+    return {
+        "modules": [{"key": k, **v, "relevant_for_pro": k in relevant} for k, v in AGE_MODULES.items()],
+        "current_specialty": user.get("specialite"),
+        "relevant_modules": relevant,
+    }
+
+
+@api.get("/enfants/{enfant_id}/carnet/{module}")
+async def carnet_module(enfant_id: str, module: str, user=Depends(get_current_user)):
+    """Récupère le carnet médical de l'enfant filtré sur un module d'âge.
+
+    `module` ∈ naissance | 0-6m | 6-24m | 2-5a | 6-12a | 13-18a
+    Adapte la vue selon la spécialité du Pro connecté.
+    """
+    if module not in AGE_MODULES:
+        raise HTTPException(400, f"Module inconnu. Valides : {list(AGE_MODULES.keys())}")
+    e = await db.enfants.find_one({"id": enfant_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and e.get("user_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    if user["role"] == "professionnel":
+        ok = await _check_pro_access_to_enfant(user, e)
+        if not ok:
+            raise HTTPException(403, "Accès refusé")
+
+    # Calcul âge en mois
+    try:
+        dn = datetime.fromisoformat(str(e["date_naissance"]).replace("Z", "+00:00"))
+        if dn.tzinfo is None:
+            dn = dn.replace(tzinfo=timezone.utc)
+        age_mois = max(0, int((datetime.now(timezone.utc) - dn).total_seconds() / (30.4375 * 86400)))
+    except Exception:
+        age_mois = 0
+
+    module_conf = AGE_MODULES[module]
+    current_module = get_module_for_age(age_mois)
+    relevant = relevant_modules_for_specialty(user.get("specialite"))
+
+    # Filtrer immunizations / observations selon le module choisi
+    vaccins = e.get("vaccins") or []
+    mesures = e.get("mesures") or []
+
+    def _date_age_months(dt_str):
+        try:
+            d = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            return int((d - dn).total_seconds() / (30.4375 * 86400))
+        except Exception:
+            return None
+
+    def _in_module_age(d_age: int | None) -> bool:
+        if d_age is None:
+            return True  # pas de date → on inclut quand même
+        return module_conf["min_m"] <= d_age < module_conf["max_m"]
+
+    vaccins_in = [v for v in vaccins if _in_module_age(_date_age_months(v.get("date")))]
+    mesures_in = [m for m in mesures if _in_module_age(_date_age_months(m.get("date")))]
+
+    immunizations_fhir = [to_fhir_immunization(v, enfant_id) for v in vaccins_in]
+    observations_fhir: list[dict] = []
+    for m in mesures_in:
+        observations_fhir.extend(to_fhir_observations_from_mesure(m, enfant_id))
+
+    await _audit_log(user=user, action="read", resource_type="Carnet.module", resource_id=enfant_id, details={"module": module})
+
+    return {
+        "enfant_id": enfant_id,
+        "enfant": {"id": enfant_id, "nom": e.get("nom"), "sexe": e.get("sexe"), "date_naissance": e.get("date_naissance"), "age_mois": age_mois},
+        "module": module,
+        "module_label": module_conf["label"],
+        "module_sections": module_conf["sections"],
+        "is_current_module": module == current_module,
+        "is_relevant_for_pro": module in relevant,
+        "current_pro_specialty": user.get("specialite"),
+        "immunizations_count": len(immunizations_fhir),
+        "observations_count": len(observations_fhir),
+        "immunizations": immunizations_fhir,
+        "observations": observations_fhir,
+    }
+
+
+# --- Audit log lisible -----------------------------------------------------
+
+@api.get("/audit-log/me")
+async def audit_log_me(limit: int = 100, user=Depends(get_current_user)):
+    """Maman récupère le journal d'audit la concernant (qui a vu/modifié quoi)."""
+    if user["role"] != "maman":
+        raise HTTPException(403, "Réservé aux mamans")
+    enfants_ids = [e["id"] async for e in db.enfants.find({"user_id": user["id"]}, {"_id": 0, "id": 1})]
+    target_ids = enfants_ids + [user["id"]]
+    items = await db.audit_log.find(
+        {"resource_id": {"$in": target_ids}},
+        {"_id": 0},
+    ).sort("timestamp", -1).to_list(min(limit, 500))
+    return {"total": len(items), "events": items}
+
+
+# ----------------------------------------------------------------------
 # Dossier médical lisible (pour UI + PDF + lien partageable)
 # ----------------------------------------------------------------------
 async def _build_dossier(user_id: str) -> dict:

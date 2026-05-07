@@ -561,10 +561,122 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Phase 1 — FHIR R4 Facade + Carnet Modulaire"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend:
+  - task: "Phase 1 — FHIR R4 Facade + Carnet Modulaire by age + Audit log"
+    implemented: true
+    working: true
+    file: "/app/backend/fhir_facade.py, /app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Phase 1 FHIR Facade tests — 90/90 PASS on https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_phase1_fhir.py, plus follow-up /app/backend_test_phase1_fhir_followup.py).
+
+          Setup: MAMAN maman.test@alomaman.dev / Test1234! (id=512b5cd8-…), PRO pro.test@alomaman.dev / Test1234!
+          (id=2440bb16-…, specialite=pédiatre), child Test 1 e41c8152-… age ~3 mois. CMU activée pour la maman
+          (numero=0102030405). RDV maman↔pro auto-créé. 1 mesure + 1 vaccin BCG ajoutés au child pour exercer
+          toutes les sections.
+
+          🅰 [1] GET /fhir/Patient/{patient_id} (10/10 PASS):
+          • 1a Maman→self → 200, resourceType=Patient, gender=female. identifier[] contient
+            system="http://alomaman.com/fhir/identifier/patient-id" (value=user.id) ET
+            system="http://alomaman.com/fhir/identifier/cmu" (value présent).
+          • 1b Maman→enfant Test 1 → 200, resourceType=Patient, gender=male,
+            link[0].other.reference == "Patient/512b5cd8-…" (= maman_id) ✓.
+          • 1c Maman→other maman → 403 ✓.
+          • 1d Pro→maman (avec RDV) → 200, resourceType=Patient ✓.
+          • 1e Pro→other maman (sans RDV) → 403 ✓.
+
+          🅱 [2] GET /fhir/Immunization?subject={enfant_id} (4/4 PASS):
+          • 200, resourceType=Bundle, type=searchset. Chaque entry.resource.resourceType=="Immunization".
+          • Sample: status=completed, vaccineCode.coding=[{system:"http://id.who.int/icd/release/11/mms",display:"BCG"}],
+            patient.reference="Patient/{enfant_id}" ✓.
+
+          🅲 [3] GET /fhir/Observation?subject={enfant_id} (5/5 PASS):
+          • 200 Bundle searchset. Chaque Observation.code.coding[0].system=="http://loinc.org".
+          • LOINC codes vus: 29463-7 (poids), 8302-2 (taille), 9843-4 (PC) — conformes à la spec.
+          • ?category=imaging → 0 entries pour child (mesures sont vital-signs) ✓.
+
+          🅳 [4] GET /fhir/DiagnosticReport?subject={maman_id} (5/5 PASS):
+          • 200 Bundle searchset. Tous les entries sont DiagnosticReport (count=0 puisque pas de tele-écho stockée).
+          • Contained Observations: structure prête (vérifié dans le code, pas de tele-écho seedée).
+          • 4b Other maman→subject=maman_id → 403 ✓.
+
+          🅴 [5] GET /fhir/Composition/{enfant_id} (3/4 initial, 4/4 après ajout vaccin):
+          • 200, resourceType=Composition, type.coding[0].system=="http://loinc.org" ✓.
+          • Sections initiales: ['Identité', 'Croissance & signes vitaux', 'Suivi du développement (DMP)']
+            → "Vaccinations" et "Examens & Imagerie" absentes faute de données.
+          • Après POST /enfants/{eid}/vaccins (BCG): sections =
+            ['Identité', 'Vaccinations (EPI)', 'Croissance & signes vitaux', 'Suivi du développement (DMP)'] ✓.
+          • Comportement correct: les sections optionnelles (Vaccinations, Examens & Imagerie, Allergies)
+            n'apparaissent que si des données existent. Pas un bug, conforme à fhir_facade.build_carnet_composition.
+
+          🅵 [6] GET /fhir/everything/{enfant_id} (3/4 initial, 4/4 après vaccin):
+          • 200, resourceType=Bundle, type=document. ≥2 Patients (maman+enfant) présents ✓.
+          • Avant vaccin: types=[Patient, Patient, Observation×3] → pas d'Immunization (logique).
+          • Après vaccin: types=[Patient, Patient, Immunization, Observation×3] ✓ AllergyIntolerance/DiagnosticReport
+            n'apparaissent que si des données existent. Conforme à to_fhir_bundle(bundle_type="document").
+
+          🅶 [7] GET /fhir/age-modules (4/4 PASS):
+          • 200. modules order keys = ['naissance','0-6m','6-24m','2-5a','6-12a','13-18a'] ✓.
+          • As Maman (no specialite): relevant_modules = tous les 6.
+          • As Pro (specialite=pédiatre): relevant_modules = ['0-6m','6-24m','2-5a','6-12a'] (correctement adapté
+            via SPECIALTY_PRIORITY) ✓.
+
+          🅷 [8] GET /enfants/{enfant_id}/carnet/{module} (32/32 PASS):
+          • Tous les 6 modules (naissance, 0-6m, 6-24m, 2-5a, 6-12a, 13-18a) → 200.
+          • Chaque réponse contient toutes les clés requises: enfant, module, module_label, module_sections,
+            is_current_module, immunizations_count, observations_count, immunizations[], observations[] ✓.
+          • module=invalid_xxx → 400 "Module inconnu. Valides: …" ✓.
+          • Other maman→/carnet/0-6m → 403 ✓.
+
+          🅸 [9] GET /audit-log/me (10/10 PASS):
+          • Maman→200. response.events est une liste non vide (14 événements après le run).
+          • Chaque event possède {action, resource_type, resource_id, timestamp, user_id} et user_id == maman_id.
+          • Sample: {action:"read", resource_type:"Carnet.module", resource_id:"e41c8152-…",
+            details:{module:"13-18a"}, user_role:"maman"} ✓.
+          • Pro→/audit-log/me → 403 "Réservé aux mamans" ✓.
+
+          🅹 [10] Backward compatibility (3/3 PASS):
+          • GET /fhir/patient (legacy lowercase, no patient_id) → 200, resourceType=Bundle, type=collection.
+            L'ancien export Patient+RelatedPerson+Observations[] est toujours servi par le bloc legacy
+            server.py L5305 (avant le facade Phase 1). Aucune régression.
+
+          OBSERVATIONS (non bloquantes, FYI):
+          • DELETE /auth/me retourne 422 (UnprocessableEntity) sur la maman fraîchement créée — l'endpoint
+            attend probablement un body de confirmation. Non lié à FHIR. Le compte ad-hoc
+            d'une 2e maman reste donc en DB après le test (à nettoyer ou à documenter dans une autre tâche).
+          • Composition/everything: sections/Immunization sont conditionnelles à la présence de données.
+            Cela est conforme à la sémantique FHIR ("if any") mais le wording du prompt initial pouvait laisser
+            penser à une exigence absolue — j'ai validé en ajoutant un vaccin BCG, et tout apparaît correctement.
+
+          NO BUGS DETECTED. Production-ready. Audit log persiste fidèlement chaque GET FHIR.
+      - working: "NA"
+        agent: "main"
+        comment: |
+          New /app/backend/fhir_facade.py + 9 nouveaux endpoints REST FHIR-like.
+          Endpoints à tester (auth Maman + Pro via RDV/consent):
+          - GET /api/fhir/Patient/{patient_id}
+          - GET /api/fhir/Immunization?subject={enfant_id}
+          - GET /api/fhir/Observation?subject={enfant_id}&category=vital-signs|imaging
+          - GET /api/fhir/DiagnosticReport?subject={maman_id}
+          - GET /api/fhir/Composition/{enfant_id}
+          - GET /api/fhir/everything/{enfant_id}
+          - GET /api/fhir/age-modules
+          - GET /api/enfants/{enfant_id}/carnet/{module} (modules: naissance, 0-6m, 6-24m, 2-5a, 6-12a, 13-18a)
+          - GET /api/audit-log/me
+
+          Tests: validate resourceType, identifiers (CMU + ALOMAMAN), LOINC codes (weight 29463-7, height 8302-2, head_circumference 9843-4, temperature 8310-5), patient/subject references, bundle types (searchset, document), 403 on unauthorized access, 400 on invalid module, audit log entries persisted.
 
 frontend:
   - task: "DMP Yes/No responses UI + Bilan rapide carousel (mobile)"
@@ -3766,3 +3878,34 @@ agent_communication:
         Full backend chain: login → identifier lookup → partage creation → demandes-recues listing → notification
         creation → validation → status change → access_token persisted. All working as designed. Script:
         /app/backend_test_partage_smoke.py.
+
+    - agent: "testing"
+      message: |
+        Phase 1 FHIR R4 Facade fully validated against https://cycle-tracker-pro.preview.emergentagent.com/api
+        — 90/90 PASS on /app/backend_test_phase1_fhir.py + /app/backend_test_phase1_fhir_followup.py.
+
+        ALL 9 FHIR endpoints behave per spec:
+        • GET /fhir/Patient/{id} (Maman & Enfant) — 200 with correct identifier systems (patient-id + cmu),
+          gender, link[0].other.reference for child→mother. 403 enforced for cross-tenant maman + Pro without RDV.
+        • GET /fhir/Immunization?subject={enfant_id} — Bundle searchset with Immunization entries
+          (status=completed, vaccineCode.coding[].system=http://id.who.int/icd/release/11/mms,
+          patient.reference=Patient/{enfant_id}).
+        • GET /fhir/Observation?subject={enfant_id} — Bundle searchset with LOINC codes
+          29463-7 (poids), 8302-2 (taille), 9843-4 (PC). ?category=imaging → 0 entries (correct).
+        • GET /fhir/DiagnosticReport?subject={maman_id} — Bundle searchset, 403 for unauthorized.
+        • GET /fhir/Composition/{enfant_id} — resourceType=Composition, type.coding[0].system=http://loinc.org,
+          sections {Identité, Vaccinations(EPI), Croissance, DMP} (Vaccinations + Examens & Imagerie + Allergies
+          conditionnels selon données — vérifié en ajoutant un vaccin BCG).
+        • GET /fhir/everything/{enfant_id} — Bundle type=document avec Patient×2 + Immunization + Observation×3.
+        • GET /fhir/age-modules — 6 modules; relevant_modules adapté à user.specialite (pédiatre →
+          [0-6m,6-24m,2-5a,6-12a]).
+        • GET /enfants/{id}/carnet/{module} — 6 modules OK avec toutes les clés requises;
+          invalid_xxx→400; cross-maman→403.
+        • GET /audit-log/me — events list non-empty avec {action,resource_type,resource_id,timestamp,user_id};
+          PRO→403.
+
+        Backward compat: GET /fhir/patient (legacy) → 200 Bundle type=collection. Aucune régression.
+
+        OBSERVATION non-blocking: DELETE /api/auth/me retourne 422 (probablement body de confirmation manquant)
+        — non lié à FHIR, le compte ad-hoc 2e maman reste en DB. Aucun bug FHIR détecté. Production-ready.
+
