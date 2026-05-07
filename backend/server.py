@@ -5879,7 +5879,10 @@ async def audit_log_me(limit: int = 100, user=Depends(get_current_user)):
     enfants_ids = [e["id"] async for e in db.enfants.find({"user_id": user["id"]}, {"_id": 0, "id": 1})]
     target_ids = enfants_ids + [user["id"]]
     items = await db.audit_log.find(
-        {"resource_id": {"$in": target_ids}},
+        {"$or": [
+            {"resource_id": {"$in": target_ids}},
+            {"user_id": user["id"], "resource_type": "Consent"},  # propres actions sur ses consents
+        ]},
         {"_id": 0},
     ).sort("timestamp", -1).to_list(min(limit, 500))
     return {"total": len(items), "events": items}
