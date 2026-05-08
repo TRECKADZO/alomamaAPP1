@@ -33,7 +33,7 @@ function toISO(d: Date, hhmm: string) {
 export default function RdvNouveau() {
   const router = useRouter();
   const { user } = useAuth();
-  const params = useLocalSearchParams<{ pro_id?: string }>();
+  const params = useLocalSearchParams<{ pro_id?: string; mode?: string }>();
 
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(true);
@@ -48,7 +48,9 @@ export default function RdvNouveau() {
   // Sélections
   const [selectedPro, setSelectedPro] = useState<any | null>(null);
   const [selectedPrest, setSelectedPrest] = useState<any | null>(null);
-  const [mode, setMode] = useState<"presentiel" | "teleconsultation" | "domicile">("presentiel");
+  const [mode, setMode] = useState<"presentiel" | "teleconsultation" | "domicile">(
+    (params.mode === "domicile" || params.mode === "teleconsultation") ? params.mode : "presentiel"
+  );
   const [adresseDomicile, setAdresseDomicile] = useState("");
   const [quartier, setQuartier] = useState("");
   const [ville, setVille] = useState("");

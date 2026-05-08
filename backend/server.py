@@ -5003,6 +5003,7 @@ async def search_pros(
     prestation: str = "",
     max_prix: int = 0,
     cmu_only: bool = False,
+    mode: str = "",  # 🎯 Filtre par mode : "presentiel" | "teleconsultation" | "domicile"
     user=Depends(get_current_user),
 ):
     """
@@ -5012,6 +5013,7 @@ async def search_pros(
     - prestation: filtre par nom de prestation (ex: "échographie")
     - max_prix: prix maximum FCFA (0 = ignoré)
     - cmu_only: ne retourner que les pros qui acceptent la CMU
+    - mode: filtre par type de consultation supporté (presentiel/teleconsultation/domicile)
     """
     query: dict = {"role": "professionnel"}
     if specialite:
@@ -5023,6 +5025,18 @@ async def search_pros(
         ]
     if cmu_only:
         query["accepte_cmu"] = True
+    # 🎯 Filtre mode :
+    # - presentiel : tous les pros (par défaut)
+    # - teleconsultation : pros avec accepte_teleconsultation != False (défaut true)
+    # - domicile : pros avec frais_deplacement_fcfa défini OU accepte_domicile=true
+    mode_norm = (mode or "").strip().lower()
+    if mode_norm == "domicile":
+        query["$or"] = (query.get("$or") or []) + [
+            {"accepte_domicile": True},
+            {"frais_deplacement_fcfa": {"$exists": True, "$ne": None}},
+        ]
+    elif mode_norm == "teleconsultation":
+        query["accepte_teleconsultation"] = {"$ne": False}
 
     # Mapping intelligent : si l'utilisateur clique sur un "type de consultation"
     # (chip rapide), on étend le terme aux mots-clés équivalents pour matcher à la
@@ -5090,10 +5104,18 @@ async def search_pros(
     pros = await db.users.find(query, {"_id": 0, "password_hash": 0}).to_list(100)
 
     # 💎 Badge Pro Certifié + tri Premium en tête (promesse Premium)
+    # 🎯 Modes supportés (auto-détectés)
     for p in pros:
         is_prem = is_premium_active(p)
         p["is_premium"] = is_prem
         p["pro_certifie"] = is_prem  # alias pour le frontend (badge ⭐)
+        # Modes supportés
+        modes = ["presentiel"]
+        if p.get("accepte_teleconsultation") is not False:
+            modes.append("teleconsultation")
+        if p.get("accepte_domicile") is True or p.get("frais_deplacement_fcfa") is not None:
+            modes.append("domicile")
+        p["modes_supportes"] = modes
     pros.sort(key=lambda x: (0 if x.get("is_premium") else 1, x.get("name") or ""))
 
     # Enrichir chaque pro avec ses prestations matching (pour affichage)

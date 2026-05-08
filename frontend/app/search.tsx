@@ -16,6 +16,7 @@ export default function Search() {
   const [prestation, setPrestation] = useState("");
   const [maxPrix, setMaxPrix] = useState("");
   const [cmuOnly, setCmuOnly] = useState(false);
+  const [modeFilter, setModeFilter] = useState<"" | "presentiel" | "teleconsultation" | "domicile">("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
@@ -64,6 +65,7 @@ export default function Search() {
         if (prestation) params.set("prestation", prestation);
         if (maxPrix && parseInt(maxPrix) > 0) params.set("max_prix", maxPrix);
         if (cmuOnly) params.set("cmu_only", "true");
+        if (modeFilter) params.set("mode", modeFilter);
         url = `/search/pros?${params.toString()}`;
       } else {
         url = `/search/community?q=${encodeURIComponent(q)}`;
@@ -82,7 +84,7 @@ export default function Search() {
     const t = setTimeout(() => { run(); }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, spec, prestation, maxPrix, cmuOnly]);
+  }, [tab, spec, prestation, maxPrix, cmuOnly, modeFilter]);
 
   // Pour la recherche libre (q), on attend que l'utilisateur clique pour ne pas spammer
   useEffect(() => {
@@ -132,6 +134,28 @@ export default function Search() {
 
         {tab === "pros" && (
           <>
+            {/* 🎯 Filtres par mode de consultation */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4, marginBottom: 4 }}>
+              {[
+                { key: "", label: "🔎 Tous", color: "#6B7280" },
+                { key: "presentiel", label: "🏥 Au cabinet", color: "#3B82F6" },
+                { key: "teleconsultation", label: "📹 Téléconsult", color: "#A855F7" },
+                { key: "domicile", label: "🏠 À domicile", color: "#F59E0B" },
+              ].map((m) => {
+                const active = modeFilter === m.key;
+                return (
+                  <TouchableOpacity
+                    key={m.key || "all"}
+                    style={[styles.modeChip, active && { backgroundColor: m.color, borderColor: m.color }]}
+                    onPress={() => setModeFilter(m.key as any)}
+                    testID={`mode-chip-${m.key || "all"}`}
+                  >
+                    <Text style={[styles.modeChipText, active && { color: "#fff" }]}>{m.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
             {/* Quick chips for prestations */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
               {QUICK_PRESTATIONS.map((qp) => {
@@ -224,6 +248,26 @@ export default function Search() {
                   </View>
                   <Text style={styles.resMeta}>{item.specialite}</Text>
                   {item.ville ? <Text style={styles.resMetaSm}>📍 {item.ville}</Text> : null}
+                  {/* 🎯 Modes supportés (badges) */}
+                  {item.modes_supportes && item.modes_supportes.length > 0 && (
+                    <View style={{ flexDirection: "row", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                      {item.modes_supportes.includes("presentiel") && (
+                        <View style={[styles.modeBadge, { backgroundColor: "#DBEAFE" }]}>
+                          <Text style={[styles.modeBadgeText, { color: "#1E40AF" }]}>🏥 Cabinet</Text>
+                        </View>
+                      )}
+                      {item.modes_supportes.includes("teleconsultation") && (
+                        <View style={[styles.modeBadge, { backgroundColor: "#F3E8FF" }]}>
+                          <Text style={[styles.modeBadgeText, { color: "#6B21A8" }]}>📹 Téléconsult</Text>
+                        </View>
+                      )}
+                      {item.modes_supportes.includes("domicile") && (
+                        <View style={[styles.modeBadge, { backgroundColor: "#FEF3C7" }]}>
+                          <Text style={[styles.modeBadgeText, { color: "#92400E" }]}>🏠 Domicile</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
                 </View>
               </View>
               {(item.prestations_match || []).length > 0 && (
@@ -296,7 +340,7 @@ export default function Search() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.actionRdv}
-                  onPress={() => router.push({ pathname: "/rdv-nouveau", params: { pro_id: item.id } })}
+                  onPress={() => router.push({ pathname: "/rdv-nouveau", params: { pro_id: item.id, mode: modeFilter || "presentiel" } })}
                   testID={`book-rdv-${item.id}`}
                 >
                   <Ionicons name="calendar" size={16} color="#fff" />
@@ -357,6 +401,10 @@ const styles = StyleSheet.create({
   cmuBadgeText: { color: "#15803D", fontWeight: "800", fontSize: 10 },
   premBadge: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "#0EA5E9", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999 },
   premBadgeText: { color: "#fff", fontWeight: "800", fontSize: 9, letterSpacing: 0.3 },
+  modeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  modeChipText: { fontSize: 12, fontWeight: "700", color: COLORS.textSecondary },
+  modeBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  modeBadgeText: { fontSize: 10, fontWeight: "800" },
   prestList: { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 4 },
   prestRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   prestName: { flex: 1, color: COLORS.textPrimary, fontSize: 12, fontWeight: "600" },

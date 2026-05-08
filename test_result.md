@@ -4682,3 +4682,82 @@ agent_communication:
 
       Aucune régression sur les endpoints existants (login 4 rôles, /pay/history, /famille).
       Note non-bloquante : POST /ai/chat sans session_id → 422 (signature changée récemment ?).
+
+
+backend:
+  - task: "🎯 Filtre mode sur GET /api/search/pros (presentiel | teleconsultation | domicile)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ 31/31 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_search_mode.py).
+
+          [1] GET /search/pros (sans mode) — 7/7
+            • 200 OK, liste de 19 pros.
+            • Chaque pro contient is_premium (bool), pro_certifie (bool, alias is_premium),
+              modes_supportes (array of strings).
+            • Tous les pros ont "presentiel" dans modes_supportes.
+            • Sample : Dr Konan TestPro → is_premium=True, pro_certifie=True,
+              modes_supportes=['presentiel','teleconsultation','domicile'].
+
+          [2] mode=presentiel — 4/4
+            • 200 OK, 19 pros. Tous ont "presentiel" dans modes_supportes.
+
+          [3] mode=teleconsultation — 4/4
+            • 200 OK, 19 pros. Tous ont accepte_teleconsultation != false.
+            • Tous ont "teleconsultation" dans modes_supportes.
+
+          [4] mode=domicile — 4/4
+            • 200 OK, 1 pro retourné. accepte_domicile=True ou frais_deplacement_fcfa configuré.
+            • "domicile" dans modes_supportes.
+            • Liste vide acceptée pour combinaisons rares.
+
+          [5] Combinaisons — 6/6
+            • mode=domicile&specialite=pediatre → 200, 0 pros (filtre stack OK).
+            • mode=teleconsultation&cmu_only=true → 200, 1 pro,
+              accepte_cmu=true ET accepte_teleconsultation != false.
+
+          [6] Régression — 6/6
+            • Login MAMAN/PRO/CENTRE/ADMIN → 200 (4/4).
+            • GET /search/pros?cmu_only=true (sans mode) → 200, 1 pro.
+
+          Détails de l'implémentation vérifiés (server.py L4999-5135) :
+            • mode=domicile ajoute `$or: [{accepte_domicile: True}, {frais_deplacement_fcfa: {$exists, $ne null}}]`
+              en union avec un éventuel $or existant.
+            • mode=teleconsultation ajoute `accepte_teleconsultation: {$ne: False}` (true ou absent).
+            • mode=presentiel n'ajoute aucun filtre (tous les pros).
+            • modes_supportes calculé après query : ["presentiel"] toujours, +"teleconsultation" si
+              accepte_teleconsultation != False, +"domicile" si accepte_domicile=True ou
+              frais_deplacement_fcfa non null.
+            • is_premium et pro_certifie (= is_premium) injectés sur chaque pro.
+
+          Aucun bug. Aucun cleanup nécessaire.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        🎯 Filtre `mode` sur GET /api/search/pros — 31/31 PASS (100%) sur
+        https://cycle-tracker-pro.preview.emergentagent.com/api ; script
+        /app/backend_test_search_mode.py.
+
+        ✅ Confirmé : `modes_supportes` (array of strings) est exposé sur chaque pro,
+        tout comme `is_premium` (bool) et `pro_certifie` (bool, alias is_premium).
+        Le filtre mode={presentiel|teleconsultation|domicile} fonctionne, ainsi que
+        les combinaisons mode+specialite et mode+cmu_only. Login 4 rôles + cmu_only
+        sans mode : pas de régression.
+
+        Sur la base actuelle :
+          • 19 pros avec presentiel + teleconsultation par défaut (accepte_teleconsultation
+            != False pour tous).
+          • 1 seul pro accepte le domicile (Dr Konan TestPro avec accepte_domicile=true
+            ou frais_deplacement_fcfa configuré). Liste vide retournée correctement
+            quand aucun pro ne match (ex: mode=domicile&specialite=pediatre → []).
+
+        RAS — main agent peut summarizer et finir.
