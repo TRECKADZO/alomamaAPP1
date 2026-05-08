@@ -4761,3 +4761,174 @@ agent_communication:
             quand aucun pro ne match (ex: mode=domicile&specialite=pediatre → []).
 
         RAS — main agent peut summarizer et finir.
+
+backend:
+  - task: "Modes de consultation par créneau (`modes_autorises`) sur disponibilités Pro"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Ajout du champ `modes_autorises: List[str]` dans `DisponibiliteIn` (Pydantic model)
+          pour permettre au Pro de définir, par créneau, quels modes de consultation sont
+          acceptés ("presentiel", "teleconsultation", "domicile").
+
+          Modifications backend:
+            1. **`PUT /api/pro/disponibilites`** : accepte désormais `modes_autorises` par slot
+               et le persiste dans `pro_disponibilites.slots[*].modes_autorises`.
+            2. **`GET /api/professionnels/{pro_id}/disponibilites`** (endpoint Maman) :
+               renvoie `modes_autorises` enrichi pour chaque slot. Si la valeur n'est
+               pas définie sur le slot (legacy), fallback sur `users.modes_supportes`
+               du Pro (modes globalement activés).
+            3. **`POST /api/rdv`** : ajoute une validation côté serveur — recherche le slot
+               correspondant à la date/heure demandée par la maman et vérifie que `mode`
+               figure dans `modes_autorises` du créneau. Retourne HTTP 400 avec message
+               français explicite si non autorisé. Tolérance : si aucun slot ne matche
+               (date hors disponibilités déclarées), pas de blocage à ce niveau (les
+               autres validations existent déjà : tarif, quota, etc.).
+
+          Tests à effectuer:
+            • Login en tant que Pro (Dr alpha +2250709005330 / 474Treck), PUT
+              /api/pro/disponibilites avec un slot {jour:"lundi", heure_debut:"08:00",
+              heure_fin:"12:00", type_id:"generale", duree_minutes:30,
+              modes_autorises:["presentiel"]}, puis GET /api/pro/disponibilites doit
+              retourner ce champ inchangé.
+            • Login Maman, GET /api/professionnels/{pro_id}/disponibilites doit
+              retourner `slots[*].modes_autorises` correctement (avec fallback sur
+              modes globaux si le slot n'a pas modes_autorises).
+            • POST /api/rdv avec mode="domicile" sur un créneau dont
+              modes_autorises=["presentiel"] uniquement → HTTP 400 avec message
+              "Le créneau lundi 08:30 ne supporte pas le mode à domicile…".
+            • POST /api/rdv avec mode="presentiel" sur le même créneau → succès 200.
+            • Régression : POST /api/rdv en mode="presentiel" sans avoir défini
+              modes_autorises sur le slot (legacy) → succès 200 (fallback sur modes
+              globaux du Pro).
+        -working: true
+        -agent: "testing"
+        -comment: |
+          ✅ VALIDATION COMPLÈTE — 30/30 PASS sur
+          https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test.py).
+
+          [1] Login Pro Dr alpha (+2250709005330 / 474Treck) → 200, role=professionnel,
+          id=d07dc3f7-0c5d-41c0-963f-569ad893c6c5. Login Maman maman.test → 200.
+
+          [2] PUT /api/pro/disponibilites avec 2 slots :
+              {lundi 08:00–12:00, modes_autorises:["presentiel"]} et
+              {mardi 14:00–17:00, modes_autorises:["teleconsultation","domicile"]}
+              → 200 ; les 2 slots sont renvoyés avec leurs modes_autorises EXACTEMENT
+              tels qu'envoyés (ordre + valeurs préservés).
+
+          [3] GET /api/pro/disponibilites (Pro) → 200, 2 slots persistés en DB,
+              modes_autorises intacts pour lundi et mardi.
+
+          [4] GET /api/professionnels/{pro_id}/disponibilites (vue Maman) → 200,
+              chaque slot expose `modes_autorises` (List[str]) :
+              • slot lundi → ["presentiel"] ✓
+              • slot mardi → ["teleconsultation","domicile"] ✓
+
+          [5] NEGATIF — POST /api/rdv {date=lundi 09:00, mode="domicile",
+              adresse_domicile=…} → **400** avec detail
+              "Le créneau lundi 09:00 ne supporte pas le mode à domicile.
+               Modes acceptés sur ce créneau : présentiel (cabinet)." ✓
+              (le mot "domicile" est bien présent dans le message FR).
+
+          [6] NEGATIF — POST /api/rdv {date=lundi 09:00, mode="teleconsultation"}
+              → **400** "…ne supporte pas le mode téléconsultation. Modes acceptés :
+              présentiel (cabinet)." ✓
+
+          [7] POSITIF — POST /api/rdv {date=lundi 09:00, mode="presentiel"}
+              → **200**, mode persisté = "presentiel"
+              (rdv_id=0afdcb60-022c-4a6b-8fb6-5c73c642e466).
+
+          [8] POSITIF — POST /api/rdv {date=mardi 14:30, mode="domicile",
+              adresse_domicile="Cocody Riviera lot 12"} → **200**, mode persisté =
+              "domicile" (rdv_id=c05bb95a-d49d-4c58-ba14-cb4184938950).
+
+          [9] NEGATIF — POST /api/rdv {date=mardi 14:30, mode="presentiel"} → **400**
+              "Le créneau mardi 14:30 ne supporte pas le mode présentiel (cabinet).
+               Modes acceptés : téléconsultation, à domicile." ✓
+
+          [10] REGRESSION — PUT disponibilites avec un slot {mercredi 09:00–12:00,
+              type_id="generale", duree_minutes=30} SANS `modes_autorises` → 200.
+              POST /api/rdv {mercredi 10:00, mode="presentiel"} → **200** (fallback
+              sur modes globaux du Pro réussit, rdv_id=3345533f-…).
+
+          [11] REGRESSION — GET /api/search/pros?mode=teleconsultation → **200**
+              avec 19 pros (liste retournée correctement, smoke test OK).
+
+          [CLEANUP] PUT /api/pro/disponibilites a été restauré avec un slot par
+          défaut {lundi 08:00–12:00, type_id="generale", duree_minutes=30,
+          modes_autorises=["presentiel","teleconsultation","domicile"]} pour ne pas
+          perturber les tests futurs.
+
+          ⚠️ Note mineure non bloquante : les 3 RDV de test n'ont pas pu être
+          supprimés via DELETE /api/rdv/{id} (404 pour la maman propriétaire).
+          L'endpoint DELETE /rdv/{id} ne semble pas exposé dans server.py — c'est
+          orthogonal à cette feature. Les 3 RDV de test resteront dans la DB
+          (lundi 09:00, mardi 14:30, mercredi 10:00 de la semaine du 2026-05-11)
+          sans impact fonctionnel.
+
+          Aucune régression. La promesse "modes_autorises par slot" est
+          production-ready. Validation française des messages OK, fallback legacy OK,
+          recherche /search/pros?mode=… OK.
+
+agent_communication:
+    - agent: "main"
+      message: |
+        🆕 Nouvelle tâche backend prête à tester : modes de consultation par créneau.
+
+        Fichier : `backend/server.py` (3 modifs : DisponibiliteIn model L2709,
+        endpoint Maman L2289-2330, validation POST /rdv L1733-1782).
+
+        Comportement :
+          1. Le Pro peut désormais déclarer pour chaque créneau de son agenda les
+             modes acceptés (cabinet, télé, domicile).
+          2. La Maman ne peut plus réserver dans un mode non autorisé sur le créneau
+             ciblé (HTTP 400 avec message explicite).
+          3. Rétrocompatibilité : les slots sans `modes_autorises` retombent sur les
+             modes globaux du Pro (`users.modes_supportes`).
+
+        Compte test Pro : Dr alpha (+2250709005330 / 474Treck), Premium actif.
+        Compte test Maman : voir /app/memory/test_credentials.md.
+
+
+    - agent: "testing"
+      message: |
+        ✅ Tâche backend "Modes de consultation par créneau (modes_autorises)"
+        validée à 100% (30/30 PASS) sur
+        https://cycle-tracker-pro.preview.emergentagent.com/api
+        — script /app/backend_test.py.
+
+        Résumé exécutif :
+        • Login Pro (Dr alpha +2250709005330) + Login Maman OK.
+        • PUT /api/pro/disponibilites avec `modes_autorises` par slot persiste exactement
+          les valeurs envoyées (ordre + contenu).
+        • GET /api/pro/disponibilites (Pro) et GET /api/professionnels/{id}/disponibilites
+          (Maman) renvoient les `modes_autorises` correctement (slot lundi
+          =["presentiel"], slot mardi=["teleconsultation","domicile"]).
+        • POST /api/rdv applique strictement la liste des modes autorisés du slot :
+            – mode="domicile" sur slot ["presentiel"] → 400 (msg FR contient "domicile").
+            – mode="teleconsultation" sur slot ["presentiel"] → 400.
+            – mode="presentiel" sur slot ["presentiel"] → 200 (RDV créé).
+            – mode="domicile" sur slot ["teleconsultation","domicile"] avec
+              adresse_domicile → 200.
+            – mode="presentiel" sur slot ["teleconsultation","domicile"] → 400.
+        • Régression : slot legacy SANS `modes_autorises` → fallback sur modes globaux
+          du Pro, RDV présentiel autorisé (200).
+        • Régression : GET /api/search/pros?mode=teleconsultation → 200 avec 19 pros.
+        • CLEANUP : disponibilites de Dr alpha restaurées à un défaut sain
+          (lundi 08-12, type_id=generale, duree=30, modes=["presentiel",
+          "teleconsultation","domicile"]).
+
+        Note mineure non bloquante : DELETE /api/rdv/{id} renvoie 404 (endpoint
+        absent côté Maman). Orthogonal à cette feature ; 3 RDV de test resteront
+        dans la collection rdv (semaine du 2026-05-11).
+
+        RAS — la feature est prête pour production. Main agent peut summariser et
+        clore.

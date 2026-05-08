@@ -1734,6 +1734,49 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
     mode = (payload.mode or "presentiel").lower()
     if mode not in ("presentiel", "teleconsultation", "domicile"):
         raise HTTPException(400, "Mode invalide. Valeurs autorisées : presentiel, teleconsultation, domicile.")
+    # 🎯 Vérifier que le mode est autorisé sur le créneau correspondant du Pro
+    try:
+        rdv_dt_check = datetime.fromisoformat(payload.date.replace("Z", "+00:00"))
+        jours_fr = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+        jour_fr = jours_fr[rdv_dt_check.weekday()]
+        hhmm = rdv_dt_check.strftime("%H:%M")
+        dispo_doc = await db.pro_disponibilites.find_one({"pro_id": payload.pro_id}, {"_id": 0})
+        if dispo_doc:
+            # Modes globalement supportés par le Pro
+            pro_modes_glob = pro.get("modes_supportes") or {}
+            pro_modes_default = [
+                m for m in ("presentiel", "teleconsultation", "domicile")
+                if pro_modes_glob.get(m, True)
+            ] or ["presentiel"]
+            slot_match = None
+            for s in (dispo_doc.get("slots") or []):
+                if s.get("jour", "").lower() == jour_fr and s.get("actif", True):
+                    hd = s.get("heure_debut") or "00:00"
+                    hf = s.get("heure_fin") or "23:59"
+                    if hd <= hhmm < hf:
+                        slot_match = s
+                        break
+            if slot_match is not None:
+                modes_slot = slot_match.get("modes_autorises")
+                if not isinstance(modes_slot, list) or not modes_slot:
+                    modes_slot = list(pro_modes_default)
+                if mode not in modes_slot:
+                    label_map = {
+                        "presentiel": "présentiel (cabinet)",
+                        "teleconsultation": "téléconsultation",
+                        "domicile": "à domicile",
+                    }
+                    modes_lbls = ", ".join(label_map.get(m, m) for m in modes_slot)
+                    raise HTTPException(
+                        400,
+                        f"Le créneau {jour_fr} {hhmm} ne supporte pas le mode {label_map.get(mode, mode)}. "
+                        f"Modes acceptés sur ce créneau : {modes_lbls}.",
+                    )
+    except HTTPException:
+        raise
+    except Exception:
+        # Date mal parsée ou aucun créneau défini : on ne bloque pas, fallback sur la validation globale
+        pass
     frais_deplacement_fcfa = 0
     adresse_enc = None
     quartier = None
@@ -2286,11 +2329,29 @@ async def get_pro_disponibilites_public(pro_id: str, user=Depends(get_current_us
                 return p
         return None
 
+    # 🏥📹🏠 Modes globalement supportés par le Pro (fallback pour slots legacy)
+    pro_doc = await db.users.find_one({"id": pro_id}, {"_id": 0, "modes_supportes": 1})
+    pro_modes_glob = (pro_doc or {}).get("modes_supportes") or {}
+    pro_modes_default = [
+        m for m in ("presentiel", "teleconsultation", "domicile")
+        if pro_modes_glob.get(m, True)
+    ] or ["presentiel"]
+
     enriched = []
     for s in raw_slots:
         type_id = s.get("type_id") or (s.get("types") or ["generale"])[0]
         duree = s.get("duree_minutes") or duree_global
         prest = find_prestation(type_id)
+        # Modes acceptés sur le créneau : valeur stockée si présente, sinon fallback sur modes globaux du Pro
+        modes_slot = s.get("modes_autorises")
+        if not isinstance(modes_slot, list) or len(modes_slot) == 0:
+            modes_slot = list(pro_modes_default)
+        else:
+            # Garde uniquement les valeurs valides
+            modes_slot = [
+                m for m in modes_slot
+                if m in ("presentiel", "teleconsultation", "domicile")
+            ] or list(pro_modes_default)
         enriched.append({
             "jour": s.get("jour"),
             "heure_debut": s.get("heure_debut"),
@@ -2299,6 +2360,7 @@ async def get_pro_disponibilites_public(pro_id: str, user=Depends(get_current_us
             "type_id": type_id,
             "type_label": type_id_to_label.get(type_id, "Consultation"),
             "duree_minutes": duree,
+            "modes_autorises": modes_slot,
             "prix_fcfa": prest.get("prix_fcfa") if prest else None,
             "cmu_prise_en_charge": prest.get("cmu_prise_en_charge", False) if prest else False,
             "cmu_taux": prest.get("cmu_taux") if prest else None,
@@ -2714,6 +2776,7 @@ class DisponibiliteIn(BaseModel):
     type_id: Optional[str] = None       # nouveau : 1 type par créneau (id de TYPES_CONSULTATION)
     duree_minutes: Optional[int] = None  # nouveau : durée par créneau (15/30/45/60/90/120)
     types: Optional[List[str]] = None    # legacy : multi-types, conservé pour rétro-compat
+    modes_autorises: Optional[List[str]] = None  # 🏥📹🏠 modes acceptés sur ce créneau ("presentiel"|"teleconsultation"|"domicile")
 
 
 @api.get("/pro/disponibilites")

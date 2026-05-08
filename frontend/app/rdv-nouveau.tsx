@@ -103,11 +103,18 @@ export default function RdvNouveau() {
     if (autoAdvance) setStep(2);
   };
 
-  // Calcul des créneaux disponibles pour une date donnée (basé sur proDispos + durée prestation + RDV existants)
+  // Calcul des créneaux disponibles pour une date donnée (basé sur proDispos + durée prestation + RDV existants + mode)
   const slotsForDate = (date: Date): { time: string; type_id: string; type_label: string; color: string; price?: number; cmu?: boolean }[] => {
     if (!selectedPro) return [];
     const jourName = JOURS[date.getDay()];
-    const dispos = proDispos.filter((s) => s.jour.toLowerCase() === jourName);
+    // 🎯 Filtrer les créneaux qui acceptent le mode choisi par la maman
+    const dispos = proDispos.filter((s) => {
+      if (s.jour.toLowerCase() !== jourName) return false;
+      const modes: string[] = Array.isArray(s.modes_autorises) && s.modes_autorises.length > 0
+        ? s.modes_autorises
+        : ["presentiel", "teleconsultation", "domicile"]; // fallback
+      return modes.includes(mode);
+    });
     const takenTimes = existingRdv
       .filter((r) => r.pro_id === selectedPro.id && r.status !== "annule" && sameDate(new Date(r.date), date))
       .map((r) => new Date(r.date).toTimeString().slice(0, 5));
@@ -440,10 +447,15 @@ export default function RdvNouveau() {
               {(() => {
                 const slots = slotsForDate(selectedDate);
                 if (slots.length === 0) {
+                  const modeLabel =
+                    mode === "domicile" ? "à domicile" :
+                    mode === "teleconsultation" ? "en téléconsultation" : "en présentiel";
                   return (
                     <View style={styles.infoBox}>
                       <Ionicons name="information-circle" size={18} color={COLORS.warning} />
-                      <Text style={styles.infoText}>Aucun créneau disponible ce jour. Essayez une autre date.</Text>
+                      <Text style={styles.infoText}>
+                        Aucun créneau disponible {modeLabel} ce jour-là. Essayez une autre date{mode !== "presentiel" ? " ou changez le mode de consultation" : ""}.
+                      </Text>
                     </View>
                   );
                 }

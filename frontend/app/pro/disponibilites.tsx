@@ -12,6 +12,13 @@ import { TYPES_CONSULTATION } from "../../lib/data";
 const JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
 const DUREES = [15, 30, 45, 60, 90, 120];
 
+type Mode = "presentiel" | "teleconsultation" | "domicile";
+const MODES: { id: Mode; label: string; icon: any; color: string }[] = [
+  { id: "presentiel", label: "Présentiel", icon: "business-outline", color: "#0EA5E9" },
+  { id: "teleconsultation", label: "Téléconsultation", icon: "videocam-outline", color: "#8B5CF6" },
+  { id: "domicile", label: "Domicile", icon: "home-outline", color: "#F59E0B" },
+];
+
 type Slot = {
   jour: string;
   heure_debut: string;
@@ -19,6 +26,7 @@ type Slot = {
   actif: boolean;
   type_id: string;
   duree_minutes: number;
+  modes_autorises: Mode[];
 };
 
 export default function GestionDisponibilites() {
@@ -26,9 +34,22 @@ export default function GestionDisponibilites() {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(true);
   const [defaultDuree, setDefaultDuree] = useState(30); // hérité legacy, utilisé comme fallback
+  const [proModesGlob, setProModesGlob] = useState<Mode[]>(["presentiel", "teleconsultation", "domicile"]);
 
   const load = async () => {
     try {
+      // Récupère les modes globalement supportés par le Pro pour fallback
+      let modesDefault: Mode[] = ["presentiel", "teleconsultation", "domicile"];
+      try {
+        const me = await api.get("/auth/me");
+        const ms = me.data?.modes_supportes || {};
+        const arr: Mode[] = (["presentiel", "teleconsultation", "domicile"] as Mode[]).filter(
+          (m) => ms[m] !== false
+        );
+        if (arr.length > 0) modesDefault = arr;
+      } catch {}
+      setProModesGlob(modesDefault);
+
       const { data } = await api.get("/pro/disponibilites");
       const dureeGlobal = data.duree_consultation || 30;
       setDefaultDuree(dureeGlobal);
@@ -36,6 +57,12 @@ export default function GestionDisponibilites() {
       // Migration douce : éclate les anciens slots multi-types en plusieurs slots mono-type
       const migrated: Slot[] = [];
       for (const s of raw) {
+        const modes: Mode[] =
+          Array.isArray(s.modes_autorises) && s.modes_autorises.length > 0
+            ? s.modes_autorises.filter((m: string): m is Mode =>
+                ["presentiel", "teleconsultation", "domicile"].includes(m)
+              )
+            : modesDefault;
         if (s.type_id && s.duree_minutes) {
           // Déjà au nouveau format
           migrated.push({
@@ -45,6 +72,7 @@ export default function GestionDisponibilites() {
             actif: s.actif !== false,
             type_id: s.type_id,
             duree_minutes: s.duree_minutes,
+            modes_autorises: modes,
           });
         } else if (s.types && s.types.length) {
           // Legacy multi-types : on prend le premier type, durée = globale
@@ -55,6 +83,7 @@ export default function GestionDisponibilites() {
             actif: s.actif !== false,
             type_id: s.types[0],
             duree_minutes: dureeGlobal,
+            modes_autorises: modes,
           });
         } else {
           // Très ancien : pas de type → "generale"
@@ -65,6 +94,7 @@ export default function GestionDisponibilites() {
             actif: s.actif !== false,
             type_id: "generale",
             duree_minutes: dureeGlobal,
+            modes_autorises: modes,
           });
         }
       }
@@ -82,10 +112,28 @@ export default function GestionDisponibilites() {
       actif: true,
       type_id: "generale",
       duree_minutes: defaultDuree,
+      modes_autorises: [...proModesGlob],
     }]);
   };
   const updateSlot = (idx: number, patch: Partial<Slot>) => {
     setSlots((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  };
+  const toggleMode = (idx: number, mode: Mode) => {
+    setSlots((prev) =>
+      prev.map((s, i) => {
+        if (i !== idx) return s;
+        const has = s.modes_autorises.includes(mode);
+        let next = has
+          ? s.modes_autorises.filter((m) => m !== mode)
+          : [...s.modes_autorises, mode];
+        // Au moins 1 mode doit être actif → on empêche la désélection du dernier
+        if (next.length === 0) {
+          Alert.alert("Mode requis", "Au moins un mode de consultation doit être actif sur ce créneau.");
+          return s;
+        }
+        return { ...s, modes_autorises: next };
+      })
+    );
   };
   const removeSlot = (idx: number) => {
     setSlots((prev) => prev.filter((_, i) => i !== idx));
@@ -94,7 +142,7 @@ export default function GestionDisponibilites() {
     setSlots((prev) => {
       const orig = prev[idx];
       if (!orig) return prev;
-      const copy: Slot = { ...orig };
+      const copy: Slot = { ...orig, modes_autorises: [...orig.modes_autorises] };
       const out = [...prev];
       out.splice(idx + 1, 0, copy);
       return out;
@@ -111,6 +159,7 @@ export default function GestionDisponibilites() {
           actif: s.actif,
           type_id: s.type_id,
           duree_minutes: s.duree_minutes,
+          modes_autorises: s.modes_autorises,
           types: [s.type_id], // rétro-compat avec ancien front
         })),
         duree_consultation: defaultDuree,
@@ -148,7 +197,7 @@ export default function GestionDisponibilites() {
         <View style={styles.infoCard}>
           <Ionicons name="information-circle" size={18} color="#0E7490" />
           <Text style={styles.infoText}>
-            Chaque créneau a son <Text style={{ fontWeight: "800" }}>type de consultation</Text> et sa <Text style={{ fontWeight: "800" }}>durée propre</Text>. Vous pouvez créer plusieurs créneaux par jour (ex: matin échographies 45 min, après-midi consultations 30 min).
+            Chaque créneau a son <Text style={{ fontWeight: "800" }}>type de consultation</Text>, sa <Text style={{ fontWeight: "800" }}>durée</Text> et ses <Text style={{ fontWeight: "800" }}>modes acceptés</Text> (🏥 Présentiel, 📹 Téléconsultation, 🏠 Domicile). Les mamans ne verront que les créneaux compatibles avec le mode qu'elles choisissent.
           </Text>
         </View>
 
@@ -221,6 +270,34 @@ export default function GestionDisponibilites() {
                         })}
                       </View>
 
+                      {/* 🏥📹🏠 Modes de consultation acceptés sur ce créneau */}
+                      <Text style={styles.fieldLabel}>Modes acceptés sur ce créneau</Text>
+                      <View style={styles.typesRow}>
+                        {MODES.map((m) => {
+                          const active = s.modes_autorises.includes(m.id);
+                          return (
+                            <TouchableOpacity
+                              key={m.id}
+                              onPress={() => toggleMode(s._idx, m.id)}
+                              style={[
+                                styles.modePill,
+                                active && { backgroundColor: m.color, borderColor: m.color },
+                              ]}
+                            >
+                              <Ionicons
+                                name={m.icon}
+                                size={13}
+                                color={active ? "#fff" : m.color}
+                                style={{ marginRight: 4 }}
+                              />
+                              <Text style={[styles.typePillText, active && { color: "#fff" }]}>
+                                {m.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
                       {/* Actions */}
                       <View style={styles.actionsRow}>
                         <TouchableOpacity onPress={() => duplicateSlot(s._idx)} style={styles.actionBtn}>
@@ -279,6 +356,7 @@ const styles = StyleSheet.create({
   fieldLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: "800", marginTop: 10, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 },
   typesRow: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
   typePill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
+  modePill: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   typePillText: { fontSize: 11, fontWeight: "700", color: COLORS.textPrimary },
 
   dureesRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
