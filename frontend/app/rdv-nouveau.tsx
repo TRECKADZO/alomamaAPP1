@@ -7,6 +7,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator,
   TextInput, KeyboardAvoidingView, Platform,
 } from "react-native";
+import * as WebBrowser from "expo-web-browser";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -60,6 +61,8 @@ export default function RdvNouveau() {
   const [selectedType, setSelectedType] = useState<string>("");
   const [motif, setMotif] = useState("");
   const [searchQ, setSearchQ] = useState("");
+  // 💳 Méthode de paiement (uniquement pertinente pour mode=presentiel ; les autres = "online" forcé)
+  const [paymentMethod, setPaymentMethod] = useState<"online" | "cabinet">("cabinet");
 
   // Init : load pros + gérer pro_id param
   useEffect(() => {
@@ -184,6 +187,9 @@ export default function RdvNouveau() {
   const submit = async () => {
     if (!selectedPro || !selectedTime || !motif) return Alert.alert("Erreur", "Veuillez compléter toutes les étapes.");
     if (mode === "domicile" && !adresseDomicile.trim()) return Alert.alert("Adresse manquante", "Pour une consultation à domicile, indiquez votre adresse complète.");
+    // 💳 Méthode de paiement effective : forcée à "online" pour télé/domicile
+    const effectivePaymentMethod: "online" | "cabinet" =
+      mode === "presentiel" ? paymentMethod : "online";
     const payload: any = {
       pro_id: selectedPro.id,
       date: toISO(selectedDate, selectedTime),
@@ -192,6 +198,7 @@ export default function RdvNouveau() {
       mode,
       prestation_id: selectedPrest?.id || "",
       tarif_fcfa: selectedPrest?.prix_fcfa || 10000,
+      payment_method: effectivePaymentMethod,
     };
     if (mode === "domicile") {
       payload.adresse_domicile = adresseDomicile.trim();
@@ -202,11 +209,54 @@ export default function RdvNouveau() {
     setSubmitting(true);
     try {
       const r = await smartPost("/rdv", payload);
-      if (r.queued) Alert.alert("Enregistré hors ligne", "Le rendez-vous sera envoyé dès la reconnexion.");
-      else Alert.alert("✅ Rendez-vous demandé", `Votre demande auprès de ${selectedPro.name} a été envoyée. Vous serez notifiée dès confirmation.`, [
+      if (r.queued) {
+        Alert.alert("Enregistré hors ligne", "Le rendez-vous sera envoyé dès la reconnexion.");
+        router.back();
+        return;
+      }
+      const rdvCreated = r.data;
+      if (!rdvCreated || !rdvCreated.id) {
+        Alert.alert("Erreur", "RDV créé sans réponse claire du serveur.");
+        return;
+      }
+      // 💳 Si paiement requis → ouvrir PayDunya immédiatement
+      if (effectivePaymentMethod === "online") {
+        try {
+          const payRes = await api.post("/pay/consultation", { rdv_id: rdvCreated.id });
+          const payUrl = payRes?.data?.payment_url;
+          if (!payUrl) {
+            Alert.alert(
+              "Paiement indisponible",
+              "Impossible d'initier le paiement pour le moment. Le RDV a été créé mais sera annulé sous 30 min sans paiement. Vous pouvez réessayer depuis la liste de vos RDV."
+            );
+            router.replace("/(tabs)/rdv");
+            return;
+          }
+          // Ouvre PayDunya dans un browser intégré
+          await WebBrowser.openBrowserAsync(payUrl);
+          // Au retour, vérifier le statut
+          const token = payRes?.data?.payment?.token;
+          if (token) {
+            try { await api.post(`/pay/verify/${token}`); } catch {}
+          }
+          Alert.alert(
+            "💳 Paiement",
+            "Si votre paiement a bien été validé, votre RDV est confirmé. Vous recevrez une notification dès que le praticien aura accepté.",
+            [{ text: "Voir mes RDV", onPress: () => router.replace("/(tabs)/rdv") }]
+          );
+        } catch (payErr) {
+          Alert.alert(
+            "Erreur paiement",
+            "Le RDV a été créé mais le paiement n'a pas pu démarrer. Réessayez depuis la liste de vos RDV (sinon il sera annulé sous 30 min).",
+            [{ text: "OK", onPress: () => router.replace("/(tabs)/rdv") }]
+          );
+        }
+        return;
+      }
+      // Paiement au cabinet → flow classique
+      Alert.alert("✅ Rendez-vous demandé", `Votre demande auprès de ${selectedPro.name} a été envoyée. Vous serez notifiée dès confirmation. Le paiement se fera au cabinet.`, [
         { text: "Voir mes RDV", onPress: () => router.replace("/(tabs)/rdv") }
       ]);
-      if (r.queued) router.back();
     } catch (e) {
       if (isQuotaError(e)) {
         Alert.alert("Quota atteint 💳", formatError(e), [
@@ -542,10 +592,42 @@ export default function RdvNouveau() {
                 </View>
               </View>
 
+              {/* 💳 Méthode de paiement */}
+              <Text style={styles.sectionTitle}>Méthode de paiement</Text>
+              {mode === "presentiel" ? (
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                  <TouchableOpacity
+                    onPress={() => setPaymentMethod("cabinet")}
+                    style={[styles.payOpt, paymentMethod === "cabinet" && styles.payOptActive]}
+                    testID="pay-cabinet"
+                  >
+                    <Ionicons name="storefront" size={22} color={paymentMethod === "cabinet" ? "#fff" : COLORS.textPrimary} />
+                    <Text style={[styles.payOptTitle, paymentMethod === "cabinet" && { color: "#fff" }]}>Au cabinet</Text>
+                    <Text style={[styles.payOptSub, paymentMethod === "cabinet" && { color: "#fff" }]}>Cash / Mobile Money sur place</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setPaymentMethod("online")}
+                    style={[styles.payOpt, paymentMethod === "online" && styles.payOptActive]}
+                    testID="pay-online"
+                  >
+                    <Ionicons name="card" size={22} color={paymentMethod === "online" ? "#fff" : COLORS.textPrimary} />
+                    <Text style={[styles.payOptTitle, paymentMethod === "online" && { color: "#fff" }]}>En ligne</Text>
+                    <Text style={[styles.payOptSub, paymentMethod === "online" && { color: "#fff" }]}>PayDunya · sécurisé</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={[styles.infoBox, { backgroundColor: "#FEF3C7", borderColor: "#FCD34D", borderWidth: 1 }]}>
+                  <Ionicons name="card" size={18} color="#B45309" />
+                  <Text style={[styles.infoText, { color: "#78350F" }]}>
+                    💳 <Text style={{ fontWeight: "800" }}>Paiement en ligne obligatoire</Text> pour les consultations {mode === "domicile" ? "à domicile" : "en téléconsultation"}. Vous serez redirigée vers PayDunya après confirmation. Le RDV sera annulé sous 30 min sans paiement.
+                  </Text>
+                </View>
+              )}
+
               <View style={styles.infoBox}>
                 <Ionicons name="shield-checkmark" size={18} color={COLORS.primary} />
                 <Text style={styles.infoText}>
-                  Votre demande sera envoyée au praticien. Vous recevrez une notification dès sa confirmation. Le paiement se fait directement au cabinet ou via Mobile Money.
+                  Votre demande sera envoyée au praticien. Vous recevrez une notification dès sa confirmation.
                 </Text>
               </View>
             </View>
@@ -571,17 +653,34 @@ export default function RdvNouveau() {
               <Text style={styles.nextBtnText}>Continuer</Text>
               <Ionicons name="chevron-forward" size={18} color="#fff" />
             </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[styles.submitBtn, (!canProceed() || submitting) && styles.btnDisabled]}
-              onPress={submit}
-              disabled={!canProceed() || submitting}
-              testID="submit-rdv-btn"
-            >
-              {submitting ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark-circle" size={20} color="#fff" />}
-              <Text style={styles.submitBtnText}>{submitting ? "Envoi..." : "Confirmer le rendez-vous"}</Text>
-            </TouchableOpacity>
-          )}
+          ) : (() => {
+            // 💳 Total à payer en ligne (= prix prestation + frais déplacement domicile)
+            const totalOnline =
+              (selectedPrest?.cmu_prise_en_charge ? Math.round((selectedPrest?.prix_fcfa || 0) * (1 - (selectedPrest?.cmu_taux ?? 0.7))) : (selectedPrest?.prix_fcfa || 0)) +
+              (mode === "domicile" ? (selectedPro?.frais_deplacement_fcfa || 2000) : 0);
+            const willPayOnline = mode !== "presentiel" || paymentMethod === "online";
+            return (
+              <TouchableOpacity
+                style={[styles.submitBtn, (!canProceed() || submitting) && styles.btnDisabled]}
+                onPress={submit}
+                disabled={!canProceed() || submitting}
+                testID="submit-rdv-btn"
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Ionicons name={willPayOnline ? "card" : "checkmark-circle"} size={20} color="#fff" />
+                )}
+                <Text style={styles.submitBtnText}>
+                  {submitting
+                    ? "Envoi..."
+                    : willPayOnline
+                      ? `Payer ${totalOnline.toLocaleString()} F CFA`
+                      : "Confirmer le rendez-vous"}
+                </Text>
+              </TouchableOpacity>
+            );
+          })()}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -770,4 +869,19 @@ const styles = StyleSheet.create({
   submitBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 14, borderRadius: 999, backgroundColor: COLORS.success },
   submitBtnText: { color: "#fff", fontWeight: "800", fontSize: 14 },
   btnDisabled: { opacity: 0.5 },
+  // 💳 Méthode de paiement
+  payOpt: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    gap: 4,
+  },
+  payOptActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  payOptTitle: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary },
+  payOptSub: { fontSize: 10, color: COLORS.textSecondary, textAlign: "center" },
 });

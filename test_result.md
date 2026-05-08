@@ -5023,7 +5023,139 @@ agent_communication:
         Compte test Maman : voir /app/memory/test_credentials.md.
 
 backend:
-  - task: "Durée par mode de consultation (`duree_par_mode`) sur profil Pro"
+  - task: "Paiement obligatoire pour Téléconsultation/Domicile + choix Online/Cabinet pour Présentiel"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: |
+          ✅ 35/35 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_payment_required.py).
+
+          🔧 PRÉ-REQUIS — Login Dr alpha (+2250709005330/474Treck) + Login Maman
+          (maman.test@alomaman.dev/Test1234!) OK. Dispo Pro reconfigurée Lun-Sam
+          08:00-20:00 type_id=generale, duree=30, modes=["presentiel",
+          "teleconsultation","domicile"] via PUT /api/pro/disponibilites (6 slots).
+
+          🅰 STEP 2 — mode=teleconsultation (no payment_method) : POST /api/rdv
+          {pro_id, date=lundi 09:00 ISO, motif='Test télé', mode='teleconsultation',
+          tarif_fcfa=5000} → 200 ✓ ; status='pending_payment' ✓ ;
+          payment_method='online' (forcé serveur) ✓ ; payment_required=True ✓ ;
+          payment_deadline ISO ~30 min dans le futur (delta=1799s, range
+          [25-35min] OK) ✓ ; **Pro NON notifié** : GET /api/notifications du Pro
+          AVANT/APRÈS création — 0 nouvelle notif "Nouvelle demande de RDV" ✓.
+
+          🅱 STEP 3 — mode=domicile + tentative bypass payment_method='cabinet' :
+          POST /api/rdv {mode='domicile', adresse_domicile='Cocody Riviera lot 12',
+          payment_method='cabinet'} → 200 ; **serveur force payment_method='online'**
+          (cabinet ignoré) ✓ ; status='pending_payment' ✓ ; payment_required=True ✓ ;
+          frais_deplacement_fcfa=2000 (default Pro) ✓ ; Pro NON notifié ✓.
+
+          🅲 STEP 4 — mode=presentiel défaut (no payment_method) :
+          POST /api/rdv {mode='presentiel'} → 200 ; status='en_attente' ✓ ;
+          payment_method='cabinet' (default) ✓ ; payment_required=False ✓ ;
+          payment_deadline=null ✓ ; **Pro EST notifié** : GET /api/notifications
+          du Pro APRÈS création contient 1 nouvelle notif "📅 Nouvelle demande
+          de RDV" ✓ (flux historique préservé).
+
+          🅳 STEP 5 — mode=presentiel + payment_method='online' :
+          POST /api/rdv {mode='presentiel', payment_method='online'} → 200 ;
+          status='pending_payment' ✓ ; payment_method='online' ✓ ; Pro NON
+          notifié ✓ (différé jusqu'au paiement).
+
+          🅴 STEP 6 — POST /api/pay/consultation {rdv_id=tele} → 200 ;
+          payment_url=https://paydunya.com/checkout/invoice/ahWJ4OzuZpvbilfP7TWQ..
+          (URL PayDunya réelle) ✓ ; payment.token (20 chars) ✓ ;
+          payment.amount=5000 (tarif télé sans CMU) ✓.
+          🅴b — POST /api/pay/consultation {rdv_id=domicile} : payment.amount=7000
+          = base_amount_fcfa(5000) + frais_deplacement_fcfa(2000) ✓.
+
+          🅵 STEP 7 — Auto-cleanup : via motor direct, set
+          rdv.payment_deadline = now-1h sur le rdv pending_payment de step 5
+          (modified_count=1) ; GET /api/rdv comme Maman → le RDV passe à
+          status='annule' ✓ ; cancelled_by='system_payment_timeout' ✓
+          (logique L1689-1701 de server.py).
+
+          🅶 STEP 8 — Régression : step 4 prouve que mode=presentiel défaut
+          continue de créer status='en_attente' (flux historique inchangé).
+
+          🅷 STEP 9 — Cleanup : 3 RDVs cancellable ont été annulés via
+          PATCH /api/rdv/{id}/cancel (le 4e — pres+online — déjà passé en
+          status='annule' par l'auto-cleanup de step 7, donc PATCH retourne 400
+          comme attendu).
+
+          Aucun bug détecté. Tous les flux critiques (forçage online sur télé/
+          domicile, status pending_payment, deadline 30min, notification
+          différée Pro, auto-cleanup deadline, génération payment_url PayDunya
+          avec calcul amount inclusion frais déplacement) fonctionnent
+          conformément à la spec La Ruche Health.
+
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Refonte du flux paiement à la création de RDV (style La Ruche Health).
+
+          **Backend (server.py)** :
+            1. **`RdvIn`** : ajout du champ `payment_method: Optional[str] = None`
+               (valeurs : "online" | "cabinet"). Si non fourni, défaut serveur :
+                 - mode `teleconsultation` ou `domicile` → forcé à "online"
+                 - mode `presentiel` → "cabinet" par défaut
+            2. **`POST /api/rdv`** : à la création, calcule `payment_required` selon
+               le mode + payment_method. Si paiement requis :
+                 - status initial = `pending_payment` (au lieu de `en_attente`)
+                 - `payment_deadline = now + 30 min`
+                 - **Notification au Pro DIFFÉRÉE** (le Pro ne reçoit la demande
+                   qu'après confirmation du paiement, pour éviter les fausses
+                   alertes / no-shows).
+            3. **`GET /api/rdv`** : auto-cleanup → tout RDV en `pending_payment`
+               dont la `payment_deadline < now` est automatiquement passé en
+               status `annule` avec `cancelled_by="system_payment_timeout"`.
+               Le créneau est libéré, la maman peut réessayer.
+            4. Le flow webhook PayDunya existant (`pay_verify` / `pay_webhook`)
+               est inchangé : à la confirmation du paiement, le RDV passe à
+               `confirme` + push au Pro ("Consultation payée 💰" ou "🏠 Visite
+               à domicile confirmée" avec adresse).
+
+          Tests à effectuer :
+            • Maman crée RDV mode=teleconsultation. Vérifier doc en DB :
+              `status=pending_payment, payment_method=online, payment_required=true,
+              payment_deadline=ISO`. Le Pro NE reçoit PAS de notification "Nouvelle
+              demande".
+            • Maman crée RDV mode=domicile. Idem (forcé online). Notif différée.
+            • Maman crée RDV mode=presentiel sans payment_method →
+              `payment_method=cabinet`, `status=en_attente`, Pro notifié.
+            • Maman crée RDV mode=presentiel avec payment_method="online" →
+              `payment_method=online, status=pending_payment`, Pro PAS notifié.
+            • Maman crée RDV mode=teleconsultation avec payment_method="cabinet"
+              dans le payload → serveur force "online", `status=pending_payment`.
+            • POST /api/pay/consultation avec rdv_id pending_payment → renvoie
+              `payment_url` PayDunya valide.
+            • Auto-cleanup : créer un RDV pending_payment, simuler payment_deadline
+              expirée (mongo direct), GET /api/rdv → RDV passe à `annule`.
+            • Régression : `pay_verify` / `pay_webhook` continuent de marquer le
+              RDV `confirme` + paye=true à confirmation du paiement, le Pro reçoit
+              bien la notif "Consultation payée".
+
+agent_communication:
+    - agent: "main"
+      message: |
+        🆕 Nouvelle tâche backend : paiement obligatoire selon le mode.
+
+        Refonte de `POST /api/rdv` + auto-cleanup sur `GET /api/rdv` (après 30 min
+        sans paiement, le RDV est automatiquement annulé pour libérer le créneau).
+        Notification au Pro DIFFÉRÉE pour les RDV pending_payment (envoyée
+        seulement à confirmation du paiement via webhook PayDunya existant).
+
+        Compte test Pro : Dr alpha (+2250709005330 / 474Treck).
+        Compte test Maman : voir /app/memory/test_credentials.md.
+
+        ⚠️ N'utiliser que des dates futures (>= demain) pour les tests RDV pour
+        respecter la validation des disponibilités du Pro.
     implemented: true
     working: true
     file: "backend/server.py"
@@ -5307,3 +5439,44 @@ agent_communication:
 
         Cleanup OK (pending résiduels refusés). Aucune autre régression.
         Main agent : RAS, peut summariser et clore.
+
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        💳 Feature "Paiement obligatoire pour Téléconsultation/Domicile + choix
+        Online/Cabinet pour Présentiel" (style La Ruche Health) — **35/35 PASS**
+        sur https://cycle-tracker-pro.preview.emergentagent.com/api
+        (script /app/backend_test_payment_required.py).
+
+        ✅ POST /api/rdv mode=teleconsultation : status='pending_payment',
+           payment_method='online', payment_required=true, payment_deadline ISO
+           ~30 min dans le futur (delta=1799s, OK), Pro NON notifié.
+        ✅ POST /api/rdv mode=domicile + tentative bypass payment_method='cabinet'
+           : serveur force 'online' (cabinet ignoré), status='pending_payment',
+           Pro NON notifié, frais_deplacement_fcfa=2000 défaut.
+        ✅ POST /api/rdv mode=presentiel défaut : status='en_attente',
+           payment_method='cabinet', payment_required=false, payment_deadline=null,
+           Pro EST notifié avec push "📅 Nouvelle demande de RDV" — flux
+           historique préservé.
+        ✅ POST /api/rdv mode=presentiel + payment_method='online' :
+           status='pending_payment', Pro NON notifié (différé).
+        ✅ POST /api/pay/consultation {rdv_id=tele} : payment_url PayDunya
+           réelle (https://paydunya.com/checkout/invoice/ahWJ4O...), payment.token
+           20 chars, amount=5000 (correct). Pour rdv=domicile :
+           amount=7000=base(5000)+frais(2000) ✓.
+        ✅ Auto-cleanup : antidate de payment_deadline via mongo direct
+           (modified=1) → GET /api/rdv comme Maman bascule le RDV à
+           status='annule' avec cancelled_by='system_payment_timeout'
+           (server.py L1689-1701).
+        ✅ Cleanup OK : 4 RDV de test annulés (le 4e déjà passé en annule par
+           l'auto-cleanup, retour 400 attendu).
+
+        Aucun bug détecté. Aucun écart vs spec La Ruche Health.
+        ⚠️ Régression PayDunya réelle non testée (smoke test only — pas
+        d'exécution de paiement réel comme demandé). Tous les flux critiques
+        (forçage online, status pending_payment, deadline 30min, notification
+        différée Pro, génération payment_url avec calcul amount inclusion
+        frais déplacement, auto-cleanup deadline) fonctionnent conformément.
+
+        Main agent : RAS, peut summariser et clore la tâche.

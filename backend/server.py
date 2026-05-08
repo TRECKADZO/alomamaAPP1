@@ -377,6 +377,11 @@ class RdvIn(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     frais_deplacement_fcfa: Optional[int] = None  # défaut = celui du Pro ou 2000
+    # 💳 Méthode de paiement choisie par la Maman
+    # - "online" → paiement PayDunya immédiatement après création (RDV bloqué tant que non payé)
+    # - "cabinet" → paiement sur place (uniquement valide pour mode=presentiel)
+    # Pour mode teleconsultation/domicile, la valeur est forcée à "online" côté serveur.
+    payment_method: Optional[str] = None
 
 
 class RefundIn(BaseModel):
@@ -1681,6 +1686,19 @@ async def get_pro_public(pro_id: str, user=Depends(get_current_user)):
 
 @api.get("/rdv")
 async def list_rdv(user=Depends(get_current_user)):
+    # 🧹 Auto-cleanup : annule les RDV en pending_payment dont la deadline est dépassée (30 min)
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.rdv.update_many(
+            {
+                "status": "pending_payment",
+                "paye": {"$ne": True},
+                "payment_deadline": {"$lt": now_iso},
+            },
+            {"$set": {"status": "annule", "cancelled_at": now_iso, "cancelled_by": "system_payment_timeout"}},
+        )
+    except Exception:
+        pass
     q = {"maman_id": user["id"]} if user["role"] == "maman" else (
         {"pro_id": user["id"]} if user["role"] == "professionnel" else {}
     )
@@ -1825,6 +1843,20 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         cmu_applique = True
     # 💰 Total à payer (incluant frais de déplacement domicile)
     tarif_total_fcfa = (reste_a_charge if cmu_applique else tarif_fcfa) + frais_deplacement_fcfa
+    # 💳 Détermination de la méthode de paiement et du statut initial
+    # - teleconsultation / domicile → paiement EN LIGNE OBLIGATOIRE (acompte de garantie marketplace)
+    # - presentiel → la Maman peut choisir online ou cabinet (cabinet = défaut historique)
+    pm_request = (payload.payment_method or "").lower().strip() or None
+    if mode in ("teleconsultation", "domicile"):
+        payment_method = "online"  # forcé
+    else:  # presentiel
+        payment_method = "online" if pm_request == "online" else "cabinet"
+    payment_required = payment_method == "online"
+    # Status initial :
+    # - online → "pending_payment" (libéré auto sous 30 min si pas payé)
+    # - cabinet → "en_attente" (flow historique)
+    initial_status = "pending_payment" if payment_required else "en_attente"
+    payment_deadline = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat() if payment_required else None
     doc = {
         "id": str(uuid.uuid4()),
         "maman_id": user["id"],
@@ -1851,24 +1883,30 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "lat": lat,
         "lng": lng,
         "paye": False,
-        "status": "en_attente",
+        # 💳 Paiement
+        "payment_method": payment_method,
+        "payment_required": payment_required,
+        "payment_deadline": payment_deadline,
+        "status": initial_status,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.rdv.insert_one(doc)
     doc.pop("_id", None)
-    # 🔔 Push au Pro — notification riche avec heure et prestation
-    try:
-        rdv_dt = datetime.fromisoformat(payload.date.replace("Z", "+00:00"))
-        date_fr = rdv_dt.strftime("%d/%m à %Hh%M")
-    except Exception:
-        date_fr = payload.date[:10]
-    prest_label = (prestation.get("nom") if prestation else None) or (motif[:40] if motif else "Consultation")
-    await push_notif(
-        payload.pro_id,
-        "📅 Nouvelle demande de RDV",
-        f"{user['name']} demande un RDV le {date_fr} — {prest_label}",
-        "rdv",
-    )
+    # 🔔 Push au Pro — UNIQUEMENT si le RDV ne nécessite pas de paiement préalable
+    # Pour les RDV pending_payment, le Pro sera notifié dans pay_verify/pay_webhook après confirmation
+    if not payment_required:
+        try:
+            rdv_dt = datetime.fromisoformat(payload.date.replace("Z", "+00:00"))
+            date_fr = rdv_dt.strftime("%d/%m à %Hh%M")
+        except Exception:
+            date_fr = payload.date[:10]
+        prest_label = (prestation.get("nom") if prestation else None) or (motif[:40] if motif else "Consultation")
+        await push_notif(
+            payload.pro_id,
+            "📅 Nouvelle demande de RDV",
+            f"{user['name']} demande un RDV le {date_fr} — {prest_label}",
+            "rdv",
+        )
     return doc
 
 
