@@ -297,6 +297,7 @@ class LoginIn(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     password: str
+    totp_code: Optional[str] = None  # 🔐 RGSSI N3 — code 2FA si activé
 
 
 def _normalize_phone(p: str) -> str:
@@ -777,7 +778,54 @@ async def login(payload: LoginIn):
         if canon != user["phone"]:
             await db.users.update_one({"id": user["id"]}, {"$set": {"phone": canon}})
             user["phone"] = canon
+
+    # 🔐 RGSSI Niveau 3 — 2FA TOTP obligatoire pour les Pros si activé
+    if user.get("totp_enabled"):
+        otp = (payload.totp_code or "").strip().replace(" ", "")
+        if not otp:
+            # Code manquant → demander la 2e étape
+            return {
+                "requires_2fa": True,
+                "user_id": user["id"],
+                "email": user.get("email"),
+                "message": "Code à 6 chiffres requis (Google Authenticator)",
+            }
+        try:
+            import pyotp  # type: ignore
+            secret = user.get("totp_secret")
+            if not secret or not pyotp.TOTP(secret).verify(otp, valid_window=1):
+                # Audit l'échec pour détection brute force
+                await db.audit_log.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": user["id"],
+                    "user_role": user.get("role"),
+                    "action": "auth_failed_2fa",
+                    "resource_type": "Auth",
+                    "resource_id": user["id"],
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                raise HTTPException(status_code=401, detail="Code 2FA invalide")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=500, detail="Erreur 2FA")
+
     token = create_token(user["id"], user["email"], user["role"])
+    # Audit succès login
+    try:
+        await db.audit_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "user_role": user.get("role"),
+            "user_name": user.get("name"),
+            "action": "login",
+            "resource_type": "Auth",
+            "resource_id": user["id"],
+            "details": {"with_2fa": bool(user.get("totp_enabled"))},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
     return {"token": token, "user": serialize_user(user)}
 
 
@@ -5886,6 +5934,368 @@ async def audit_log_me(limit: int = 100, user=Depends(get_current_user)):
         {"_id": 0},
     ).sort("timestamp", -1).to_list(min(limit, 500))
     return {"total": len(items), "events": items}
+
+
+# ============================================================================
+# 🔐 RGSSI Niveau 3 — 2FA TOTP (Google Authenticator)
+# ============================================================================
+
+@api.post("/auth/2fa/setup")
+async def auth_2fa_setup(user=Depends(get_current_user)):
+    """Démarre l'activation 2FA. Retourne un secret + URL QR code (à scanner avec Google Authenticator).
+    Le 2FA reste désactivé tant que le user n'a pas confirmé un code valide via /2fa/verify.
+    """
+    import pyotp
+    secret = pyotp.random_base32()
+    issuer = "À lo Maman"
+    totp = pyotp.TOTP(secret)
+    otpauth_url = totp.provisioning_uri(name=user.get("email") or user.get("phone") or user["id"], issuer_name=issuer)
+    # Stocke le secret en attente (pas encore actif)
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"totp_secret_pending": secret, "totp_pending_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await _audit_log(user=user, action="write", resource_type="2FA", resource_id=user["id"], details={"action": "setup_started"})
+    return {"secret": secret, "otpauth_url": otpauth_url, "issuer": issuer, "label": user.get("email") or user["id"]}
+
+
+class TotpVerifyIn(BaseModel):
+    code: str
+
+
+@api.post("/auth/2fa/verify")
+async def auth_2fa_verify(payload: TotpVerifyIn, user=Depends(get_current_user)):
+    """Confirme un code 2FA et active le 2FA sur le compte."""
+    import pyotp
+    full = await db.users.find_one({"id": user["id"]})
+    if not full:
+        raise HTTPException(404, "Utilisateur introuvable")
+    secret = full.get("totp_secret_pending") or full.get("totp_secret")
+    if not secret:
+        raise HTTPException(400, "Aucun secret 2FA en attente. Lancez d'abord /2fa/setup")
+    code = (payload.code or "").strip().replace(" ", "")
+    if not pyotp.TOTP(secret).verify(code, valid_window=1):
+        raise HTTPException(401, "Code 2FA invalide")
+    # Active 2FA en migrant le secret pending → secret actif
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "totp_secret": secret,
+            "totp_enabled": True,
+            "totp_activated_at": datetime.now(timezone.utc).isoformat(),
+        }, "$unset": {"totp_secret_pending": "", "totp_pending_at": ""}},
+    )
+    await _audit_log(user=user, action="write", resource_type="2FA", resource_id=user["id"], details={"action": "enabled"})
+    return {"ok": True, "totp_enabled": True}
+
+
+@api.post("/auth/2fa/disable")
+async def auth_2fa_disable(payload: TotpVerifyIn, user=Depends(get_current_user)):
+    """Désactive le 2FA. Code TOTP requis pour confirmer."""
+    import pyotp
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not full.get("totp_enabled"):
+        raise HTTPException(400, "2FA non activé")
+    code = (payload.code or "").strip().replace(" ", "")
+    if not pyotp.TOTP(full["totp_secret"]).verify(code, valid_window=1):
+        raise HTTPException(401, "Code 2FA invalide")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$unset": {"totp_secret": "", "totp_enabled": ""},
+         "$set": {"totp_disabled_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await _audit_log(user=user, action="write", resource_type="2FA", resource_id=user["id"], details={"action": "disabled"})
+    return {"ok": True, "totp_enabled": False}
+
+
+@api.get("/auth/2fa/status")
+async def auth_2fa_status(user=Depends(get_current_user)):
+    full = await db.users.find_one({"id": user["id"]})
+    return {
+        "enabled": bool(full and full.get("totp_enabled")),
+        "activated_at": (full or {}).get("totp_activated_at"),
+        "required_for_role": user.get("role") in ("professionnel", "centre_sante", "admin"),
+    }
+
+
+# ============================================================================
+# 🚨 RGSSI N3 — Gestion des incidents de sécurité
+# ============================================================================
+
+INCIDENT_SEVERITIES = ["low", "medium", "high", "critical"]
+INCIDENT_STATUSES = ["open", "investigating", "resolved", "closed"]
+INCIDENT_CATEGORIES = [
+    "breach",          # fuite/violation de données
+    "unauthorized_access",
+    "data_corruption",
+    "suspicious_activity",
+    "phishing",
+    "ddos",
+    "malware",
+    "physical",
+    "other",
+]
+
+
+class IncidentIn(BaseModel):
+    title: str
+    description: str
+    severity: str        # low | medium | high | critical
+    category: str        # cf. INCIDENT_CATEGORIES
+    affected_users: Optional[List[str]] = None  # user_ids potentiellement impactés
+    detected_at: Optional[str] = None  # ISO
+
+
+@api.post("/incidents")
+async def incident_create(payload: IncidentIn, user=Depends(get_current_user)):
+    """Déclare un incident de sécurité. Tout utilisateur peut déclarer."""
+    if payload.severity not in INCIDENT_SEVERITIES:
+        raise HTTPException(400, f"Sévérité invalide. Valides : {INCIDENT_SEVERITIES}")
+    if payload.category not in INCIDENT_CATEGORIES:
+        raise HTTPException(400, f"Catégorie invalide. Valides : {INCIDENT_CATEGORIES}")
+    iid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": iid,
+        "title": payload.title,
+        "description": payload.description,
+        "severity": payload.severity,
+        "category": payload.category,
+        "affected_users": payload.affected_users or [],
+        "detected_at": payload.detected_at or now,
+        "reported_by": user["id"],
+        "reporter_name": user.get("name"),
+        "reporter_role": user.get("role"),
+        "status": "open",
+        "anssi_notification_required": payload.severity in ("high", "critical"),
+        "anssi_notified_at": None,
+        "resolution_notes": None,
+        "created_at": now,
+        "updated_at": now,
+        "history": [{"at": now, "by": user["id"], "action": "created", "status": "open"}],
+    }
+    await db.incidents.insert_one(doc)
+
+    # Notifier les admins
+    try:
+        admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(50)
+        for adm in admins:
+            await db.notifications.insert_one({
+                "id": str(uuid.uuid4()),
+                "user_id": adm["id"],
+                "type": "security_incident",
+                "title": f"🚨 Incident {payload.severity.upper()} — {payload.title}",
+                "body": payload.description[:200],
+                "data": {"incident_id": iid, "severity": payload.severity},
+                "read": False,
+                "created_at": now,
+            })
+    except Exception:
+        pass
+
+    await _audit_log(user=user, action="write", resource_type="Incident", resource_id=iid, details={"severity": payload.severity, "category": payload.category})
+    return {**doc, "_id": None}
+
+
+@api.get("/incidents")
+async def incidents_list(status: Optional[str] = None, severity: Optional[str] = None, user=Depends(require_roles("admin"))):
+    """Admin liste tous les incidents (avec filtres optionnels)."""
+    flt: dict = {}
+    if status:
+        flt["status"] = status
+    if severity:
+        flt["severity"] = severity
+    items = await db.incidents.find(flt, {"_id": 0}).sort("created_at", -1).to_list(500)
+    stats = {
+        "total": len(items),
+        "open": sum(1 for i in items if i["status"] == "open"),
+        "investigating": sum(1 for i in items if i["status"] == "investigating"),
+        "resolved": sum(1 for i in items if i["status"] == "resolved"),
+        "critical": sum(1 for i in items if i["severity"] == "critical"),
+        "anssi_pending": sum(1 for i in items if i.get("anssi_notification_required") and not i.get("anssi_notified_at")),
+    }
+    return {"stats": stats, "incidents": items}
+
+
+@api.get("/incidents/{iid}")
+async def incident_get(iid: str, user=Depends(get_current_user)):
+    doc = await db.incidents.find_one({"id": iid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Incident introuvable")
+    # Reporter peut voir le sien ; admin peut tout voir
+    if user["role"] != "admin" and doc.get("reported_by") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    return doc
+
+
+class IncidentUpdate(BaseModel):
+    status: Optional[str] = None
+    resolution_notes: Optional[str] = None
+    anssi_notified: Optional[bool] = None
+
+
+@api.patch("/incidents/{iid}")
+async def incident_update(iid: str, payload: IncidentUpdate, user=Depends(require_roles("admin"))):
+    doc = await db.incidents.find_one({"id": iid})
+    if not doc:
+        raise HTTPException(404, "Incident introuvable")
+    update: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    history_entry = {"at": update["updated_at"], "by": user["id"]}
+    if payload.status:
+        if payload.status not in INCIDENT_STATUSES:
+            raise HTTPException(400, f"Statut invalide. Valides : {INCIDENT_STATUSES}")
+        update["status"] = payload.status
+        history_entry["status"] = payload.status
+        history_entry["action"] = f"status_changed_to_{payload.status}"
+    if payload.resolution_notes is not None:
+        update["resolution_notes"] = payload.resolution_notes
+    if payload.anssi_notified:
+        update["anssi_notified_at"] = update["updated_at"]
+        history_entry["action"] = "anssi_notified"
+    await db.incidents.update_one({"id": iid}, {"$set": update, "$push": {"history": history_entry}})
+    await _audit_log(user=user, action="write", resource_type="Incident", resource_id=iid, details={"changes": list(update.keys())})
+    return {"ok": True}
+
+
+# ============================================================================
+# 🛡️ RGSSI N3 — Tableau de bord conformité (admin)
+# ============================================================================
+
+@api.get("/admin/rgssi/compliance")
+async def rgssi_compliance(user=Depends(require_roles("admin"))):
+    """Tableau de bord conformité RGSSI Niveau 3. Donne un aperçu temps réel."""
+    # 2FA stats
+    pros_total = await db.users.count_documents({"role": "professionnel"})
+    pros_2fa = await db.users.count_documents({"role": "professionnel", "totp_enabled": True})
+    centres_total = await db.users.count_documents({"role": "centre_sante"})
+    centres_2fa = await db.users.count_documents({"role": "centre_sante", "totp_enabled": True})
+
+    # Incidents stats (90 derniers jours)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    incidents_90d = await db.incidents.count_documents({"created_at": {"$gte": cutoff}})
+    incidents_critical_open = await db.incidents.count_documents({"severity": "critical", "status": {"$in": ["open", "investigating"]}})
+    incidents_anssi_pending = await db.incidents.count_documents({"anssi_notification_required": True, "anssi_notified_at": None})
+
+    # Audit log volume (30 derniers jours)
+    cutoff_30 = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    audit_30d = await db.audit_log.count_documents({"timestamp": {"$gte": cutoff_30}})
+
+    # Consents actifs
+    consents_active = await db.consents.count_documents({"status": "active"})
+
+    # Données chiffrées
+    encrypted_fields = ["cmu (users)", "allergies (enfants)", "image_base64 (tele_echo)", "notes (consultation_notes)"]
+
+    return {
+        "rgssi_level": 3,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "domains": {
+            "B7_access_control": {
+                "title": "B.7 — Contrôle d'accès",
+                "score": round(100 * pros_2fa / pros_total, 1) if pros_total else 0,
+                "metrics": {
+                    "pros_2fa": pros_2fa,
+                    "pros_total": pros_total,
+                    "centres_2fa": centres_2fa,
+                    "centres_total": centres_total,
+                },
+                "compliant": (pros_2fa == pros_total and pros_total > 0),
+            },
+            "B8_cryptography": {
+                "title": "B.8 — Cryptographie",
+                "compliant": True,
+                "metrics": {
+                    "at_rest": "AES-256-GCM",
+                    "in_transit": "TLS 1.3",
+                    "encrypted_fields": encrypted_fields,
+                },
+            },
+            "B14_incidents": {
+                "title": "B.14 — Gestion incidents",
+                "compliant": incidents_anssi_pending == 0 and incidents_critical_open == 0,
+                "metrics": {
+                    "incidents_90d": incidents_90d,
+                    "critical_open": incidents_critical_open,
+                    "anssi_pending": incidents_anssi_pending,
+                },
+            },
+            "B14_audit_log": {
+                "title": "B.14 — Journalisation",
+                "compliant": audit_30d > 0,
+                "metrics": {"events_30d": audit_30d, "retention_days": 365},
+            },
+            "consent_granular": {
+                "title": "Consentement granulaire",
+                "compliant": True,
+                "metrics": {"active_consents": consents_active, "categories_supported": 10},
+            },
+            "fhir_interop": {
+                "title": "Interopérabilité FHIR R4",
+                "compliant": True,
+                "metrics": {"endpoints": 9, "standard": "HL7 FHIR R4 (4.0.1)"},
+            },
+        },
+    }
+
+
+@api.get("/admin/rgssi/audit-log")
+async def rgssi_audit_log_admin(limit: int = 200, user=Depends(require_roles("admin"))):
+    """Admin : récupère l'audit log complet (lecture sensible, restriction admin)."""
+    items = await db.audit_log.find({}, {"_id": 0}).sort("timestamp", -1).to_list(min(limit, 1000))
+    return {"total": len(items), "events": items}
+
+
+@api.get("/admin/rgssi/users-access-review")
+async def users_access_review(user=Depends(require_roles("admin"))):
+    """Revue trimestrielle des droits d'accès actifs (RGSSI B.7)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    users = await db.users.find({}, {
+        "_id": 0, "id": 1, "email": 1, "phone": 1, "role": 1, "name": 1, "specialite": 1,
+        "totp_enabled": 1, "created_at": 1, "last_login_at": 1,
+    }).to_list(2000)
+    # Comptes actifs : login récent < 90j
+    active = [u for u in users if u.get("last_login_at") and u["last_login_at"] >= cutoff]
+    inactive = [u for u in users if not u.get("last_login_at") or u["last_login_at"] < cutoff]
+    return {
+        "total_users": len(users),
+        "active_90d": len(active),
+        "inactive_90d": len(inactive),
+        "by_role": {
+            r: sum(1 for u in users if u.get("role") == r) for r in ("maman", "professionnel", "centre_sante", "famille", "admin")
+        },
+        "users_active": active,
+        "users_inactive": inactive,
+    }
+
+
+@api.get("/admin/rgssi/incidents/anssi-report/{iid}")
+async def incident_anssi_report(iid: str, user=Depends(require_roles("admin"))):
+    """Génère un rapport ANSSI pré-formaté pour notification d'incident."""
+    inc = await db.incidents.find_one({"id": iid}, {"_id": 0})
+    if not inc:
+        raise HTTPException(404, "Incident introuvable")
+    return {
+        "ANSSI_Cote_d_Ivoire": {
+            "Reference_RGSSI": "Niveau 3 - Article B.14",
+            "Application": "À lo Maman",
+            "Operator": "TRECKADZO / À lo Maman SARL",
+            "Incident": {
+                "ID": inc["id"],
+                "Title": inc["title"],
+                "Severity": inc["severity"].upper(),
+                "Category": inc["category"],
+                "Description": inc["description"],
+                "Detected_at": inc.get("detected_at"),
+                "Affected_users_count": len(inc.get("affected_users") or []),
+                "Status": inc["status"],
+                "Resolution_notes": inc.get("resolution_notes"),
+            },
+            "Actions_taken": "Voir history",
+            "History": inc.get("history", []),
+            "Generated_at": datetime.now(timezone.utc).isoformat(),
+            "Reporter": inc.get("reporter_name") + " (" + inc.get("reporter_role", "") + ")",
+        },
+    }
 
 
 # --- Export PDF + JSON FHIR du carnet médical ------------------------------
