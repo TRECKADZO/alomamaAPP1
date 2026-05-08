@@ -43,6 +43,7 @@ export default function RdvNouveau() {
   const [pros, setPros] = useState<any[]>([]);
   const [prestations, setPrestations] = useState<any[]>([]);
   const [proDispos, setProDispos] = useState<any[]>([]);
+  const [proDureeMode, setProDureeMode] = useState<{ presentiel: number; teleconsultation: number; domicile: number }>({ presentiel: 30, teleconsultation: 20, domicile: 60 });
   const [existingRdv, setExistingRdv] = useState<any[]>([]);
 
   // Sélections
@@ -99,6 +100,14 @@ export default function RdvNouveau() {
       ]);
       setPrestations(pr.data || []);
       setProDispos((dp.data?.slots || []).filter((s: any) => s.actif));
+      // ⏱️ Récupérer la map des durées par mode du Pro
+      if (dp.data?.duree_par_mode) {
+        setProDureeMode({
+          presentiel: Number(dp.data.duree_par_mode.presentiel) || 30,
+          teleconsultation: Number(dp.data.duree_par_mode.teleconsultation) || 20,
+          domicile: Number(dp.data.duree_par_mode.domicile) || 60,
+        });
+      }
     } catch { /* ignore */ }
     if (autoAdvance) setStep(2);
   };
@@ -119,8 +128,11 @@ export default function RdvNouveau() {
       .filter((r) => r.pro_id === selectedPro.id && r.status !== "annule" && sameDate(new Date(r.date), date))
       .map((r) => new Date(r.date).toTimeString().slice(0, 5));
     const out: any[] = [];
-    // Générer des sous-créneaux selon la durée de la prestation sélectionnée (ou 30 min par défaut)
-    const stepMin = selectedPrest?.duree_min || 30;
+    // Générer des sous-créneaux selon la durée. Priorité :
+    //   1. Durée définie par le Pro pour le mode choisi (proDureeMode[mode])
+    //   2. Durée de la prestation sélectionnée
+    //   3. 30 minutes par défaut
+    const stepMin = (proDureeMode && proDureeMode[mode]) || selectedPrest?.duree_min || 30;
     for (const s of dispos) {
       const [h1, m1] = s.heure_debut.split(":").map(Number);
       const [h2, m2] = s.heure_fin.split(":").map(Number);

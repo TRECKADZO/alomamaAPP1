@@ -2330,12 +2330,19 @@ async def get_pro_disponibilites_public(pro_id: str, user=Depends(get_current_us
         return None
 
     # 🏥📹🏠 Modes globalement supportés par le Pro (fallback pour slots legacy)
-    pro_doc = await db.users.find_one({"id": pro_id}, {"_id": 0, "modes_supportes": 1})
+    pro_doc = await db.users.find_one({"id": pro_id}, {"_id": 0, "modes_supportes": 1, "duree_par_mode": 1})
     pro_modes_glob = (pro_doc or {}).get("modes_supportes") or {}
     pro_modes_default = [
         m for m in ("presentiel", "teleconsultation", "domicile")
         if pro_modes_glob.get(m, True)
     ] or ["presentiel"]
+    # ⏱️ Durées par mode du Pro (avec valeurs par défaut)
+    dpm_pro = (pro_doc or {}).get("duree_par_mode") or {}
+    duree_par_mode = {
+        "presentiel": int(dpm_pro.get("presentiel") or 30),
+        "teleconsultation": int(dpm_pro.get("teleconsultation") or 20),
+        "domicile": int(dpm_pro.get("domicile") or 60),
+    }
 
     enriched = []
     for s in raw_slots:
@@ -2371,6 +2378,7 @@ async def get_pro_disponibilites_public(pro_id: str, user=Depends(get_current_us
         "pro": pro,
         "slots": enriched,
         "prestations_count": len(prestations),
+        "duree_par_mode": duree_par_mode,
     }
 
 
@@ -10269,6 +10277,7 @@ class ModesConsultationIn(BaseModel):
     accepte_teleconsultation: bool = True
     accepte_domicile: bool = False
     frais_deplacement_fcfa: Optional[int] = None
+    duree_par_mode: Optional[Dict[str, int]] = None  # ⏱️ {presentiel:30, teleconsultation:20, domicile:60}
 
 
 @api.put("/pro/modes-consultation")
@@ -10280,6 +10289,21 @@ async def set_modes_consultation(payload: ModesConsultationIn, user=Depends(requ
         "accepte_teleconsultation": bool(payload.accepte_teleconsultation),
         "accepte_domicile": bool(payload.accepte_domicile),
     }
+    # ⏱️ Durées par mode (validation : entiers entre 5 et 240 min)
+    if payload.duree_par_mode is not None:
+        cleaned: Dict[str, int] = {}
+        for k, v in payload.duree_par_mode.items():
+            if k not in ("presentiel", "teleconsultation", "domicile"):
+                continue
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"Durée invalide pour le mode {k}.")
+            if iv < 5 or iv > 240:
+                raise HTTPException(400, f"Durée pour {k} hors limites (5 à 240 minutes).")
+            cleaned[k] = iv
+        if cleaned:
+            update["duree_par_mode"] = cleaned
     # Note : presentiel toujours implicitement autorisé (modèle de base)
     if payload.accepte_domicile:
         # Si activation domicile sans frais explicites, mettre 2000 par défaut
@@ -10300,11 +10324,17 @@ async def set_modes_consultation(payload: ModesConsultationIn, user=Depends(requ
 @api.get("/pro/modes-consultation")
 async def get_modes_consultation(user=Depends(require_roles("professionnel"))):
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0}) or {}
+    dpm = u.get("duree_par_mode") or {}
     return {
         "accepte_presentiel": True,  # toujours
         "accepte_teleconsultation": u.get("accepte_teleconsultation") is not False,
         "accepte_domicile": bool(u.get("accepte_domicile")) or u.get("frais_deplacement_fcfa") is not None,
         "frais_deplacement_fcfa": u.get("frais_deplacement_fcfa"),
+        "duree_par_mode": {
+            "presentiel": int(dpm.get("presentiel") or 30),
+            "teleconsultation": int(dpm.get("teleconsultation") or 20),
+            "domicile": int(dpm.get("domicile") or 60),
+        },
     }
 
 

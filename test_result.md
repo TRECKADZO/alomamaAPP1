@@ -4940,6 +4940,120 @@ agent_communication:
         Compte test Pro : Dr alpha (+2250709005330 / 474Treck), Premium actif.
         Compte test Maman : voir /app/memory/test_credentials.md.
 
+backend:
+  - task: "Durée par mode de consultation (`duree_par_mode`) sur profil Pro"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Ajout du champ `duree_par_mode: Dict[str, int]` au profil Pro permettant de
+          définir 3 durées globales (présentiel / téléconsultation / domicile) en minutes.
+          Les durées sont validées entre 5 et 240 min côté backend.
+
+          Modifications backend (server.py L10268-10318) :
+            1. **`PUT /api/pro/modes-consultation`** : accepte un nouveau champ
+               `duree_par_mode: {presentiel:int, teleconsultation:int, domicile:int}`.
+               Validation 5-240 min/mode, sinon HTTP 400 avec message FR.
+            2. **`GET /api/pro/modes-consultation`** : renvoie `duree_par_mode` avec
+               valeurs par défaut (30 / 20 / 60) si non configuré.
+            3. **`GET /api/professionnels/{pro_id}/disponibilites`** (côté Maman) :
+               expose désormais `duree_par_mode` au niveau racine de la réponse
+               (en plus de `slots`, `pro`, `prestations_count`). Le frontend Maman
+               utilise cette map pour générer la grille de créneaux à la bonne
+               granularité selon le mode choisi.
+
+          Tests à effectuer :
+            • PUT /api/pro/modes-consultation avec duree_par_mode={presentiel:30,
+              teleconsultation:15, domicile:90} → 200, GET retourne ces 3 valeurs.
+            • PUT avec valeur 3 (< 5) → HTTP 400 "Durée pour {mode} hors limites…".
+            • PUT avec valeur 300 (> 240) → HTTP 400.
+            • PUT sans duree_par_mode → 200, valeurs précédentes préservées.
+            • GET /api/professionnels/{pro_id}/disponibilites en tant que Maman →
+              champ `duree_par_mode` présent au niveau racine avec les 3 modes
+              définis (ou défauts 30/20/60).
+            • Régression /api/pro/modes-consultation : champs existants
+              (accepte_teleconsultation, accepte_domicile, frais_deplacement_fcfa)
+              restent fonctionnels.
+        -working: true
+        -agent: "testing"
+        -comment: |
+          ✅ 29/29 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_duree_par_mode.py).
+
+          🅰 Login Pro Dr alpha (+2250709005330 / 474Treck) → 200, role=professionnel,
+          pro_id=d07dc3f7-0c5d-41c0-963f-569ad893c6c5.
+
+          🅱 PUT /api/pro/modes-consultation avec body
+          {accepte_presentiel:true, accepte_teleconsultation:true, accepte_domicile:true,
+          frais_deplacement_fcfa:2500, duree_par_mode:{presentiel:30, teleconsultation:15,
+          domicile:90}} → 200 ; réponse contient ok=true, duree_par_mode persisté
+          exactement {30,15,90}, frais_deplacement_fcfa=2500, accepte_teleconsultation=true,
+          accepte_domicile=true.
+
+          🅲 GET /api/pro/modes-consultation → 200 avec duree_par_mode == {presentiel:30,
+          teleconsultation:15, domicile:90} (égalité stricte).
+
+          🅳 Negative — duration too low : PUT avec duree_par_mode.presentiel=3 → 400
+          "Durée pour presentiel hors limites (5 à 240 minutes)." (message FR contient
+          bien "5 à 240 minutes").
+
+          🅴 Negative — duration too high : PUT avec duree_par_mode.domicile=300 → 400
+          "Durée pour domicile hors limites (5 à 240 minutes)." (message FR identique).
+
+          🅵 Backward compat — PUT sans clé `duree_par_mode` (seulement
+          accepte_teleconsultation, accepte_domicile, frais_deplacement_fcfa) → 200 ;
+          GET subséquent retourne TOUJOURS {30,15,90} (les durées précédemment sauvées
+          sont préservées : aucun reset à null/undefined).
+
+          🅶 Defaults : code review server.py L10334-10336 confirme que GET
+          /api/pro/modes-consultation retourne {presentiel:30, teleconsultation:20,
+          domicile:60} si l'utilisateur n'a jamais configuré duree_par_mode. Idem dans
+          GET /api/professionnels/{id}/disponibilites L2341-2345.
+
+          🅷 Maman side — Login maman.test@alomaman.dev / Test1234! → 200. GET
+          /api/professionnels/{Dr_alpha_id}/disponibilites → 200 avec shape exact :
+          {pro:{id,name='Dr alpha',specialite='Dentiste'}, slots:[…],
+          prestations_count:int, **duree_par_mode**:{presentiel:30, teleconsultation:15,
+          domicile:90}}. Le champ `duree_par_mode` est bien présent à la racine et
+          contient les valeurs configurées en B.
+
+          🅸 Régression — chaque slot[] retourné contient toujours `modes_autorises`
+          (ex: lundi 08-12 → ["teleconsultation"]). Champs existants (accepte_*,
+          frais_deplacement_fcfa) toujours respectés via GET pro modes. POST /api/rdv
+          smoke test sur slot téléconsultation lundi 08:00 (date 2026-05-11T08:00,
+          mode=teleconsultation) → 200 RDV créé (id=1df58608-60d6-4ca9-b1e3-d1b59872cc65,
+          tarif=10000 FCFA). Aucune régression sur les champs existants.
+
+          🆗 Cleanup final — Dr alpha restauré à
+          {accepte_presentiel:true, accepte_teleconsultation:true, accepte_domicile:true,
+          frais_deplacement_fcfa:2000, duree_par_mode:{presentiel:30, teleconsultation:20,
+          domicile:60}} → 200.
+
+          Note mineure orthogonale : PATCH /api/rdv/{id} avec {statut:"annule"} renvoie
+          404 (utilisé pour cleanup du RDV smoke test) — comportement existant déjà
+          identifié dans tests précédents, non lié à cette feature.
+
+          Score global : 29/29 PASS (~100%). Feature production-ready.
+
+agent_communication:
+    - agent: "main"
+      message: |
+        🆕 Nouvelle tâche backend : durée d'une consultation dépend du mode.
+
+        Endpoint : `PUT /api/pro/modes-consultation` accepte désormais un champ
+        `duree_par_mode: {presentiel, teleconsultation, domicile}` en minutes (5-240).
+        `GET /api/pro/modes-consultation` et `GET /api/professionnels/{id}/disponibilites`
+        renvoient cette map (avec défauts 30/20/60 si non configuré).
+
+        Compte test Pro : Dr alpha (+2250709005330 / 474Treck).
+        Compte test Maman : voir /app/memory/test_credentials.md.
+
 
     - agent: "testing"
       message: |
@@ -4975,3 +5089,42 @@ agent_communication:
 
         RAS — la feature est prête pour production. Main agent peut summariser et
         clore.
+
+    - agent: "testing"
+      message: |
+        ✅ Tâche backend "Durée par mode de consultation (`duree_par_mode`) sur profil
+        Pro" validée à 100% (29/29 PASS) sur
+        https://cycle-tracker-pro.preview.emergentagent.com/api
+        — script /app/backend_test_duree_par_mode.py.
+
+        Résumé exécutif :
+        • Login Pro Dr alpha (+2250709005330 / 474Treck) OK + Login Maman OK.
+        • PUT /api/pro/modes-consultation avec duree_par_mode={presentiel:30,
+          teleconsultation:15, domicile:90} → 200 ok=true ; valeurs persistées
+          exactement, frais_deplacement_fcfa=2500 préservé, accepte_* respectés.
+        • GET /api/pro/modes-consultation retourne duree_par_mode == {30,15,90}
+          (égalité stricte).
+        • Validation 5-240 min : presentiel=3 → 400 "Durée pour presentiel hors
+          limites (5 à 240 minutes)." ; domicile=300 → 400 même message FR.
+        • Backward compat : PUT sans clé `duree_par_mode` → 200 ; les valeurs
+          précédentes (30/15/90) sont CONSERVÉES (pas de reset).
+        • Defaults code review : si jamais configuré, GET retourne {presentiel:30,
+          teleconsultation:20, domicile:60} (server.py L10334-10336 + L2341-2345).
+        • Côté Maman GET /api/professionnels/{Dr_alpha_id}/disponibilites → 200
+          avec shape {pro, slots:[…], prestations_count, **duree_par_mode**:{30,
+          15, 90}} — la clé `duree_par_mode` est bien exposée à la racine.
+        • Régression : chaque slot[] a toujours `modes_autorises` intact ;
+          accepte_teleconsultation/accepte_domicile/frais_deplacement_fcfa
+          continuent de fonctionner ; POST /api/rdv smoke test sur slot
+          téléconsultation lundi 08:00 → 200 RDV créé.
+        • Cleanup OK : Dr alpha restauré à
+          {accepte_presentiel:true, accepte_teleconsultation:true,
+          accepte_domicile:true, frais_deplacement_fcfa:2000,
+          duree_par_mode:{30, 20, 60}}.
+
+        Aucun bug détecté. Note mineure orthogonale (déjà connue) : PATCH /api/rdv/{id}
+        renvoie 404 (cleanup du RDV smoke test pas effectif, RDV de test reste en DB).
+        Non lié à cette feature.
+
+        RAS — la feature `duree_par_mode` est production-ready. Main agent peut
+        summariser et clore.
