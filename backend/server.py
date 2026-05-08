@@ -10185,6 +10185,11 @@ async def pay_admin_stats_par_mode(user=Depends(require_roles("admin"))):
 # idempotent en pratique. Pour rester safe, ces nouvelles routes sont définies
 # AVANT include_router via le bloc précédent. Ce commentaire est documentation.
 
+# 🔄 Re-include nécessaire : FastAPI fige les routes au moment de l'appel.
+# Nous définissons des routes APRÈS le 1er include_router (Premium Maman + Paiement),
+# donc nous ré-incluons ici pour les enregistrer toutes.
+app.include_router(api)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
