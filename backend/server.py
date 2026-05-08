@@ -6245,9 +6245,50 @@ async def rgssi_audit_log_admin(limit: int = 200, user=Depends(require_roles("ad
     return {"total": len(items), "events": items}
 
 
+@api.get("/security/docs")
+async def security_docs_list(user=Depends(get_current_user)):
+    """Liste les documents de sécurité disponibles (PSSI, PAS, Analyse de risques)."""
+    docs_dir = "/app/security"
+    docs = []
+    for fname, label, role_required in [
+        ("PSSI.md", "Politique de Sécurité (PSSI)", None),
+        ("PAS_2026.md", "Plan Annuel de Sécurisation 2026", None),
+        ("ANALYSE_RISQUES.md", "Analyse de Risques (EBIOS)", "admin"),
+    ]:
+        if role_required and user["role"] != role_required:
+            continue
+        path = os.path.join(docs_dir, fname)
+        if os.path.isfile(path):
+            stat = os.stat(path)
+            docs.append({
+                "key": fname.replace(".md", ""),
+                "label": label,
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                "role_required": role_required,
+            })
+    return {"docs": docs}
+
+
+@api.get("/security/docs/{name}")
+async def security_doc_read(name: str, user=Depends(get_current_user)):
+    """Récupère le contenu markdown d'un document de sécurité."""
+    allowed = {"PSSI", "PAS_2026", "ANALYSE_RISQUES"}
+    if name not in allowed:
+        raise HTTPException(404, "Document inconnu")
+    if name == "ANALYSE_RISQUES" and user["role"] != "admin":
+        raise HTTPException(403, "Accès admin requis")
+    path = f"/app/security/{name}.md"
+    if not os.path.isfile(path):
+        raise HTTPException(404, "Document introuvable")
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    await _audit_log(user=user, action="read", resource_type="SecurityDoc", resource_id=name)
+    return {"name": name, "content": content}
+
+
 @api.get("/admin/rgssi/users-access-review")
 async def users_access_review(user=Depends(require_roles("admin"))):
-    """Revue trimestrielle des droits d'accès actifs (RGSSI B.7)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
     users = await db.users.find({}, {
         "_id": 0, "id": 1, "email": 1, "phone": 1, "role": 1, "name": 1, "specialite": 1,
