@@ -64,19 +64,22 @@ export default function Retraits() {
   const [editAlias, setEditAlias] = useState<string>("");
   const [editHolder, setEditHolder] = useState<string>("");
   const [withdrawAmount, setWithdrawAmount] = useState<string>("");
+  const [autoPayout, setAutoPayout] = useState<{ enabled: boolean; seuil_fcfa: number; frequency: string }>({ enabled: false, seuil_fcfa: 50000, frequency: "weekly" });
 
   const load = async () => {
     try {
-      const [p, a, b, h] = await Promise.all([
+      const [p, a, b, h, ap] = await Promise.all([
         api.get("/pro/mobile-money/providers"),
         api.get("/pro/mobile-money"),
         api.get("/pro/balance"),
         api.get("/pro/payouts"),
+        api.get("/pro/auto-payout").catch(() => ({ data: { enabled: false, seuil_fcfa: 50000, frequency: "weekly" } })),
       ]);
       setProviders(p.data || []);
       setAccount(a.data || {});
       setBalance(b.data);
       setPayouts(h.data || []);
+      setAutoPayout({ enabled: !!ap.data?.enabled, seuil_fcfa: Number(ap.data?.seuil_fcfa) || 50000, frequency: ap.data?.frequency || "weekly" });
       if (a.data?.provider) setEditProvider(a.data.provider);
       if (a.data?.account_alias) setEditAlias(a.data.account_alias);
       if (a.data?.holder_name) setEditHolder(a.data.holder_name);
@@ -84,6 +87,31 @@ export default function Retraits() {
       console.warn(formatError(e));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleAutoPayout = async () => {
+    if (!account.provider || !account.account_alias) {
+      Alert.alert("Compte requis", "Configurez d'abord votre compte Mobile Money avant d'activer les retraits automatiques.");
+      return;
+    }
+    const next = !autoPayout.enabled;
+    try {
+      const r = await api.put("/pro/auto-payout", { enabled: next, seuil_fcfa: autoPayout.seuil_fcfa, frequency: autoPayout.frequency });
+      setAutoPayout({ enabled: !!r.data?.auto_payout_enabled, seuil_fcfa: Number(r.data?.auto_payout_seuil_fcfa) || 50000, frequency: r.data?.auto_payout_frequency || "weekly" });
+      Alert.alert(next ? "✅ Auto-retrait activé" : "Auto-retrait désactivé", next ? `Tous les lundis à 02:00 GMT, si votre solde dépasse ${autoPayout.seuil_fcfa.toLocaleString()} F, le retrait sera déclenché automatiquement.` : "Vous gérez vos retraits manuellement.");
+    } catch (e) {
+      Alert.alert("Erreur", formatError(e));
+    }
+  };
+
+  const updateSeuil = async (newSeuil: number) => {
+    if (newSeuil < 5000) return Alert.alert("Seuil invalide", "Minimum : 5 000 F");
+    try {
+      const r = await api.put("/pro/auto-payout", { enabled: autoPayout.enabled, seuil_fcfa: newSeuil, frequency: autoPayout.frequency });
+      setAutoPayout({ enabled: !!r.data?.auto_payout_enabled, seuil_fcfa: Number(r.data?.auto_payout_seuil_fcfa) || 50000, frequency: r.data?.auto_payout_frequency || "weekly" });
+    } catch (e) {
+      Alert.alert("Erreur", formatError(e));
     }
   };
 
@@ -317,6 +345,46 @@ export default function Retraits() {
             </>
           )}
 
+          {/* 💸 Auto-Payout Toggle */}
+          {account.provider && !editing && (
+            <View style={styles.autoBox}>
+              <View style={styles.autoHead}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.autoTitle}>🤖 Retraits automatiques</Text>
+                  <Text style={styles.autoSub}>Tous les lundis 02h GMT, déclenchement auto si solde ≥ seuil</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.toggle, autoPayout.enabled && styles.toggleOn]}
+                  onPress={toggleAutoPayout}
+                  testID="toggle-auto-payout"
+                >
+                  <View style={[styles.toggleKnob, autoPayout.enabled && styles.toggleKnobOn]} />
+                </TouchableOpacity>
+              </View>
+              {autoPayout.enabled && (
+                <View style={styles.autoConfig}>
+                  <Text style={styles.autoLabel}>Seuil de déclenchement (FCFA)</Text>
+                  <View style={styles.seuilRow}>
+                    {[10000, 25000, 50000, 100000].map((s) => (
+                      <TouchableOpacity
+                        key={s}
+                        style={[styles.seuilChip, autoPayout.seuil_fcfa === s && styles.seuilChipActive]}
+                        onPress={() => updateSeuil(s)}
+                      >
+                        <Text style={[styles.seuilChipText, autoPayout.seuil_fcfa === s && { color: "#fff" }]}>
+                          {(s / 1000).toFixed(0)}K
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={styles.autoNote}>
+                    💡 Dès que votre solde dépasse {autoPayout.seuil_fcfa.toLocaleString()} F, le retrait vers {providerLabel(account.provider || "")} sera lancé automatiquement.
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+
           {/* Historique */}
           <Text style={styles.sectionTitle}>Historique des retraits</Text>
           {payouts.length === 0 ? (
@@ -414,6 +482,21 @@ const styles = StyleSheet.create({
 
   sectionTitle: { fontSize: 15, fontWeight: "800", color: COLORS.textPrimary, marginTop: 14, marginBottom: 8 },
   empty: { color: COLORS.textMuted, textAlign: "center", padding: 20 },
+  autoBox: { backgroundColor: "#FEF3C7", padding: 14, borderRadius: RADIUS.md, marginTop: 14, borderWidth: 1, borderColor: "#FCD34D" },
+  autoHead: { flexDirection: "row", alignItems: "center", gap: 10 },
+  autoTitle: { fontSize: 14, fontWeight: "800", color: "#92400E" },
+  autoSub: { fontSize: 11, color: "#78350F", marginTop: 2, lineHeight: 15 },
+  toggle: { width: 48, height: 28, borderRadius: 14, backgroundColor: "#D1D5DB", justifyContent: "center", padding: 2 },
+  toggleOn: { backgroundColor: "#10B981" },
+  toggleKnob: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#fff", alignSelf: "flex-start" },
+  toggleKnobOn: { alignSelf: "flex-end" },
+  autoConfig: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: "#FCD34D" },
+  autoLabel: { fontSize: 12, fontWeight: "700", color: "#92400E", marginBottom: 8 },
+  seuilRow: { flexDirection: "row", gap: 6, marginBottom: 10 },
+  seuilChip: { flex: 1, padding: 10, backgroundColor: "#fff", borderRadius: 8, alignItems: "center", borderWidth: 1, borderColor: "#FCD34D" },
+  seuilChipActive: { backgroundColor: "#10B981", borderColor: "#10B981" },
+  seuilChipText: { fontSize: 12, fontWeight: "800", color: "#92400E" },
+  autoNote: { fontSize: 11, color: "#78350F", lineHeight: 15, fontStyle: "italic" },
 
   accountCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: 14, borderWidth: 1, borderColor: COLORS.border },
   accountRow: { flexDirection: "row", alignItems: "center" },

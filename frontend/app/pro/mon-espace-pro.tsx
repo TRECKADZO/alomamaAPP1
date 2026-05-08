@@ -75,6 +75,7 @@ const CATEGORIES: Category[] = [
     tools: [
       { id: "prestations", label: "Mes prestations", sub: "Services et tarifs", icon: "pricetag", color: "#10B981", path: "/pro/prestations" },
       { id: "revenus", label: "Revenus", sub: "Statistiques cabinet", icon: "trending-up", color: "#10B981", path: "/pro/revenus" },
+      { id: "revenus-mode", label: "Revenus par mode", sub: "Tele / Cabinet / Domicile", icon: "stats-chart", color: "#10B981", path: "/pro/revenus-par-mode", keywords: ["domicile", "stats"] },
       { id: "comptabilite", label: "Comptabilité 💎", sub: "Export CSV mensuel (Premium)", icon: "document-attach", color: "#0EA5E9", path: "/pro/comptabilite", keywords: ["export", "csv", "comptable"] },
       { id: "retraits", label: "Retraits Mobile Money", sub: "Toucher mes paiements", icon: "card", color: "#F59E0B", path: "/pro/retraits", keywords: ["paiement", "mobile money"] },
       { id: "cmu-pro", label: "CMU Pro", sub: "Validation CMU patients", icon: "shield-checkmark", color: "#16A34A", path: "/pro/cmu" },

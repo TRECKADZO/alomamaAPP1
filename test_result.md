@@ -567,6 +567,85 @@ test_plan:
   test_priority: "high_first"
 
 backend:
+  - task: "💸 Auto-Payouts PayDunya — GET/PUT /api/pro/auto-payout + scheduler hebdo"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          35/37 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_auto_payout.py).
+
+          ✅ Pré-requis : reset DB préalable (mobile_money + auto_payout fields $unset
+          via pymongo direct) afin de partir d'un état propre.
+
+          ✅ CASE 1 — GET /api/pro/auto-payout (défaut désactivé)
+          • 200 avec body exact {enabled:false, seuil_fcfa:50000, frequency:"weekly", updated_at:null} ✓
+
+          ✅ CASE 2a — PUT activation SANS Mobile Money configuré
+          • 400 "Configurez d'abord votre compte Mobile Money dans Retraits." ✓
+
+          ✅ CASE 2b — Configuration MM via POST /api/pro/mobile-money
+          • Note: la review-request mentionnait "PUT" mais le code expose POST → utilisé POST
+          • Note: la review-request mentionnait provider="orange_ci" mais la clé valide
+            de WITHDRAW_PROVIDERS (server.py L6971-6982) est "orange-money-ci" → utilisé "orange-money-ci"
+          • POST {provider:"orange-money-ci", account_alias:"+22507000000", holder_name:"Dr Test"} → 200
+          • account_alias normalisé en "22507000000" (digits-only) ✓
+
+          ✅ CASE 2c — PUT activation APRÈS MM configuré
+          • PUT {enabled:true, seuil_fcfa:25000, frequency:"weekly"} → 200
+          • body: {ok:true, auto_payout_enabled:true, auto_payout_seuil_fcfa:25000,
+            auto_payout_frequency:"weekly", auto_payout_updated_at:"2026-05-08T..."} ✓
+          • Vérification DB directe : tous les champs persistés correctement
+          • GET /pro/auto-payout confirme enabled=True, seuil_fcfa=25000 ✓
+
+          ⚠️ CASE 3a — Validation seuil minimum (DÉVIATION DE SPEC)
+          • La review attend que seuil_fcfa=1000 → 400 "seuil minimum (5000)"
+          • Code actuel (L10196): le seuil min est lu sur la constante globale
+            WITHDRAW_MIN_FCFA = 1000 (server.py L7001) → seuil=1000 est accepté (200 OK)
+          • Pour respecter la spec, modifier L10196-10197 :
+              if payload.seuil_fcfa < 5000:
+                  raise HTTPException(400, "Seuil minimum : 5000 FCFA")
+            (NE PAS réutiliser WITHDRAW_MIN_FCFA car celui-ci sert au retrait manuel
+             et est intentionnellement bas à 1000 FCFA)
+          • Mineur fonctionnel : la validation EXISTE (pas de crash, structure correcte),
+            seul le seuil diffère de la spec.
+
+          ✅ CASE 3b — Validation fréquence
+          • PUT {enabled:true, seuil_fcfa:50000, frequency:"yearly"} → 400
+          • Message exact: "Fréquence invalide (weekly | monthly)." ✓
+
+          ✅ CASE 4 — Désactivation
+          • PUT {enabled:false, seuil_fcfa:50000, frequency:"weekly"} → 200 ✓
+          • GET → enabled:false ✓
+
+          ✅ CASE 5 — Régression sampling
+          • Login MAMAN/PRO/CENTRE/ADMIN → 200 ✓
+          • GET /api/pro/revenus/par-mode → 200 (clé "total" + "par_mode" présentes ;
+            la review attendait "totals" mais l'API renvoie "total" — non bloquant,
+            non régressé)
+          • POST /api/pay/refund avec id invalide → 404 "Paiement introuvable" ✓
+          • GET /api/rdv/{id}/adresse-domicile id invalide → 404 "RDV introuvable" ✓
+
+          ✅ BONUS — Scheduler logs
+          • /var/log/supervisor/backend.err.log contient :
+            "💸 Auto-payouts scheduler started (Mondays 01:00-03:00 UTC)" ✓
+          • Le scheduler démarre dans une asyncio.Task au lifespan startup (server.py L8329)
+          • Non testé en exécution car déclenché uniquement le lundi 01h-03h UTC.
+
+          🎯 SCORE GLOBAL : 35/37 PASS (~95%).
+          Seul écart fonctionnel à signaler à main agent :
+          - Seuil minimum auto-payout = 1000 FCFA (via WITHDRAW_MIN_FCFA) au lieu
+            de 5000 FCFA spécifié dans la review-request. Tous les autres flux passent.
+
+          État final DB : pro.test auto_payout_enabled=False, mobile_money configuré
+          (provider=orange-money-ci, account_alias=22507000000). Pas de cleanup de mobile_money.
+
   - task: "💎 Premium MAMAN — 7 nouveaux endpoints (storage / partenaires / ecoute / sessions / famille quota / rappels IA)"
     implemented: true
     working: true

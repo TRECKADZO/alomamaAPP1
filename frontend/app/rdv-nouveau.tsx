@@ -48,7 +48,10 @@ export default function RdvNouveau() {
   // Sélections
   const [selectedPro, setSelectedPro] = useState<any | null>(null);
   const [selectedPrest, setSelectedPrest] = useState<any | null>(null);
-  const [mode, setMode] = useState<"presentiel" | "teleconsultation">("presentiel");
+  const [mode, setMode] = useState<"presentiel" | "teleconsultation" | "domicile">("presentiel");
+  const [adresseDomicile, setAdresseDomicile] = useState("");
+  const [quartier, setQuartier] = useState("");
+  const [ville, setVille] = useState("");
   const [selectedDate, setSelectedDate] = useState<Date>(addDays(new Date(), 1));
   const [selectedTime, setSelectedTime] = useState<string>("");
   const [selectedType, setSelectedType] = useState<string>("");
@@ -148,7 +151,10 @@ export default function RdvNouveau() {
 
   const canProceed = () => {
     if (step === 1) return !!selectedPro;
-    if (step === 2) return !!selectedPrest || prestations.length === 0;
+    if (step === 2) {
+      if (mode === "domicile" && !adresseDomicile.trim()) return false;
+      return !!selectedPrest || prestations.length === 0;
+    }
     if (step === 3) return !!selectedTime;
     if (step === 4) return motif.trim().length > 0;
     return true;
@@ -156,6 +162,7 @@ export default function RdvNouveau() {
 
   const submit = async () => {
     if (!selectedPro || !selectedTime || !motif) return Alert.alert("Erreur", "Veuillez compléter toutes les étapes.");
+    if (mode === "domicile" && !adresseDomicile.trim()) return Alert.alert("Adresse manquante", "Pour une consultation à domicile, indiquez votre adresse complète.");
     const payload: any = {
       pro_id: selectedPro.id,
       date: toISO(selectedDate, selectedTime),
@@ -165,6 +172,12 @@ export default function RdvNouveau() {
       prestation_id: selectedPrest?.id || "",
       tarif_fcfa: selectedPrest?.prix_fcfa || 10000,
     };
+    if (mode === "domicile") {
+      payload.adresse_domicile = adresseDomicile.trim();
+      payload.quartier = quartier.trim();
+      payload.ville = ville.trim();
+      payload.frais_deplacement_fcfa = selectedPro?.frais_deplacement_fcfa || 2000;
+    }
     setSubmitting(true);
     try {
       const r = await smartPost("/rdv", payload);
@@ -313,7 +326,55 @@ export default function RdvNouveau() {
                   <Text style={[styles.modeLabel, mode === "teleconsultation" && { color: "#fff" }]}>Téléconsultation</Text>
                   <Text style={[styles.modeDesc, mode === "teleconsultation" && { color: "rgba(255,255,255,0.85)" }]}>Visio sécurisée</Text>
                 </TouchableOpacity>
+                <TouchableOpacity style={[styles.modeCard, mode === "domicile" && styles.modeCardActive]} onPress={() => setMode("domicile")} testID="mode-domicile">
+                  <Text style={{ fontSize: 28 }}>🏠</Text>
+                  <Text style={[styles.modeLabel, mode === "domicile" && { color: "#fff" }]}>À domicile</Text>
+                  <Text style={[styles.modeDesc, mode === "domicile" && { color: "rgba(255,255,255,0.85)" }]}>Le pro vient chez vous</Text>
+                </TouchableOpacity>
               </View>
+
+              {mode === "domicile" && (
+                <View style={styles.domicileBox}>
+                  <View style={styles.domicileBanner}>
+                    <Ionicons name="information-circle" size={18} color="#92400E" />
+                    <Text style={styles.domicileBannerText}>
+                      Frais de déplacement : {((selectedPro?.frais_deplacement_fcfa) || 2000).toLocaleString()} F CFA (ajoutés au total). Adresse partagée au pro après paiement uniquement.
+                    </Text>
+                  </View>
+                  <Text style={styles.fieldLabel}>Adresse complète <Text style={{ color: "#EF4444" }}>*</Text></Text>
+                  <TextInput
+                    style={[styles.input, { minHeight: 60 }]}
+                    multiline
+                    placeholder="Ex : Cocody Riviera 3, Rue des Jardins, Villa 12"
+                    placeholderTextColor={COLORS.textMuted}
+                    value={adresseDomicile}
+                    onChangeText={setAdresseDomicile}
+                    testID="adresse-domicile"
+                  />
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fieldLabel}>Quartier</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Ex : Riviera 3"
+                        placeholderTextColor={COLORS.textMuted}
+                        value={quartier}
+                        onChangeText={setQuartier}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.fieldLabel}>Ville</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Ex : Abidjan"
+                        placeholderTextColor={COLORS.textMuted}
+                        value={ville}
+                        onChangeText={setVille}
+                      />
+                    </View>
+                  </View>
+                </View>
+              )}
             </View>
           )}
 
@@ -439,7 +500,13 @@ export default function RdvNouveau() {
                 {selectedPrest && <RecapRow icon="medkit" label="Prestation" value={selectedPrest.nom} />}
                 <RecapRow icon="calendar" label="Date" value={selectedDate.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} />
                 <RecapRow icon="time" label="Heure" value={selectedTime} />
-                <RecapRow icon={mode === "presentiel" ? "location" : "videocam"} label="Mode" value={mode === "presentiel" ? "Au cabinet" : "Téléconsultation"} />
+                <RecapRow icon={mode === "presentiel" ? "location" : (mode === "domicile" ? "home" : "videocam")} label="Mode" value={mode === "presentiel" ? "Au cabinet" : (mode === "domicile" ? "À domicile" : "Téléconsultation")} />
+                {mode === "domicile" && (
+                  <>
+                    <RecapRow icon="navigate" label="Adresse" value={adresseDomicile + (quartier ? ` · ${quartier}` : "") + (ville ? ` · ${ville}` : "")} />
+                    <RecapRow icon="car" label="Frais déplacement" value={`${(selectedPro?.frais_deplacement_fcfa || 2000).toLocaleString()} F CFA`} />
+                  </>
+                )}
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Total à prévoir</Text>
                   <View>
@@ -620,6 +687,11 @@ const styles = StyleSheet.create({
   modeCardActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary },
   modeLabel: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary, marginTop: 4 },
   modeDesc: { fontSize: 11, color: COLORS.textSecondary, textAlign: "center" },
+  domicileBox: { marginTop: 12, padding: 14, backgroundColor: "#FEF3C7", borderRadius: RADIUS.md, borderWidth: 1, borderColor: "#FCD34D" },
+  domicileBanner: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginBottom: 12, padding: 10, backgroundColor: "#FFFBEB", borderRadius: 8 },
+  domicileBannerText: { flex: 1, fontSize: 11, color: "#92400E", lineHeight: 16 },
+  fieldLabel: { fontSize: 12, fontWeight: "700", color: COLORS.textPrimary, marginBottom: 6, marginTop: 4 },
+  input: { borderWidth: 1, borderColor: COLORS.border, padding: 10, borderRadius: 8, fontSize: 13, color: COLORS.textPrimary, backgroundColor: "#fff", marginBottom: 8 },
 
   nextSlotCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, backgroundColor: COLORS.primary, borderRadius: RADIUS.lg, marginBottom: 10 },
   nextSlotTitle: { color: "#fff", fontSize: 13, fontWeight: "800" },

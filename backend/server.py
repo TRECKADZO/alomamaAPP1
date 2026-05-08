@@ -8325,6 +8325,11 @@ async def startup():
     import asyncio
     asyncio.create_task(_reminders_scheduler())
     asyncio.create_task(_backup_scheduler())  # 🔐 RGSSI N3 — backup quotidien chiffré
+    try:
+        asyncio.create_task(_auto_payouts_scheduler())  # 💸 Auto-payouts hebdo
+        logger.info("💸 Auto-payouts scheduler started (Mondays 01:00-03:00 UTC)")
+    except Exception as e:
+        logger.warning(f"Auto-payouts scheduler not started: {e}")
 
 
 async def _backup_scheduler():
@@ -10173,6 +10178,113 @@ async def pay_admin_stats_par_mode(user=Depends(require_roles("admin"))):
             "done_amount": sum(int(r.get("refund_amount_fcfa") or 0) for r in refunds_done),
         },
     }
+
+
+# ============================================================================
+# 💸 AUTO-PAYOUTS PayDunya — Configuration Pro + Scheduler hebdomadaire
+# ============================================================================
+
+class AutoPayoutConfigIn(BaseModel):
+    enabled: bool
+    seuil_fcfa: int = 50000  # déclenche le retrait dès que solde >= seuil (défaut 50 000 F)
+    frequency: str = "weekly"  # "weekly" | "monthly"
+
+
+@api.put("/pro/auto-payout")
+async def set_auto_payout(payload: AutoPayoutConfigIn, user=Depends(require_roles("professionnel"))):
+    """Configurer le retrait automatique vers Mobile Money (PayDunya Disburse)."""
+    if payload.seuil_fcfa < (WITHDRAW_MIN_FCFA if "WITHDRAW_MIN_FCFA" in globals() else 5000):
+        raise HTTPException(400, f"Seuil minimum : {(WITHDRAW_MIN_FCFA if 'WITHDRAW_MIN_FCFA' in globals() else 5000)} FCFA")
+    if payload.frequency not in ("weekly", "monthly"):
+        raise HTTPException(400, "Fréquence invalide (weekly | monthly).")
+    # Vérifier que le compte MM est configuré avant d'activer
+    u_full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    mm = (u_full or {}).get("mobile_money") or {}
+    if payload.enabled and not (mm.get("provider") and mm.get("account_alias")):
+        raise HTTPException(400, "Configurez d'abord votre compte Mobile Money dans Retraits.")
+    cfg = {
+        "auto_payout_enabled": payload.enabled,
+        "auto_payout_seuil_fcfa": int(payload.seuil_fcfa),
+        "auto_payout_frequency": payload.frequency,
+        "auto_payout_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.update_one({"id": user["id"]}, {"$set": cfg})
+    return {"ok": True, **cfg}
+
+
+@api.get("/pro/auto-payout")
+async def get_auto_payout(user=Depends(require_roles("professionnel"))):
+    u_full = await db.users.find_one({"id": user["id"]}, {"_id": 0}) or {}
+    return {
+        "enabled": bool(u_full.get("auto_payout_enabled")),
+        "seuil_fcfa": int(u_full.get("auto_payout_seuil_fcfa") or 50000),
+        "frequency": u_full.get("auto_payout_frequency") or "weekly",
+        "updated_at": u_full.get("auto_payout_updated_at"),
+    }
+
+
+async def _auto_payouts_scheduler():
+    """Scheduler hebdomadaire qui déclenche les retraits auto pour les Pros opt-in."""
+    import asyncio as _aio
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            day = now.weekday()  # 0=Lundi
+            if day == 0 and 1 <= now.hour <= 3:  # lundi 1h-3h UTC
+                pros = await db.users.find(
+                    {"role": "professionnel", "auto_payout_enabled": True},
+                    {"_id": 0, "id": 1, "name": 1, "mobile_money": 1, "auto_payout_seuil_fcfa": 1, "auto_payout_frequency": 1},
+                ).to_list(1000)
+                for p in pros:
+                    try:
+                        bal = await compute_pro_balance(p["id"])
+                        seuil = int(p.get("auto_payout_seuil_fcfa") or 50000)
+                        if bal["available"] >= seuil:
+                            mm = p.get("mobile_money") or {}
+                            # Préparer un payload simulé pour réutiliser la logique existante
+                            class _W:
+                                amount_fcfa = bal["available"]
+                                provider = mm.get("provider")
+                                account_alias = mm.get("account_alias")
+                            try:
+                                # Appel direct du flow de retrait (sans HTTP)
+                                u_full = await db.users.find_one({"id": p["id"]}, {"_id": 0})
+                                if u_full:
+                                    fee = WITHDRAW_FEE_FCFA + int(round(_W.amount_fcfa * WITHDRAW_FEE_PERCENT))
+                                    net_to_send = _W.amount_fcfa - fee
+                                    if net_to_send > 0:
+                                        payout_id = str(uuid.uuid4())
+                                        backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
+                                        callback_url = (backend_url + "/api/payouts/callback") if backend_url else ""
+                                        await db.payouts.insert_one({
+                                            "id": payout_id, "pro_id": p["id"], "pro_email": u_full.get("email"),
+                                            "amount_fcfa": _W.amount_fcfa, "fee_fcfa": fee, "net_amount_fcfa": net_to_send,
+                                            "provider": _W.provider, "withdraw_mode": WITHDRAW_PROVIDERS[_W.provider]["mode"],
+                                            "account_alias": _W.account_alias, "status": "pending", "auto": True,
+                                            "created_at": now.isoformat(),
+                                        })
+                                        inv = await paydunya_disburse_get_invoice(
+                                            account_alias=_W.account_alias, amount=net_to_send,
+                                            withdraw_mode=WITHDRAW_PROVIDERS[_W.provider]["mode"],
+                                            callback_url=callback_url, disburse_id=payout_id,
+                                        )
+                                        if inv.get("success"):
+                                            sub = await paydunya_disburse_submit_invoice(inv.get("disburse_invoice"), disburse_id=payout_id)
+                                            new_status = "completed" if sub.get("success") else "failed"
+                                            await db.payouts.update_one({"id": payout_id}, {"$set": {"status": new_status, "disburse_invoice": inv.get("disburse_invoice"), "completed_at": now.isoformat() if new_status == "completed" else None}})
+                                            try:
+                                                await push_notif(p["id"], "🤖 Retrait auto envoyé 💸", f"{net_to_send:,} F en route vers votre Mobile Money", "info")
+                                            except Exception:
+                                                pass
+                            except Exception as inner:
+                                logger.warning(f"Auto-payout failed for {p['id']}: {inner}")
+                    except Exception as e2:
+                        logger.warning(f"Auto-payout error for {p.get('id')}: {e2}")
+            # Sleep 1 hour, vérifier de nouveau
+            await _aio.sleep(3600)
+        except Exception as e:
+            logger.error(f"Auto-payouts scheduler error: {e}")
+            await _aio.sleep(3600)
 
 
 # ============================================================================
