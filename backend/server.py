@@ -10201,6 +10201,50 @@ async def pay_admin_stats_par_mode(user=Depends(require_roles("admin"))):
     }
 
 
+class ModesConsultationIn(BaseModel):
+    accepte_presentiel: bool = True
+    accepte_teleconsultation: bool = True
+    accepte_domicile: bool = False
+    frais_deplacement_fcfa: Optional[int] = None
+
+
+@api.put("/pro/modes-consultation")
+async def set_modes_consultation(payload: ModesConsultationIn, user=Depends(require_roles("professionnel"))):
+    """Configurer les modes de consultation supportés par le Pro."""
+    if payload.frais_deplacement_fcfa is not None and (payload.frais_deplacement_fcfa < 0 or payload.frais_deplacement_fcfa > 50000):
+        raise HTTPException(400, "Frais déplacement invalide (0 à 50 000 FCFA).")
+    update: dict = {
+        "accepte_teleconsultation": bool(payload.accepte_teleconsultation),
+        "accepte_domicile": bool(payload.accepte_domicile),
+    }
+    # Note : presentiel toujours implicitement autorisé (modèle de base)
+    if payload.accepte_domicile:
+        # Si activation domicile sans frais explicites, mettre 2000 par défaut
+        if payload.frais_deplacement_fcfa is not None:
+            update["frais_deplacement_fcfa"] = int(payload.frais_deplacement_fcfa)
+        else:
+            existing = await db.users.find_one({"id": user["id"]}, {"_id": 0, "frais_deplacement_fcfa": 1}) or {}
+            if existing.get("frais_deplacement_fcfa") is None:
+                update["frais_deplacement_fcfa"] = 2000
+    else:
+        # Désactivation domicile → on peut conserver les frais (ou les retirer)
+        if payload.frais_deplacement_fcfa is not None:
+            update["frais_deplacement_fcfa"] = int(payload.frais_deplacement_fcfa)
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    return {"ok": True, **update}
+
+
+@api.get("/pro/modes-consultation")
+async def get_modes_consultation(user=Depends(require_roles("professionnel"))):
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0}) or {}
+    return {
+        "accepte_presentiel": True,  # toujours
+        "accepte_teleconsultation": u.get("accepte_teleconsultation") is not False,
+        "accepte_domicile": bool(u.get("accepte_domicile")) or u.get("frais_deplacement_fcfa") is not None,
+        "frais_deplacement_fcfa": u.get("frais_deplacement_fcfa"),
+    }
+
+
 # ============================================================================
 # 💸 AUTO-PAYOUTS PayDunya — Configuration Pro + Scheduler hebdomadaire
 # ============================================================================

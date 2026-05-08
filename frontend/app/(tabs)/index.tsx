@@ -224,6 +224,8 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
     activites: { icon: "game-controller", label: "Activités", route: "/activites", color: "#10B981", key: "activites" },
     contraception: { icon: "shield-checkmark", label: "Contraception", route: "/contraception", color: "#F59E0B", key: "contraception" },
     medecins: { icon: "medical", label: "Médecins", route: "/search", color: "#6366F1", key: "medecins" },
+    domicile: { icon: "home", label: "🏠 À domicile", route: "/search?mode=domicile", color: "#F59E0B", key: "domicile" },
+    teleconsult: { icon: "videocam", label: "📹 Téléconsult", route: "/search?mode=teleconsultation", color: "#A855F7", key: "teleconsult" },
     dossier: { icon: "document-text", label: "Mon dossier", route: "/dossier-medical", color: "#14B8A6", key: "dossier" },
     cmu: { icon: "shield", label: "CMU", route: "/cmu", color: "#16A34A", key: "cmu" },
     naissance: { icon: "balloon", label: "Déclarer naissance", route: "/naissance", color: "#14B8A6", key: "naissance" },
@@ -233,15 +235,15 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
   let favoritesKeys: string[];
   if (g) {
     // Enceinte
-    if (trimestre === 1) favoritesKeys = ["assistant", "rdv", "foetus", "echo", "dossier", "medecins"];
-    else if (trimestre === 2) favoritesKeys = ["rdv", "echo", "foetus", "assistant", "dossier", "diversification"];
-    else favoritesKeys = ["rdv", "plan_naissance", "naissance", "echo", "assistant", "dossier"];
+    if (trimestre === 1) favoritesKeys = ["assistant", "rdv", "domicile", "echo", "dossier", "medecins"];
+    else if (trimestre === 2) favoritesKeys = ["rdv", "echo", "domicile", "assistant", "dossier", "diversification"];
+    else favoritesKeys = ["rdv", "plan_naissance", "naissance", "domicile", "assistant", "dossier"];
   } else if (enfants.length > 0) {
     // Maman avec enfants
-    favoritesKeys = ["enfants", "dmp", "rdv", "diversification", "activites", "assistant"];
+    favoritesKeys = ["enfants", "dmp", "rdv", "domicile", "teleconsult", "assistant"];
   } else {
     // Onboarding — ni grossesse ni enfants
-    favoritesKeys = ["assistant", "cycle", "contraception", "medecins", "rdv", "cmu"];
+    favoritesKeys = ["assistant", "cycle", "medecins", "domicile", "teleconsult", "rdv"];
   }
   const favorites = favoritesKeys.map((k) => ALL_TOOLS[k]).filter(Boolean);
 

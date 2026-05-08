@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, FlatList, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { api } from "../lib/api";
 import { COLORS, RADIUS, SPACING } from "../constants/theme";
 
@@ -10,13 +10,15 @@ type Prestation = { id: string; nom: string; prix_fcfa: number; duree_min?: numb
 
 export default function Search() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ mode?: string }>();
+  const initialMode = (params.mode === "presentiel" || params.mode === "teleconsultation" || params.mode === "domicile") ? params.mode : "";
   const [tab, setTab] = useState<"pros" | "community">("pros");
   const [q, setQ] = useState("");
   const [spec, setSpec] = useState("");
   const [prestation, setPrestation] = useState("");
   const [maxPrix, setMaxPrix] = useState("");
   const [cmuOnly, setCmuOnly] = useState(false);
-  const [modeFilter, setModeFilter] = useState<"" | "presentiel" | "teleconsultation" | "domicile">("");
+  const [modeFilter, setModeFilter] = useState<"" | "presentiel" | "teleconsultation" | "domicile">(initialMode as any);
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
