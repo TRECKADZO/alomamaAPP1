@@ -6309,9 +6309,45 @@ async def users_access_review(user=Depends(require_roles("admin"))):
     }
 
 
+@api.post("/admin/rgssi/backup/run")
+async def admin_backup_run(user=Depends(require_roles("admin"))):
+    """🔐 Déclenche un backup manuel immédiat (RGSSI N3 B.14)."""
+    import sys
+    sys.path.insert(0, "/app/security")
+    try:
+        from backup import make_backup, cleanup_old_backups  # type: ignore
+        os.makedirs("/app/backups", exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        out = f"/app/backups/alomaman_manual_{ts}.tar.gz.enc"
+        metadata = await make_backup(out)
+        cleanup_old_backups(30)
+        await _audit_log(user=user, action="backup", resource_type="Database", resource_id=out, details={"manual": True})
+        return {"ok": True, "path": out, "collections": len(metadata.get("collections", []))}
+    except Exception as e:
+        raise HTTPException(500, f"Backup échoué : {e}")
+
+
+@api.get("/admin/rgssi/backup/list")
+async def admin_backup_list(user=Depends(require_roles("admin"))):
+    """Liste les backups disponibles dans /app/backups."""
+    from pathlib import Path
+    p = Path("/app/backups")
+    if not p.exists():
+        return {"backups": [], "total": 0}
+    items = []
+    for f in sorted(p.glob("alomaman_*.enc"), key=lambda x: x.stat().st_mtime, reverse=True):
+        st = f.stat()
+        items.append({
+            "name": f.name,
+            "size_bytes": st.st_size,
+            "size_mb": round(st.st_size / (1024 * 1024), 2),
+            "created_at": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+        })
+    return {"total": len(items), "backups": items}
+
+
 @api.get("/admin/rgssi/incidents/anssi-report/{iid}")
 async def incident_anssi_report(iid: str, user=Depends(require_roles("admin"))):
-    """Génère un rapport ANSSI pré-formaté pour notification d'incident."""
     inc = await db.incidents.find_one({"id": iid}, {"_id": 0})
     if not inc:
         raise HTTPException(404, "Incident introuvable")
@@ -8134,6 +8170,106 @@ async def startup():
     # 🔔 Démarre le scheduler de rappels (push pour les reminders échus)
     import asyncio
     asyncio.create_task(_reminders_scheduler())
+    asyncio.create_task(_backup_scheduler())  # 🔐 RGSSI N3 — backup quotidien chiffré
+
+
+async def _backup_scheduler():
+    """
+    🔐 RGSSI Niveau 3 (B.14 — Sauvegardes chiffrées et testées)
+    Tâche en arrière-plan :
+      - Backup quotidien des collections critiques à 03:00 UTC
+      - Test de restauration mensuel (1er du mois) dans une base éphémère
+    Les backups sont stockés en /app/backups (BACKUP_DIR) chiffrés AES-256-GCM.
+    """
+    import asyncio
+    import sys
+    import os
+    sys.path.insert(0, "/app/security")
+    BACKUP_DIR = "/app/backups"
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    await asyncio.sleep(60)  # attendre démarrage
+    logger.info("💾 Backup scheduler started (daily 03:00 UTC + monthly restore test)")
+    last_backup_date = None
+    last_restore_test_month = None
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            today_str = now.strftime("%Y-%m-%d")
+            # --- BACKUP QUOTIDIEN à 03h UTC ---
+            if (now.hour == 3 or os.environ.get("FORCE_BACKUP_NOW") == "1") and last_backup_date != today_str:
+                try:
+                    from backup import make_backup, cleanup_old_backups  # type: ignore
+                    out = f"{BACKUP_DIR}/alomaman_{now.strftime('%Y%m%d_%H%M%S')}.tar.gz.enc"
+                    metadata = await make_backup(out)
+                    cleanup_old_backups(30)
+                    last_backup_date = today_str
+                    await db.audit_log.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "user_id": "system",
+                        "user_role": "system",
+                        "user_name": "BackupScheduler",
+                        "action": "backup",
+                        "resource_type": "Database",
+                        "resource_id": out,
+                        "details": {"collections": len(metadata.get("collections", []))},
+                        "timestamp": now.isoformat(),
+                    })
+                    logger.info(f"✅ Daily backup completed: {out}")
+                except Exception as e:
+                    logger.error(f"❌ Daily backup failed: {e}")
+                    await db.incidents.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "title": "Échec du backup quotidien",
+                        "description": f"Erreur lors de la sauvegarde planifiée : {e}",
+                        "severity": "high",
+                        "category": "data_corruption",
+                        "status": "open",
+                        "anssi_notification_required": True,
+                        "anssi_notified_at": None,
+                        "reported_by": "system",
+                        "reporter_name": "BackupScheduler",
+                        "reporter_role": "system",
+                        "created_at": now.isoformat(),
+                        "updated_at": now.isoformat(),
+                        "history": [{"at": now.isoformat(), "by": "system", "action": "auto_created", "status": "open"}],
+                    })
+
+            # --- TEST RESTAURATION MENSUEL le 1er du mois ---
+            month_str = now.strftime("%Y-%m")
+            if now.day == 1 and now.hour == 4 and last_restore_test_month != month_str:
+                try:
+                    # Trouver le backup le plus récent
+                    from pathlib import Path
+                    files = sorted(Path(BACKUP_DIR).glob("alomaman_*.enc"), key=lambda p: p.stat().st_mtime, reverse=True)
+                    if files:
+                        from backup import restore_backup  # type: ignore
+                        target_db = f"alomaman_RESTORE_TEST_{month_str.replace('-', '')}"
+                        info = await restore_backup(str(files[0]), target_db)
+                        last_restore_test_month = month_str
+                        await db.audit_log.insert_one({
+                            "id": str(uuid.uuid4()),
+                            "user_id": "system",
+                            "action": "restore_test",
+                            "resource_type": "Database",
+                            "resource_id": str(files[0]),
+                            "details": {"target_db": info["restored_to_db"]},
+                            "timestamp": now.isoformat(),
+                        })
+                        # Cleanup la base temporaire après vérif
+                        from motor.motor_asyncio import AsyncIOMotorClient
+                        cli2 = AsyncIOMotorClient(os.environ["MONGO_URL"])
+                        try:
+                            await cli2.drop_database(info["restored_to_db"])
+                        finally:
+                            cli2.close()
+                        logger.info(f"✅ Monthly restore test passed: {info['restored_to_db']}")
+                except Exception as e:
+                    logger.error(f"❌ Monthly restore test failed: {e}")
+
+            await asyncio.sleep(900)  # vérifie toutes les 15 min
+        except Exception as e:
+            logger.error(f"Backup scheduler loop error: {e}")
+            await asyncio.sleep(900)
 
 
 async def _reminders_scheduler():
