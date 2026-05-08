@@ -561,21 +561,19 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "💎 Premium MAMAN — 7 nouveaux endpoints (storage / partenaires / ecoute / sessions / famille quota / rappels IA)"
-  stuck_tasks:
-    - "💎 Premium MAMAN — POST /api/ai/rappels-contextuels (500 Internal Server Error: ObjectId leak post insert_many)"
+  current_focus: []
+  stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 backend:
   - task: "💎 Premium MAMAN — 7 nouveaux endpoints (storage / partenaires / ecoute / sessions / famille quota / rappels IA)"
     implemented: true
-    working: false
+    working: true
     file: "/app/backend/server.py"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: false
         agent: "testing"
@@ -621,6 +619,34 @@ backend:
           État DB restauré (maman.test premium=False ; ecoute_sessions/rappels_ia
           purgés ; familles+joiners ad-hoc supprimés). Endpoints Premium précédents
           (Pro/Centre — 8 promesses) NON touchés.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ RETEST CIBLÉ POST /api/ai/rappels-contextuels (chemin Premium) — 12/12 PASS
+          sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_rappels_retest.py).
+
+          Le fix appliqué L9865 (`await db.rappels_ia.insert_many([dict(r) for r in rappels])`)
+          insère bien une COPIE des rappels, donc Motor n'injecte plus de champ `_id`
+          (ObjectId) dans les dicts originaux retournés au client.
+
+          • Login MAMAN Premium (maman.test@alomaman.dev) → token OK ;
+            ⚠️ NB : la review-request indiquait "Premium déjà activé en BDD" mais l'utilisateur
+            était premium=False côté DB. Activé manuellement (premium=True,
+            premium_until=+30j) pour ce test ciblé. State volontairement laissé Premium=True
+            pour aligner avec la spec.
+          • POST /ai/rappels-contextuels {"contexte":"Je suis à 28 SA, premier bébé", "sa":28}
+            → **200 OK** (plus de 500 Internal Server Error) ✓
+          • Body: {rappels:[...], count:5} ; rappels est une liste de longueur 5 ✓
+          • Chaque rappel contient {titre, description, urgence, icone} (les 4 champs requis) ✓
+          • **AUCUN champ `_id` (ObjectId) dans la réponse JSON** ✓ — vérifié via
+            json.dumps(body) qui passe sans TypeError.
+          • GET /ai/rappels-contextuels → 200 avec count=5 (rappels persistés) ;
+            chaque item contient id (UUID), maman_id, created_at, titre, description,
+            urgence, icone — et toujours **aucun `_id`** (projection {_id:0}) ✓.
+
+          BUG RÉSOLU. La promesse #6 (Rappels IA Premium) est désormais production-ready,
+          ce qui clôt les 7 promesses Premium MAMAN à 100%.
 
 test_plan_backup_old:
   current_focus: []

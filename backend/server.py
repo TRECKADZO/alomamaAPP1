@@ -9861,7 +9861,8 @@ async def ai_rappels_contextuels(payload: dict, user=Depends(require_roles("mama
             r["maman_id"] = user["id"]
             r["created_at"] = datetime.now(timezone.utc).isoformat()
         if rappels:
-            await db.rappels_ia.insert_many(list(rappels))
+            # Insérer une copie pour éviter que motor injecte _id (ObjectId) dans les originaux
+            await db.rappels_ia.insert_many([dict(r) for r in rappels])
         return {"rappels": rappels, "count": len(rappels)}
     except Exception as e:
         raise HTTPException(500, f"Erreur génération IA : {e}")
