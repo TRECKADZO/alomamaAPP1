@@ -5167,3 +5167,100 @@ agent_communication:
 
         RAS — la feature `duree_par_mode` est production-ready. Main agent peut
         summariser et clore.
+
+backend:
+  - task: "🔐 Demande d'accès dossier médical — TTL 24h + auto-cleanup pending expirées"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ 23/23 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_partage_24h.py).
+
+          Endpoint trouvé : POST /api/pro/patient/recherche (server.py L9291)
+          avec body {identifier, motif} — l'URL de la review-request
+          (`/partage/demande-acces`) n'existe PAS, c'est `pro/patient/recherche`
+          qui crée la demande.
+
+          🅰 SETUP (3/3) — Login Pro Dr alpha (+2250709005330/474Treck), Login
+          Maman maman.test@alomaman.dev/Test1234!. GET /auth/me/code-partage
+          retourne {cmu:'0102030405', code_provisoire:'AM-RSDZ-UQ',
+          preferred:'0102030405'}.
+
+          🅱 CRÉATION DEMANDE (1/1) — POST /pro/patient/recherche avec
+          identifier='0102030405' (CMU) + motif='Suivi grossesse' → 200 avec
+          demande_id (uuid), status='pending', patient_type='maman'.
+
+          🅲 TTL 24h (4/4) — GET /partage/demandes-recues retourne 4 demandes ;
+          la nouvelle a created_at=2026-05-08T14:41:42.829380+00:00 et
+          expires_at=2026-05-09T14:41:42.829380+00:00. **delta = 24.0000h
+          (86400s exactement)**, dans la fenêtre 23.98–24.02h.
+          ✅ Confirmé via mongo direct (db.access_requests.find_one) que le
+          delta sur le document persisté est ≈ 24h.
+          → Bug fix validé : la TTL est bien passée de 15 min à 24h
+          (server.py L9361 : `(now + timedelta(hours=24)).isoformat()`).
+
+          🅳 VALIDATION (5/5) — POST /partage/demande/{id}/valider en tant que
+          Maman → 200 avec status='validated', expires_at=+2h. La demande
+          ré-affichée par GET /demandes-recues a access_token=43 chars + status
+          'validated'. Re-validation d'une demande déjà validée → 400
+          "Demande déjà validated". ✓
+
+          🅴 AUTO-CLEANUP DES PENDING EXPIRÉES (3/3) — Création d'une 2e
+          demande, puis manipulation directe mongo : `update_one(...,
+          {"$set":{"expires_at": <past_iso>}})` modifie expires_at à 1h dans
+          le passé. Appel suivant à GET /partage/demandes-recues : la demande
+          remonte avec status='expired' + expired_at=now. Code de cleanup
+          confirmé fonctionnel (server.py L9392-9401 : `update_many` filtre
+          maman_id+status:'pending'+expires_at:{$lt:now_iso} → set
+          status='expired',expired_at=now_iso AVANT le find).
+
+          🅵 REFUSER FLOW (4/4) — Création 3e demande, POST /partage/demande/
+          {id}/refuser → 200 {status:'refused'}. GET /demandes-recues confirme
+          status='refused' persisté. ✓
+
+          🅶 RÉGRESSION (2/2) — GET /auth/me/code-partage et GET /enfants
+          fonctionnent toujours. ✓
+
+          CLEANUP : toutes les demandes pending restantes créées pendant le
+          test ont été refusées pour laisser une base propre. La demande
+          validée + la demande expired + la demande refused restent en DB
+          (état terminal, ne polluent pas).
+
+          ⚠️ Note : l'endpoint mentionné dans la review-request
+          (`POST /api/partage/demande-acces`) n'existe pas — la création
+          passe par `POST /api/pro/patient/recherche`. Le main agent peut
+          considérer ceci comme une simple confusion de nom dans la spec
+          (le comportement et la TTL sont conformes).
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        🔐 Bug fix "demande d'accès dossier médical — TTL 24h + auto-cleanup"
+        VALIDÉ (23/23 PASS) sur https://cycle-tracker-pro.preview.emergentagent.com/api
+        — script /app/backend_test_partage_24h.py.
+
+        ✅ TTL = 24h exactement (86400s) — vérifié sur API et via Mongo direct.
+           Plus de 15 min : la ligne 9361 utilise bien `timedelta(hours=24)`.
+        ✅ POST /partage/demande/{id}/valider sur demande pending → 200,
+           access_token (43 chars) généré, status='validated' persisté.
+        ✅ Auto-cleanup : antidate de expires_at via mongo direct, GET
+           /partage/demandes-recues bascule la demande à status='expired' +
+           expired_at=now (server.py L9392-9401, update_many AVANT find).
+        ✅ Refuser flow : POST /partage/demande/{id}/refuser → 200
+           {status:'refused'} ; persistance OK.
+        ✅ Régression : GET /auth/me/code-partage, GET /enfants OK.
+
+        ⚠️ L'endpoint mentionné dans la review-request `POST
+        /api/partage/demande-acces` n'existe pas dans server.py. Le bon
+        endpoint est `POST /api/pro/patient/recherche` (body {identifier,
+        motif}). Comportement conforme à la spec, simple écart de nommage.
+
+        Cleanup OK (pending résiduels refusés). Aucune autre régression.
+        Main agent : RAS, peut summariser et clore.
