@@ -561,14 +561,141 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Phase 3 — Granular Consent endpoints"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
+agent_communication:
+    - agent: "testing"
+      message: |
+        💎 Premium Promises (8/8) — VALIDÉES sur https://cycle-tracker-pro.preview.emergentagent.com/api.
+        Script : /app/backend_test_premium_promises.py — score 91/92 PASS (1 "fail" qui est en
+        réalité une enforcement correcte du rdv_per_month=3 quota maman, comportement attendu).
+        Re-vérifié manuellement : la logique pro_quota_exceeded existing-patiente-bypass fonctionne
+        bien (200 OK quand maman Premium est patiente existante d'un Pro non-Premium).
+        DB état restauré : Pro/Centre Premium=True, comptes test ad-hoc supprimés. Aucune régression.
+        RAS — toutes les 8 promesses Premium production-ready.
+
 backend:
-  - task: "Phase 3 — Granular Consent endpoints (POST/GET/PATCH/REVOKE/DELETE /api/consents)"
+  - task: "💎 Premium Promises — Quotas IA + Patientes + Badge + Endpoints Comptabilité/Dashboard/Finance/Export"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ 8/8 Promesses Premium VALIDÉES (91/92 cas testés PASS sur
+          https://cycle-tracker-pro.preview.emergentagent.com/api ; script
+          /app/backend_test_premium_promises.py). Le seul "FAIL" (3.3) est en réalité une
+          ENFORCEMENT CORRECTE d'un autre quota (rdv_per_month=3 pour la maman.test
+          non-Premium qui avait déjà saturé ses 3 RDV/mois). Re-vérifié manuellement :
+          en passant maman en Premium et pro en non-Premium, l'existing-patiente bypass
+          retourne bien 200 OK — donc la logique du pro_quota_exceeded est entièrement
+          fonctionnelle.
+
+          🅰 CASE 1 — Quota IA Maman 5/mois (10/10) :
+          • db.ai_messages purgé pour maman_id=512b5cd8…
+          • POST /api/ai/chat #1..#5 → 200 (5 succès consécutifs)
+          • POST /api/ai/chat #6 → 402 ; detail.error="quota_exceeded",
+            detail.quota="ia_questions_per_month", detail.limit=5 ✓
+          • Cleanup OK (re-purge ai_messages)
+
+          🅱 CASE 2 — Quota IA Pro 0/jour gratuit (5/5) :
+          • Pro mis en non-Premium en DB → POST /api/ai/chat 1ère requête → 402
+          • detail.error="quota_exceeded", detail.quota="ia_pro_per_day", detail.limit=0 ✓
+          • Pro repassé en Premium → POST /api/ai/chat → 200 ✓ (Premium bypass quotidien)
+
+          🅲 CASE 3 — Quota Pro patientes_max=10 (8/8 logique core ; 9/9 pour 3.4-3.9) :
+          • Pro non-Premium ; on a complété jusqu'à 10 patientes uniques (création de 9
+            mamans ad-hoc + leurs RDV)
+          • 11e maman fraîche → POST /api/rdv → 402
+            detail.error="pro_quota_exceeded", detail.quota="patientes_max", detail.limit=10 ✓
+          • Pro repassé Premium → la 11e maman peut maintenant booker → 200 ✓
+          • Cleanup : 11 mamans test + leurs RDV supprimés
+          • [Bonus check séparé] Pro non-Premium + maman PRÉ-EXISTANTE (Premium pour neutraliser
+            son propre rdv_per_month) → POST /api/rdv → 200 ✓ (existing-patiente bypass OK)
+
+          🅳 CASE 4 — Badge Pro Certifié (8/8) :
+          • GET /api/search/pros → 200, 16 pros retournés
+          • Chaque pro contient is_premium (bool) ET pro_certifie (bool) ✓
+          • pro_certifie alias parfait de is_premium pour les 16 pros ✓
+          • Tri Premium en tête : tous les is_premium=true précèdent les false ✓
+          • pro.test (Dr Konan TestPro) is_premium=True, idx=0 (premier de la liste) ✓
+
+          🅴 CASE 5 — GET /api/pro/comptabilite/export (15/15) :
+          • Pro Premium, mois=2026-05 → 200 avec
+            {filename, base64, mois, rows, total_brut, total_commission, total_net} ✓
+          • base64 décodé → CSV débute par "Date;RDV ID;Patiente;Brut FCFA;Commission FCFA;Taux;Net Pro …" ✓
+          • Sans paramètre mois → 200, mois défaut="2026-05" (mois courant) ✓
+          • mois=invalid → 400 "Paramètre 'mois' invalide. Format attendu : YYYY-MM" ✓
+          • Pro non-Premium → 402 ; detail.error="premium_required" ✓
+
+          🅵 CASE 6 — GET /api/centre/dashboard (14/14) :
+          • Centre Premium → 200 avec toutes les clés requises :
+            {centre{id,nom}, membres_count, rdv_total, rdv_ce_mois, rdv_paye,
+             revenu_brut_fcfa, revenu_pros_fcfa, top_pros[]} ✓
+          • top_pros est une liste, triée par rdv_total DESC ✓
+          • Centre non-Premium → 402 ; detail.error="premium_required" ✓
+
+          🅶 CASE 7 — GET /api/centre/finance (8/8) :
+          • Centre Premium → 200 avec
+            {membres_count, total_brut_fcfa, total_commission_fcfa, total_net_fcfa, pros[]} ✓
+          • Chaque pros[] contient {pro_id, name, specialite, phone, rdv_count, brut_fcfa,
+            commission_fcfa, net_fcfa} ✓
+          • Centre non-Premium → 402 ✓
+
+          🅷 CASE 8 — GET /api/centre/export (15/15) :
+          • Centre Premium fmt=csv mois=2026-05 → 200 avec {filename, base64, mois, rows} ;
+            CSV décodé débute par "Date;Pro;Patiente;Brut FCFA;Commission FCFA;Net Pr…" ✓
+          • Centre Premium fmt=json mois=2026-05 → 200 avec {mois, centre_id, rows[]} ✓
+          • mois=invalid → 400 ✓
+          • Centre non-Premium → 402 ; detail.error="premium_required" ✓
+
+          🅸 RÉGRESSION (5/5) :
+          • Login maman/pro/centre/admin → 200 + token pour les 4 ✓
+          • GET /api/enfants pour MAMAN → 200 (pas de régression) ✓
+
+          📌 ÉTAT FINAL DB après tests (restauré) :
+          • Pro Premium = True (premium_until = +30j)
+          • Centre Premium = True (premium_until = +30j)
+          • Maman = inchangé (non-Premium par défaut)
+          • Aucune donnée test résiduelle (mamans ad-hoc + RDV + ai_messages purgés)
+
+          🎯 SCORE GLOBAL : 91/92 PASS (~99%) — toutes les 8 promesses Premium fonctionnent
+          conformément à la spec. Les 8 endpoints sont production-ready.
+
+      - working: "NA"
+        agent: "main"
+        comment: |
+          IMPLÉMENTÉ — 8 promesses Premium complétées :
+          1. Quota IA Maman 5/mois (POST /api/ai/chat) — 6e requête doit retourner 402 quota_exceeded
+             (clé `ia_questions_per_month`)
+          2. Quota IA Pro 0/jour gratuit (POST /api/ai/chat avec rôle pro) — 1ère requête bloquée 402
+             (clé `ia_pro_per_day`)
+          3. Quota Pro patientes_max 10 (POST /api/rdv) — 11e maman différente sur Pro non-Premium = 402
+             pro_quota_exceeded. Maman existante du Pro = OK
+          4. Badge Pro Certifié sur GET /api/search/pros — chaque pro a `is_premium: bool`,
+             `pro_certifie: bool`. Tri Premium en tête (premium=true triés avant)
+          5. GET /api/pro/comptabilite/export?mois=YYYY-MM — réservé Premium, sinon 402 premium_required.
+             Retourne {filename, base64 (CSV UTF-8 BOM), mois, rows, total_brut, total_commission, total_net}
+          6. GET /api/centre/dashboard — réservé Premium, retourne stats agrégées
+             {centre, membres_count, rdv_total, rdv_ce_mois, rdv_paye, revenu_brut_fcfa, revenu_pros_fcfa, top_pros}
+          7. GET /api/centre/finance — réservé Premium, retourne revenus par pro membre
+             {membres_count, total_brut_fcfa, total_commission_fcfa, total_net_fcfa, pros: [...]}
+          8. GET /api/centre/export?mois=YYYY-MM&fmt=csv|json — réservé Premium, CSV (Excel-compatible) ou JSON
+          
+          Note technique : commission Pro reste 5% si Premium / 10% sinon (déjà OK).
+          Les nouveaux endpoints sont définis AVANT app.include_router(api), bloc situé juste avant
+          la ligne `app.include_router(api)` (autour des lignes 9332-9550).
+          
+          Test à effectuer : credentials dans /app/memory/test_credentials.md.
+          Suggestion : marquer un compte Pro et un compte Centre comme Premium pour tester les endpoints
+          réservés (sinon tous retournent 402 qui est aussi à valider).
     implemented: true
     working: true
     file: "/app/backend/server.py"

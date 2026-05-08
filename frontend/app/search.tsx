@@ -210,8 +210,14 @@ export default function Search() {
               <View style={styles.proHead}>
                 <View style={styles.avatar}><Text style={styles.avatarText}>{item.name?.charAt(0)}</Text></View>
                 <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     <Text style={styles.resName}>{item.name}</Text>
+                    {item.pro_certifie || item.is_premium ? (
+                      <View style={styles.premBadge}>
+                        <Ionicons name="star" size={10} color="#fff" />
+                        <Text style={styles.premBadgeText}>Pro Certifié</Text>
+                      </View>
+                    ) : null}
                     {item.accepte_cmu ? (
                       <View style={styles.cmuBadge}><Text style={styles.cmuBadgeText}>CMU</Text></View>
                     ) : null}
@@ -349,6 +355,8 @@ const styles = StyleSheet.create({
   resMetaSm: { color: COLORS.textMuted, fontSize: 11, marginTop: 1 },
   cmuBadge: { backgroundColor: "#DCFCE7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   cmuBadgeText: { color: "#15803D", fontWeight: "800", fontSize: 10 },
+  premBadge: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "#0EA5E9", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999 },
+  premBadgeText: { color: "#fff", fontWeight: "800", fontSize: 9, letterSpacing: 0.3 },
   prestList: { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 4 },
   prestRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   prestName: { flex: 1, color: COLORS.textPrimary, fontSize: 12, fontWeight: "600" },

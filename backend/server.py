@@ -248,6 +248,9 @@ async def check_quota(user: dict, key: str, current_count: int):
             "membres_pro_max": f"professionnels ({limit} max)",
             "rdv_per_month": f"rendez-vous ce mois ({limit} max)",
             "ia_per_day": f"messages IA aujourd'hui ({limit} max)",
+            "ia_questions_per_month": f"questions IA ce mois ({limit} max)",
+            "ia_pro_per_day": f"requêtes IA Pro aujourd'hui ({limit} max)",
+            "teleconsultations_per_year": f"téléconsultations cette année ({limit} max)",
         }.get(key, key)
         raise HTTPException(
             status_code=402,
@@ -1684,6 +1687,24 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
     pro = await db.users.find_one({"id": payload.pro_id, "role": "professionnel"})
     if not pro:
         raise HTTPException(404, "Professionnel introuvable")
+    # 💎 Quota Pro : max 10 patientes uniques pour un Pro gratuit
+    # (Les patientes existantes peuvent toujours reprendre RDV. Bloque les nouvelles.)
+    if not is_premium_active(pro):
+        existing = await db.rdv.find_one({"pro_id": pro["id"], "maman_id": user["id"]}, {"_id": 0, "id": 1})
+        if not existing:
+            unique_patientes = await db.rdv.distinct("maman_id", {"pro_id": pro["id"]})
+            count = len(unique_patientes)
+            limit = (FREE_QUOTAS.get("professionnel") or {}).get("patientes_max", 10)
+            if count >= limit:
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "error": "pro_quota_exceeded",
+                        "message": f"Ce professionnel a atteint sa limite de {limit} patientes (compte gratuit). Veuillez contacter le pro pour qu'il passe Premium ou choisir un autre professionnel.",
+                        "quota": "patientes_max",
+                        "limit": limit,
+                    },
+                )
     # Si une prestation est sélectionnée, on prend son tarif et nom
     prestation = None
     tarif_fcfa = payload.tarif_fcfa
@@ -2007,6 +2028,22 @@ SYSTEM_MSG_IA = (
 @api.post("/ai/chat")
 async def ai_chat(payload: AiChatIn, user=Depends(get_current_user)):
     from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+    # 💎 Quota IA — varie selon le rôle (Maman 5/mois · Pro 0/jour gratuit · ∞ Premium)
+    role = user.get("role")
+    now = datetime.now(timezone.utc)
+    if role == "maman":
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        used = await db.ai_messages.count_documents({
+            "user_id": user["id"], "role": "user", "created_at": {"$gte": start_of_month},
+        })
+        await check_quota(user, "ia_questions_per_month", used)
+    elif role == "professionnel":
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        used_today = await db.ai_messages.count_documents({
+            "user_id": user["id"], "role": "user", "created_at": {"$gte": start_of_day},
+        })
+        await check_quota(user, "ia_pro_per_day", used_today)
 
     session_id = f"{user['id']}:{payload.session_id}"
     chat = LlmChat(
@@ -5002,6 +5039,13 @@ async def search_pros(
         query["id"] = {"$in": list(matching_pro_ids)}
 
     pros = await db.users.find(query, {"_id": 0, "password_hash": 0}).to_list(100)
+
+    # 💎 Badge Pro Certifié + tri Premium en tête (promesse Premium)
+    for p in pros:
+        is_prem = is_premium_active(p)
+        p["is_premium"] = is_prem
+        p["pro_certifie"] = is_prem  # alias pour le frontend (badge ⭐)
+    pros.sort(key=lambda x: (0 if x.get("is_premium") else 1, x.get("name") or ""))
 
     # Enrichir chaque pro avec ses prestations matching (pour affichage)
     if matching_pro_ids is not None:
@@ -9324,7 +9368,249 @@ async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends
         }
 
 
+
+# ============================================================================
+# 💎 PROMESSES PREMIUM — Endpoints Comptabilité / Dashboard / Finance / Export
+# ============================================================================
+
+@api.get("/pro/comptabilite/export")
+async def pro_compta_export(
+    mois: Optional[str] = None,
+    user=Depends(require_roles("professionnel")),
+):
+    """Export CSV mensuel pour le Pro Premium (RDV payés, commissions, revenus net).
+    `mois` au format YYYY-MM. Défaut : mois courant.
+    """
+    if not is_premium_active(user):
+        raise HTTPException(
+            status_code=402,
+            detail={"error": "premium_required", "message": "L'export comptabilité est réservé aux Pro Premium.", "upgrade_url": "/premium"},
+        )
+    now = datetime.now(timezone.utc)
+    if not mois:
+        mois = now.strftime("%Y-%m")
+    try:
+        y, m = mois.split("-")
+        y_i, m_i = int(y), int(m)
+    except Exception:
+        raise HTTPException(400, "Paramètre 'mois' invalide. Format attendu : YYYY-MM")
+    start = datetime(y_i, m_i, 1, tzinfo=timezone.utc)
+    end_m = (m_i + 1) if m_i < 12 else 1
+    end_y = y_i if m_i < 12 else (y_i + 1)
+    end = datetime(end_y, end_m, 1, tzinfo=timezone.utc)
+    payments = await db.payments.find({
+        "kind": "consultation", "pro_id": user["id"], "status": "completed",
+        "created_at": {"$gte": start.isoformat(), "$lt": end.isoformat()},
+    }, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    # Build CSV
+    import csv, io, base64 as _b64
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["Date", "RDV ID", "Patiente", "Brut FCFA", "Commission FCFA", "Taux", "Net Pro FCFA", "Statut"])
+    total_brut = 0
+    total_commission = 0
+    total_net = 0
+    for p in payments:
+        maman = await db.users.find_one({"id": p.get("maman_id")}, {"_id": 0, "name": 1}) or {}
+        brut = int(p.get("amount") or 0)
+        com = int(p.get("commission") or 0)
+        net = int(p.get("pro_amount") or (brut - com))
+        rate = p.get("commission_rate") or 0
+        total_brut += brut; total_commission += com; total_net += net
+        w.writerow([
+            (p.get("created_at") or "")[:10],
+            p.get("rdv_id") or "",
+            maman.get("name") or "—",
+            brut, com, f"{rate}", net, p.get("status"),
+        ])
+    w.writerow([])
+    w.writerow(["TOTAL", "", "", total_brut, total_commission, "", total_net, ""])
+    csv_bytes = buf.getvalue().encode("utf-8-sig")  # BOM pour Excel FR
+    fn = f"comptabilite_{user.get('name','pro').replace(' ','_')}_{mois}.csv"
+    await _audit_log(user=user, action="export", resource_type="Comptabilite", resource_id=mois, details={"rows": len(payments)})
+    return {
+        "filename": fn,
+        "base64": _b64.b64encode(csv_bytes).decode("ascii"),
+        "mois": mois,
+        "rows": len(payments),
+        "total_brut": total_brut,
+        "total_commission": total_commission,
+        "total_net": total_net,
+    }
+
+
+@api.get("/centre/dashboard")
+async def centre_dashboard(user=Depends(require_roles("centre_sante"))):
+    """Tableau de bord agrégé du centre — réservé Premium."""
+    if not is_premium_active(user):
+        raise HTTPException(
+            status_code=402,
+            detail={"error": "premium_required", "message": "Le tableau de bord agrégé est réservé aux Centres Premium.", "upgrade_url": "/premium"},
+        )
+    centre = await db.centres.find_one({"$or": [{"owner_id": user["id"]}, {"user_id": user["id"]}]}, {"_id": 0})
+    if not centre:
+        raise HTTPException(404, "Centre introuvable")
+    membres_ids = list(centre.get("membres_pro") or [])
+    now = datetime.now(timezone.utc)
+    start_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    # Stats globales centre
+    rdv_total = await db.rdv.count_documents({"pro_id": {"$in": membres_ids}})
+    rdv_ce_mois = await db.rdv.count_documents({"pro_id": {"$in": membres_ids}, "date": {"$gte": start_month}})
+    rdv_paye = await db.rdv.count_documents({"pro_id": {"$in": membres_ids}, "paye": True})
+    payments_centre = await db.payments.find({"kind": "consultation", "pro_id": {"$in": membres_ids}, "status": "completed"}, {"_id": 0}).to_list(5000)
+    revenu_brut = sum(int(p.get("amount") or 0) for p in payments_centre)
+    revenu_pros = sum(int(p.get("pro_amount") or 0) for p in payments_centre)
+
+    # Top pros (par nombre de RDV)
+    top_pros: list[dict] = []
+    for pid in membres_ids:
+        pro_doc = await db.users.find_one({"id": pid}, {"_id": 0, "id": 1, "name": 1, "specialite": 1}) or {}
+        c_rdv = await db.rdv.count_documents({"pro_id": pid})
+        c_rdv_mois = await db.rdv.count_documents({"pro_id": pid, "date": {"$gte": start_month}})
+        c_rev = sum(int(p.get("pro_amount") or 0) for p in payments_centre if p.get("pro_id") == pid)
+        top_pros.append({
+            "pro_id": pid,
+            "name": pro_doc.get("name") or "—",
+            "specialite": pro_doc.get("specialite"),
+            "rdv_total": c_rdv,
+            "rdv_ce_mois": c_rdv_mois,
+            "revenu_total_fcfa": c_rev,
+        })
+    top_pros.sort(key=lambda x: -x["rdv_total"])
+
+    return {
+        "centre": {"id": centre.get("id"), "nom": centre.get("nom_centre") or centre.get("nom"), "ville": centre.get("ville")},
+        "membres_count": len(membres_ids),
+        "rdv_total": rdv_total,
+        "rdv_ce_mois": rdv_ce_mois,
+        "rdv_paye": rdv_paye,
+        "revenu_brut_fcfa": revenu_brut,
+        "revenu_pros_fcfa": revenu_pros,
+        "top_pros": top_pros[:10],
+    }
+
+
+@api.get("/centre/finance")
+async def centre_finance(user=Depends(require_roles("centre_sante"))):
+    """Gestion financière agrégée par pro membre — réservé Premium."""
+    if not is_premium_active(user):
+        raise HTTPException(
+            status_code=402,
+            detail={"error": "premium_required", "message": "La gestion financière est réservée aux Centres Premium.", "upgrade_url": "/premium"},
+        )
+    centre = await db.centres.find_one({"$or": [{"owner_id": user["id"]}, {"user_id": user["id"]}]}, {"_id": 0})
+    if not centre:
+        raise HTTPException(404, "Centre introuvable")
+    membres_ids = list(centre.get("membres_pro") or [])
+    payments_centre = await db.payments.find({"kind": "consultation", "pro_id": {"$in": membres_ids}, "status": "completed"}, {"_id": 0}).to_list(5000)
+    by_pro: dict = {}
+    for p in payments_centre:
+        pid = p.get("pro_id")
+        b = by_pro.setdefault(pid, {"pro_id": pid, "rdv_count": 0, "brut": 0, "commission": 0, "net": 0})
+        b["rdv_count"] += 1
+        b["brut"] += int(p.get("amount") or 0)
+        b["commission"] += int(p.get("commission") or 0)
+        b["net"] += int(p.get("pro_amount") or 0)
+    rows = []
+    for pid in membres_ids:
+        pro_doc = await db.users.find_one({"id": pid}, {"_id": 0, "id": 1, "name": 1, "specialite": 1, "phone": 1}) or {}
+        b = by_pro.get(pid, {"rdv_count": 0, "brut": 0, "commission": 0, "net": 0})
+        rows.append({
+            "pro_id": pid, "name": pro_doc.get("name") or "—",
+            "specialite": pro_doc.get("specialite"),
+            "phone": pro_doc.get("phone"),
+            "rdv_count": b["rdv_count"], "brut_fcfa": b["brut"],
+            "commission_fcfa": b["commission"], "net_fcfa": b["net"],
+        })
+    rows.sort(key=lambda x: -x["net_fcfa"])
+    return {
+        "membres_count": len(membres_ids),
+        "total_brut_fcfa": sum(r["brut_fcfa"] for r in rows),
+        "total_commission_fcfa": sum(r["commission_fcfa"] for r in rows),
+        "total_net_fcfa": sum(r["net_fcfa"] for r in rows),
+        "pros": rows,
+    }
+
+
+@api.get("/centre/export")
+async def centre_export(
+    mois: Optional[str] = None,
+    fmt: str = "csv",
+    user=Depends(require_roles("centre_sante")),
+):
+    """Export CSV/JSON du centre (RDV + paiements) — réservé Premium."""
+    if not is_premium_active(user):
+        raise HTTPException(
+            status_code=402,
+            detail={"error": "premium_required", "message": "L'export est réservé aux Centres Premium.", "upgrade_url": "/premium"},
+        )
+    centre = await db.centres.find_one({"$or": [{"owner_id": user["id"]}, {"user_id": user["id"]}]}, {"_id": 0})
+    if not centre:
+        raise HTTPException(404, "Centre introuvable")
+    membres_ids = list(centre.get("membres_pro") or [])
+    now = datetime.now(timezone.utc)
+    if not mois:
+        mois = now.strftime("%Y-%m")
+    try:
+        y, m = mois.split("-")
+        y_i, m_i = int(y), int(m)
+    except Exception:
+        raise HTTPException(400, "Paramètre 'mois' invalide. Format attendu : YYYY-MM")
+    start = datetime(y_i, m_i, 1, tzinfo=timezone.utc).isoformat()
+    end_m = (m_i + 1) if m_i < 12 else 1
+    end_y = y_i if m_i < 12 else (y_i + 1)
+    end = datetime(end_y, end_m, 1, tzinfo=timezone.utc).isoformat()
+    payments = await db.payments.find({
+        "kind": "consultation", "pro_id": {"$in": membres_ids}, "status": "completed",
+        "created_at": {"$gte": start, "$lt": end},
+    }, {"_id": 0}).to_list(5000)
+    if fmt == "json":
+        return {"mois": mois, "centre_id": centre.get("id"), "rows": payments}
+    # CSV
+    import csv, io, base64 as _b64
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["Date", "Pro", "Patiente", "Brut FCFA", "Commission FCFA", "Net Pro FCFA", "Statut"])
+    pro_cache: dict = {}
+    for p in payments:
+        pid = p.get("pro_id")
+        if pid not in pro_cache:
+            pd = await db.users.find_one({"id": pid}, {"_id": 0, "name": 1}) or {}
+            pro_cache[pid] = pd.get("name") or "—"
+        md = await db.users.find_one({"id": p.get("maman_id")}, {"_id": 0, "name": 1}) or {}
+        w.writerow([
+            (p.get("created_at") or "")[:10],
+            pro_cache.get(pid),
+            md.get("name") or "—",
+            int(p.get("amount") or 0),
+            int(p.get("commission") or 0),
+            int(p.get("pro_amount") or 0),
+            p.get("status"),
+        ])
+    csv_bytes = buf.getvalue().encode("utf-8-sig")
+    fn = f"centre_{centre.get('nom_centre','centre').replace(' ','_')}_{mois}.csv"
+    await _audit_log(user=user, action="export", resource_type="CentreExport", resource_id=mois, details={"rows": len(payments)})
+    return {
+        "filename": fn,
+        "base64": __import__("base64").b64encode(csv_bytes).decode("ascii"),
+        "mois": mois,
+        "rows": len(payments),
+    }
+
+
 app.include_router(api)
+
+
+# ============================================================================
+# 💎 PROMESSES PREMIUM — Implémentations
+# ============================================================================
+# Note : enregistrés après include_router via une fonction helper afin de garder
+# le code groupé logiquement. Cependant FastAPI nécessite que les routes soient
+# attachées AVANT include_router. On utilise donc une approche différente : on
+# définit les endpoints sur l'objet `api` puis on appelle re-include qui est
+# idempotent en pratique. Pour rester safe, ces nouvelles routes sont définies
+# AVANT include_router via le bloc précédent. Ce commentaire est documentation.
 
 app.add_middleware(
     CORSMiddleware,

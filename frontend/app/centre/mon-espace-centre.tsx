@@ -51,6 +51,16 @@ const CATEGORIES: Category[] = [
     ],
   },
   {
+    key: "finance",
+    label: "Pilotage & Finances",
+    emoji: "💼",
+    tools: [
+      { id: "dashboard", label: "Tableau de bord 💎", sub: "Stats agrégées (Premium)", icon: "stats-chart", color: "#A855F7", path: "/centre/dashboard", keywords: ["stats", "kpi"] },
+      { id: "finance", label: "Finance par pro 💎", sub: "Revenus & commissions (Premium)", icon: "cash", color: "#10B981", path: "/centre/finance", keywords: ["revenus", "argent"] },
+      { id: "export", label: "Export comptable 💎", sub: "CSV/JSON mensuel (Premium)", icon: "cloud-download", color: "#0EA5E9", path: "/centre/export", keywords: ["export", "csv", "comptable"] },
+    ],
+  },
+  {
     key: "communication",
     label: "Communication",
     emoji: "💬",
@@ -78,6 +88,7 @@ const CATEGORIES: Category[] = [
       { id: "ressources", label: "Ressources éducatives", sub: "Vidéos, fiches, conseils", icon: "library", color: "#A855F7", path: "/ressources", keywords: ["video", "education"] },
       { id: "glossaire", label: "Glossaire médical", sub: "Définitions claires", icon: "book", color: "#3B82F6", path: "/glossaire" },
       { id: "support", label: "Aide & Support", sub: "FAQ, contact", icon: "headset", color: "#06B6D4", path: "/aide-support" },
+      { id: "support-prem", label: "Support Premium 💎", sub: "Formation + WhatsApp prioritaire", icon: "school", color: "#7C3AED", path: "/support-premium", keywords: ["premium", "formation", "tutoriel"] },
     ],
   },
 ];

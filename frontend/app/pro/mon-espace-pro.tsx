@@ -75,6 +75,7 @@ const CATEGORIES: Category[] = [
     tools: [
       { id: "prestations", label: "Mes prestations", sub: "Services et tarifs", icon: "pricetag", color: "#10B981", path: "/pro/prestations" },
       { id: "revenus", label: "Revenus", sub: "Statistiques cabinet", icon: "trending-up", color: "#10B981", path: "/pro/revenus" },
+      { id: "comptabilite", label: "Comptabilité 💎", sub: "Export CSV mensuel (Premium)", icon: "document-attach", color: "#0EA5E9", path: "/pro/comptabilite", keywords: ["export", "csv", "comptable"] },
       { id: "retraits", label: "Retraits Mobile Money", sub: "Toucher mes paiements", icon: "card", color: "#F59E0B", path: "/pro/retraits", keywords: ["paiement", "mobile money"] },
       { id: "cmu-pro", label: "CMU Pro", sub: "Validation CMU patients", icon: "shield-checkmark", color: "#16A34A", path: "/pro/cmu" },
     ],
@@ -89,6 +90,7 @@ const CATEGORIES: Category[] = [
       { id: "search", label: "Trouver un confrère", sub: "Annuaire pros", icon: "search", color: "#6366F1", path: "/search" },
       { id: "centres", label: "Centres de santé", sub: "Annuaire PMI, cliniques", icon: "business", color: "#14B8A6", path: "/centres" },
       { id: "support", label: "Aide & Support", sub: "FAQ, contact", icon: "headset", color: "#06B6D4", path: "/aide-support" },
+      { id: "support-prem", label: "Support Premium 💎", sub: "FAQ avancée + tutos vidéo + WhatsApp prioritaire", icon: "school", color: "#7C3AED", path: "/support-premium", keywords: ["premium", "formation", "tutoriel"] },
       { id: "2fa-pro", label: "Authentification 2FA", sub: "Optionnel (phase test)", icon: "shield-checkmark", color: "#3B82F6", path: "/security/2fa-setup", keywords: ["2fa", "totp", "securité"] },
       { id: "incident-pro", label: "Signaler un incident", sub: "Sécurité ANSSI", icon: "warning", color: "#EF4444", path: "/security/incident-new", keywords: ["incident", "anssi"] },
     ],
