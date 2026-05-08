@@ -561,6 +561,68 @@ metadata:
   run_ui: false
 
 test_plan:
+  current_focus:
+    - "💎 Premium MAMAN — 7 nouveaux endpoints (storage / partenaires / ecoute / sessions / famille quota / rappels IA)"
+  stuck_tasks:
+    - "💎 Premium MAMAN — POST /api/ai/rappels-contextuels (500 Internal Server Error: ObjectId leak post insert_many)"
+  test_all: false
+  test_priority: "high_first"
+
+backend:
+  - task: "💎 Premium MAMAN — 7 nouveaux endpoints (storage / partenaires / ecoute / sessions / famille quota / rappels IA)"
+    implemented: true
+    working: false
+    file: "/app/backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          64/65 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_premium_maman.py).
+
+          ✅ /maman/storage (1) : 9/9 — schema complet ; free=50 Mo "50 Mo" ;
+             premium=2048 Mo "2 Go" ; warning/blocked computed.
+          ✅ /partenaires/offres (2) : 9/9 — Free→402 premium_required+upgrade_url ;
+             Premium→200 avec count=6 et offres complètes (pharmacie/creche/boutique/laboratoire),
+             chaque offre {id,type,name,ville,icon,promo,code,valid_until,phone}.
+          ✅ /ecoute/contacts (3) : 12/12 — Free urgences_24_7 (SAMU 185, Pompiers 180,
+             Police 111) + lignes_publiques (Allô Femme 1308, Allô Enfant 116) + premium_dedicated=null
+             + premium_required{message,upgrade_url} ; Premium expose
+             premium_dedicated{label,phone,whatsapp,email,horaires,specialites}.
+          ✅ POST /ecoute/sessions (4) : 9/9 — Free→402 premium_required ;
+             Premium sans motif→400 ; avec motif→200 {ok,session,message} ;
+             doc créé en DB ecoute_sessions avec status="en_attente".
+          ✅ Quota famille proches (5) : 12/12 — Owner free crée famille (code 6 chars) ;
+             join→402 premium_required (free quota=0). Owner Premium → 4 joins OK,
+             5e→402 quota_exceeded {quota:'proches_max', limit:4}.
+          ❌ POST /ai/rappels-contextuels (6) : 5/6 — Free→402 OK ;
+             Premium→**500 Internal Server Error**.
+             RACINE (server.py L9858-9865) : motor's `insert_many` mute chaque dict en
+             y injectant `_id: ObjectId(...)` ; le `return {"rappels": rappels, ...}`
+             tente de sérialiser via FastAPI jsonable_encoder qui throw
+             `TypeError: 'ObjectId' object is not iterable`. Effet de bord : les
+             rappels SONT persistés en DB (donc GET /ai/rappels-contextuels rend la
+             liste correctement avec projection {_id:0}), mais le POST ne renvoie
+             jamais sa réponse au client.
+
+             FIX MINIMAL (1 ligne) — choisir l'une de ces approches :
+             (a) après insert_many, faire `for r in rappels: r.pop("_id", None)` avant
+                 le return ;
+             (b) insérer une copie : `docs = [dict(r) for r in rappels]; await
+                 db.rappels_ia.insert_many(docs)` afin de ne pas muter `rappels`.
+
+          ✅ Régression (7) : 9/9 — Login MAMAN/PRO/CENTRE/ADMIN ✓ ; GET /enfants ✓ ;
+             POST /ai/chat (maman premium) ✓ ; Maman free : 5 premières /ai/chat → 200,
+             6e → 402 quota_exceeded {quota:'ia_questions_per_month', limit:5} ✓.
+
+          État DB restauré (maman.test premium=False ; ecoute_sessions/rappels_ia
+          purgés ; familles+joiners ad-hoc supprimés). Endpoints Premium précédents
+          (Pro/Centre — 8 promesses) NON touchés.
+
+test_plan_backup_old:
   current_focus: []
   stuck_tasks: []
   test_all: false
@@ -576,6 +638,53 @@ agent_communication:
         bien (200 OK quand maman Premium est patiente existante d'un Pro non-Premium).
         DB état restauré : Pro/Centre Premium=True, comptes test ad-hoc supprimés. Aucune régression.
         RAS — toutes les 8 promesses Premium production-ready.
+
+    - agent: "testing"
+      message: |
+        💎 7 Promesses Premium MAMAN — testées (64/65 PASS) sur
+        https://cycle-tracker-pro.preview.emergentagent.com/api ; script
+        /app/backend_test_premium_maman.py.
+
+        ✅ CASE 1 GET /api/maman/storage (9/9) — schema complet, free=50Mo "50 Mo",
+           premium=2048Mo "2 Go", warning/blocked computed.
+        ✅ CASE 2 GET /api/partenaires/offres (9/9) — Free→402 premium_required+upgrade_url ;
+           Premium→200 avec count=6 et offres complètes (pharmacie/creche/boutique/laboratoire)
+           chacune {id,type,name,ville,icon,promo,code,valid_until,phone}.
+        ✅ CASE 3 GET /api/ecoute/contacts (12/12) — Free expose urgences_24_7 (SAMU 185, Pompiers
+           180, Police 111), lignes_publiques (1308, 116), premium_dedicated=null,
+           premium_required{message,upgrade_url} ; Premium expose premium_dedicated{label,phone,
+           whatsapp,email,horaires,specialites[]}.
+        ✅ CASE 4 POST /api/ecoute/sessions (9/9) — Free→402 ; Premium sans motif→400 ;
+           avec motif→200 {ok,session,message}; doc créé en DB ecoute_sessions, status="en_attente".
+        ✅ CASE 5 Quota proches famille (12/12) — Owner free crée famille (code 6 chars) ;
+           toute join→402 premium_required (free quota=0). Owner Premium → joins #1..#4 OK,
+           #5→402 quota_exceeded avec detail.quota="proches_max", detail.limit=4.
+        ❌ CASE 6 POST /api/ai/rappels-contextuels — **BUG CRITIQUE 500**:
+           Free→402 OK ✓ ; Premium→500 "Internal Server Error".
+           Cause RACINE (server.py L9858-9865) : après `await db.rappels_ia.insert_many(rappels)`,
+           Motor mute chaque dict en y injectant un champ `_id` (ObjectId) ; le `return
+           {"rappels": rappels, …}` tente de sérialiser ces ObjectId via FastAPI jsonable_encoder
+           qui échoue (`TypeError: 'ObjectId' object is not iterable`). Trace complète
+           confirmée dans /var/log/supervisor/backend.err.log.
+           Effet de bord : les rappels SONT persistés en DB, donc GET /ai/rappels-contextuels
+           retourne bien la liste (test 6.8/6.9 PASS, projection {_id:0}). Mais le POST ne
+           renvoie jamais sa réponse au client.
+           FIX MINIMAL (1 ligne) : remplacer
+             `await db.rappels_ia.insert_many(list(rappels))`
+           par
+             `await db.rappels_ia.insert_many(list(rappels))`
+             `for r in rappels: r.pop("_id", None)`
+           OU utiliser une copie : `docs = [dict(r) for r in rappels]; await
+           db.rappels_ia.insert_many(docs)` afin de ne pas muter `rappels` retourné.
+        ✅ CASE 7 Régression (9/9) — Login MAMAN/PRO/CENTRE/ADMIN ✓ ; GET /enfants ✓ ;
+           POST /ai/chat (maman premium) ✓ ; Maman free : 5 premières /ai/chat → 200,
+           6e → 402 quota_exceeded {quota:'ia_questions_per_month', limit:5} ✓.
+
+        SCORE GLOBAL : 64/65 PASS (~98.5%) — 6 sur 7 promesses production-ready ;
+        promesse #6 (rappels IA) bloquée par bug de sérialisation post-insert. Aucune autre
+        régression. État DB restauré (maman.test premium=False, ecoute_sessions/rappels_ia
+        purgés, familles+joiners ad-hoc supprimés). Endpoints Premium précédents (Pro/Centre)
+        non touchés.
 
 backend:
   - task: "💎 Premium Promises — Quotas IA + Patientes + Badge + Endpoints Comptabilité/Dashboard/Finance/Export"

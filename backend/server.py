@@ -7297,10 +7297,19 @@ FREE_QUOTAS = {
         "ia_questions_per_month": 5,  # 5 questions IA / mois (gratuit)
         "teleconsultations_per_year": 3,  # 3 téléconsults / an (gratuit)
         "storage_mb": 50,
+        "proches_max": 0,             # 💎 Partage famille réservé Premium (4 proches max)
     },
     "professionnel": {"patientes_max": 10, "ia_pro_per_day": 0},
     "centre_sante": {"membres_pro_max": 3},
     "famille": {"notifications_enabled": False},
+}
+
+# Limites Premium (utilisées pour enforcement Premium aussi)
+PREMIUM_QUOTAS = {
+    "maman": {
+        "proches_max": 4,             # 4 proches max même en Premium (limite raisonnable)
+        "storage_mb": 2048,           # 2 Go = 2048 Mo
+    },
 }
 
 # Remises selon la durée
@@ -8967,6 +8976,28 @@ async def join_famille(payload: JoinFamilleIn, user=Depends(get_current_user)):
     for m in f.get("membres", []):
         if m.get("email") == user["email"]:
             return _ser_famille(f)
+    # 💎 Quota Maman Premium : max 4 proches (gratuit = bloqué, Premium = 4)
+    owner = await db.users.find_one({"id": f.get("owner_id")}, {"_id": 0}) or await db.users.find_one({"email": f.get("owner_email")}, {"_id": 0})
+    membres_count = len(f.get("membres") or [])
+    if owner:
+        is_owner_premium = is_premium_active(owner)
+        free_max = (FREE_QUOTAS.get("maman") or {}).get("proches_max", 0)
+        prem_max = (PREMIUM_QUOTAS.get("maman") or {}).get("proches_max", 4)
+        max_allowed = prem_max if is_owner_premium else free_max
+        if membres_count >= max_allowed:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "premium_required" if not is_owner_premium else "quota_exceeded",
+                    "message": (
+                        "Le partage famille est réservé aux Mamans Premium. "
+                        "Demandez à la propriétaire de la famille de passer Premium pour vous ajouter."
+                    ) if not is_owner_premium else f"Cette famille a atteint sa limite de {prem_max} proches.",
+                    "quota": "proches_max",
+                    "limit": max_allowed,
+                    "upgrade_url": "/premium",
+                },
+            )
     new_member = {
         "email": user["email"],
         "name": user.get("name", ""),
@@ -9369,6 +9400,9 @@ async def pro_get_patient_carnet(patient_id: str, request: Request, user=Depends
 
 
 
+app.include_router(api)
+
+
 # ============================================================================
 # 💎 PROMESSES PREMIUM — Endpoints Comptabilité / Dashboard / Finance / Export
 # ============================================================================
@@ -9599,7 +9633,249 @@ async def centre_export(
     }
 
 
+# ============================================================================
+# 💎 PROMESSES PREMIUM MAMAN — Storage / Partenaires / Ligne d'écoute / Rappels IA
+# ============================================================================
+
+@api.get("/maman/storage")
+async def maman_storage(user=Depends(require_roles("maman"))):
+    """Renvoie l'utilisation actuelle vs limite de stockage Mo."""
+    pipeline = [
+        {"$match": {"$or": [{"maman_id": user["id"]}, {"user_id": user["id"]}, {"owner_id": user["id"]}]}},
+        {"$group": {"_id": None, "total": {"$sum": "$size_bytes"}}},
+    ]
+    used_b = 0
+    try:
+        agg = await db.documents.aggregate(pipeline).to_list(1)
+        if agg:
+            used_b += int(agg[0].get("total") or 0)
+    except Exception:
+        pass
+    # Approx photos enfants (base64 → 75% de la taille décodée)
+    try:
+        enfs = await db.enfants.find({"maman_id": user["id"]}, {"_id": 0, "photo_base64": 1}).to_list(50)
+        for e in enfs:
+            p = e.get("photo_base64") or ""
+            if p:
+                used_b += int(len(p) * 0.75)
+    except Exception:
+        pass
+    used_mb = round(used_b / (1024 * 1024), 2)
+    is_prem = is_premium_active(user)
+    limit_mb = (PREMIUM_QUOTAS["maman"]["storage_mb"] if is_prem else (FREE_QUOTAS["maman"].get("storage_mb") or 50))
+    pct = round(min(100.0, (used_mb / limit_mb * 100) if limit_mb else 0), 1)
+    return {
+        "used_mb": used_mb,
+        "limit_mb": limit_mb,
+        "percent": pct,
+        "is_premium": is_prem,
+        "label_limit": "2 Go" if is_prem else f"{limit_mb} Mo",
+        "warning": pct >= 80,
+        "blocked": pct >= 100,
+    }
+
+
+# Catalogue partenaires (en mémoire — peut être migré en DB plus tard)
+_PARTENAIRES_OFFRES = [
+    {
+        "id": "pharma-1", "type": "pharmacie", "name": "Pharmacie de la Riviera",
+        "ville": "Abidjan · Cocody", "icon": "medkit",
+        "promo": "-15% sur le rayon maternité",
+        "code": "ALOMAMAN15", "valid_until": "2026-12-31",
+        "phone": "+225 27 22 43 00 00",
+    },
+    {
+        "id": "pharma-2", "type": "pharmacie", "name": "Pharmacie Saint Michel",
+        "ville": "Yamoussoukro", "icon": "medkit",
+        "promo": "-10% sur les laits infantiles",
+        "code": "MAMAN10", "valid_until": "2026-12-31",
+        "phone": "+225 27 30 64 00 00",
+    },
+    {
+        "id": "creche-1", "type": "creche", "name": "Crèche Les Petits Pas",
+        "ville": "Abidjan · Marcory", "icon": "happy",
+        "promo": "1er mois offert + visite gratuite",
+        "code": "ALOMAMAN1MOIS", "valid_until": "2026-12-31",
+        "phone": "+225 27 21 26 11 11",
+    },
+    {
+        "id": "creche-2", "type": "creche", "name": "Crèche Le Jardin d'Eden",
+        "ville": "Bouaké", "icon": "happy",
+        "promo": "-20% sur l'inscription annuelle",
+        "code": "ALOMAMAN20", "valid_until": "2026-12-31",
+        "phone": "+225 27 31 63 22 22",
+    },
+    {
+        "id": "boutique-1", "type": "boutique", "name": "Bébé Comme Chez Moi",
+        "ville": "En ligne · Livraison nationale", "icon": "cart",
+        "promo": "-25% sur poussettes & berceaux",
+        "code": "ALOMAMAN25", "valid_until": "2026-12-31",
+        "phone": "+225 07 07 07 07 07",
+    },
+    {
+        "id": "labo-1", "type": "laboratoire", "name": "Laboratoire BIOLAB",
+        "ville": "Abidjan · Plateau", "icon": "flask",
+        "promo": "-30% sur les analyses prénatales",
+        "code": "ALOMAMAN30", "valid_until": "2026-12-31",
+        "phone": "+225 27 20 21 33 33",
+    },
+]
+
+
+@api.get("/partenaires/offres")
+async def partenaires_offres(user=Depends(require_roles("maman"))):
+    """Liste des offres partenaires — réservé aux Mamans Premium."""
+    if not is_premium_active(user):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "premium_required",
+                "message": "Les offres partenaires sont réservées aux Mamans Premium. Économisez jusqu'à 30% chez nos partenaires de confiance.",
+                "upgrade_url": "/premium",
+            },
+        )
+    return {"count": len(_PARTENAIRES_OFFRES), "offres": _PARTENAIRES_OFFRES}
+
+
+@api.get("/ecoute/contacts")
+async def ecoute_contacts(user=Depends(require_roles("maman"))):
+    """Ligne d'écoute post-partum — contacts de soutien."""
+    is_prem = is_premium_active(user)
+    base = {
+        "urgences_24_7": [
+            {"label": "SAMU Côte d'Ivoire", "phone": "185", "icon": "medical", "always_free": True},
+            {"label": "Pompiers", "phone": "180", "icon": "flame", "always_free": True},
+            {"label": "Police", "phone": "111", "icon": "shield", "always_free": True},
+        ],
+        "lignes_publiques": [
+            {"label": "Allô Femme (violences)", "phone": "1308", "icon": "heart-circle", "always_free": True},
+            {"label": "Allô Enfant (protection)", "phone": "116", "icon": "happy", "always_free": True},
+        ],
+    }
+    if is_prem:
+        import urllib.parse as _up
+        base["premium_dedicated"] = {
+            "label": "Ligne d'écoute À lo Maman 💎",
+            "phone": "+225 27 22 49 50 50",
+            "whatsapp": "https://wa.me/22527224950?text=" + _up.quote("Bonjour, je suis Maman Premium et j'ai besoin d'écoute post-partum."),
+            "email": "ecoute@alomaman.com",
+            "horaires": "7j/7 · 8h-22h GMT (réponse < 2h)",
+            "specialites": [
+                "Baby blues / dépression post-partum",
+                "Allaitement difficile",
+                "Reprise du travail après congé",
+                "Couple après bébé",
+                "Angoisses parentales",
+                "Sommeil bébé / parents",
+            ],
+        }
+    else:
+        base["premium_dedicated"] = None
+        base["premium_required"] = {
+            "message": "La ligne d'écoute dédiée 7j/7 est réservée aux Mamans Premium.",
+            "upgrade_url": "/premium",
+        }
+    return base
+
+
+@api.post("/ecoute/sessions")
+async def book_ecoute_session(
+    payload: dict,
+    user=Depends(require_roles("maman")),
+):
+    """Réservation d'une session d'écoute — réservé Premium."""
+    if not is_premium_active(user):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "premium_required",
+                "message": "La réservation d'une session d'écoute est réservée aux Mamans Premium.",
+                "upgrade_url": "/premium",
+            },
+        )
+    motif = (payload.get("motif") or "").strip()[:500]
+    pref_horaire = (payload.get("preference_horaire") or "").strip()[:200]
+    if not motif:
+        raise HTTPException(400, "Veuillez indiquer le motif de votre demande.")
+    sess = {
+        "id": str(uuid.uuid4()),
+        "maman_id": user["id"],
+        "maman_name": user.get("name"),
+        "maman_phone": user.get("phone"),
+        "motif": motif,
+        "preference_horaire": pref_horaire,
+        "status": "en_attente",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.ecoute_sessions.insert_one(sess)
+    sess.pop("_id", None)
+    return {"ok": True, "session": sess, "message": "Demande envoyée. Notre équipe vous contactera sous 2h en heures ouvrées."}
+
+
+@api.post("/ai/rappels-contextuels")
+async def ai_rappels_contextuels(payload: dict, user=Depends(require_roles("maman"))):
+    """Génère des rappels personnalisés via Claude — réservé Premium."""
+    if not is_premium_active(user):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "premium_required",
+                "message": "Les rappels IA contextuels sont réservés aux Mamans Premium. Recevez des conseils personnalisés selon votre stade de grossesse / âge de bébé.",
+                "upgrade_url": "/premium",
+            },
+        )
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    contexte = (payload.get("contexte") or "").strip()[:1000]
+    sa = payload.get("sa")  # semaine d'aménorrhée
+    age_bebe_mois = payload.get("age_bebe_mois")
+    prompt = "Tu es une sage-femme expérimentée en Côte d'Ivoire. Génère 5 rappels personnalisés et actionnables pour cette maman. "
+    if sa:
+        prompt += f"Elle est à {sa} SA (semaines d'aménorrhée). "
+    if age_bebe_mois is not None:
+        prompt += f"Elle a un bébé de {age_bebe_mois} mois. "
+    if contexte:
+        prompt += f"Contexte personnel : {contexte}. "
+    prompt += (
+        "Format de réponse : JSON strict avec un tableau 'rappels' contenant 5 objets "
+        "{titre, description, urgence (haute|moyenne|info), icone (alarme|nutrition|pilule|hopital|coeur)}."
+    )
+    try:
+        chat = LlmChat(
+            api_key=os.environ.get("EMERGENT_LLM_KEY"),
+            session_id=f"rappels-{user['id']}",
+            system_message="Tu es une sage-femme expérimentée. Réponds toujours en JSON strict valide.",
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        resp = await chat.send_message(UserMessage(text=prompt))
+        text = resp if isinstance(resp, str) else str(resp)
+        # Extraire le JSON
+        import json as _json
+        import re as _re
+        match = _re.search(r"\{[\s\S]*\}", text)
+        if not match:
+            raise ValueError("Pas de JSON détecté")
+        data = _json.loads(match.group(0))
+        rappels = data.get("rappels") or []
+        # Sauvegarde des rappels en BDD
+        for r in rappels:
+            r["id"] = str(uuid.uuid4())
+            r["maman_id"] = user["id"]
+            r["created_at"] = datetime.now(timezone.utc).isoformat()
+        if rappels:
+            await db.rappels_ia.insert_many(list(rappels))
+        return {"rappels": rappels, "count": len(rappels)}
+    except Exception as e:
+        raise HTTPException(500, f"Erreur génération IA : {e}")
+
+
+@api.get("/ai/rappels-contextuels")
+async def list_rappels_contextuels(user=Depends(require_roles("maman"))):
+    """Liste les derniers rappels IA générés."""
+    items = await db.rappels_ia.find({"maman_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return {"rappels": items, "count": len(items)}
+
+
 app.include_router(api)
+# (deuxième include_router ci-dessous est une no-op idempotente)
 
 
 # ============================================================================

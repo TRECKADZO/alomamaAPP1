@@ -15,6 +15,21 @@ import { COLORS, RADIUS, SPACING, SHADOW } from "../constants/theme";
 type Tuto = { id: string; title: string; duration: string; topic: string; icon: any; color: string };
 type Faq = { q: string; a: string };
 
+const TUTOS_MAMAN: Tuto[] = [
+  { id: "m1", title: "Ajouter mes 5 enfants au carnet de santé", duration: "3 min", topic: "enfants", icon: "people", color: "#EC4899" },
+  { id: "m2", title: "Discuter avec l'IA Claude 24/7", duration: "4 min", topic: "IA", icon: "sparkles", color: "#A855F7" },
+  { id: "m3", title: "Profiter des offres partenaires", duration: "3 min", topic: "offres", icon: "gift", color: "#F59E0B" },
+  { id: "m4", title: "Joindre la ligne d'écoute post-partum", duration: "2 min", topic: "écoute", icon: "headset", color: "#10B981" },
+  { id: "m5", title: "Partager le carnet avec mes 4 proches", duration: "4 min", topic: "famille", icon: "people-circle", color: "#3B82F6" },
+];
+
+const FAQ_MAMAN: Faq[] = [
+  { q: "Puis-je avoir plus de 1 enfant en gratuit ?", a: "Non, le compte gratuit est limité à 1 enfant. Maman Premium permet jusqu'à 5 enfants." },
+  { q: "L'IA Claude est-elle vraiment illimitée ?", a: "Oui, en Premium aucune limite. En gratuit, c'est 5 questions/mois." },
+  { q: "Comment réserver une session d'écoute ?", a: "Dans /ligne-ecoute, cliquez sur « Réserver une session ». Notre équipe répond sous 2h." },
+  { q: "Combien de proches puis-je ajouter à ma famille ?", a: "Jusqu'à 4 proches en Premium. En gratuit, le partage famille n'est pas activé." },
+];
+
 const TUTOS_PRO: Tuto[] = [
   { id: "p1", title: "Configurer mes disponibilités", duration: "4 min", topic: "agenda", icon: "time", color: "#06B6D4" },
   { id: "p2", title: "Démarrer une téléconsultation HD", duration: "5 min", topic: "vidéo", icon: "videocam", color: "#EC4899" },
@@ -50,11 +65,13 @@ export default function SupportPremium() {
   const { user } = useAuth();
   const isPro = user?.role === "professionnel";
   const isCentre = user?.role === "centre_sante";
+  const isMaman = user?.role === "maman";
   const isPrem = !!(user?.premium && user?.premium_until && new Date(user.premium_until) > new Date());
   const [openFaq, setOpenFaq] = useState<string | null>(null);
 
-  const tutos = isCentre ? TUTOS_CENTRE : TUTOS_PRO;
-  const faqs = isCentre ? FAQ_CENTRE : FAQ_PRO;
+  const tutos = isMaman ? TUTOS_MAMAN : (isCentre ? TUTOS_CENTRE : TUTOS_PRO);
+  const faqs = isMaman ? FAQ_MAMAN : (isCentre ? FAQ_CENTRE : FAQ_PRO);
+  const roleLabel = isMaman ? "Maman" : (isCentre ? "Centre" : "Pro");
 
   const callSupport = () => {
     const num = "+225 27 22 49 50 50"; // Numéro support À lo Maman (placeholder)
@@ -65,7 +82,7 @@ export default function SupportPremium() {
   };
 
   const emailSupport = () => {
-    const subject = encodeURIComponent(`[${isCentre ? "Centre" : "Pro"} Premium] Demande de support`);
+    const subject = encodeURIComponent(`[${roleLabel} Premium] Demande de support`);
     const body = encodeURIComponent(`Bonjour,\n\nJe rencontre la situation suivante :\n\n[Décrivez votre besoin]\n\nMerci.\n\n---\nUtilisateur : ${user?.name || ""}\nEmail : ${user?.email || ""}`);
     Linking.openURL(`mailto:support@alomaman.com?subject=${subject}&body=${body}`);
   };

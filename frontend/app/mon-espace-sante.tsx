@@ -122,8 +122,13 @@ const CATEGORIES: Category[] = [
     tools: [
       { id: "cmu", label: "CMU", sub: "Couverture santé universelle", icon: "shield", color: "#16A34A", path: "/cmu", keywords: ["assurance"] },
       { id: "premium", label: "Passer Premium", sub: "Accès illimité", icon: "diamond", color: "#F59E0B", path: "/premium" },
+      { id: "offres-part", label: "Offres partenaires 💎", sub: "Réductions Pharmacies / Crèches", icon: "gift", color: "#EC4899", path: "/offres-partenaires", keywords: ["promo", "code", "remise"] },
+      { id: "ligne-ecoute", label: "Ligne d'écoute 💎", sub: "Soutien post-partum", icon: "headset", color: "#EC4899", path: "/ligne-ecoute", keywords: ["babyblues", "depression", "post-partum"] },
+      { id: "rappels-ia", label: "Rappels IA 💎", sub: "Personnalisés par Claude", icon: "sparkles", color: "#A855F7", path: "/rappels-ia", keywords: ["intelligent", "rappel"] },
+      { id: "storage", label: "Mon stockage", sub: "Photos, documents, échos", icon: "save", color: "#0EA5E9", path: "/storage-usage", keywords: ["espace", "go", "mo"] },
       { id: "notifications", label: "Notifications", sub: "Centre des alertes", icon: "notifications", color: "#3B82F6", path: "/notifications" },
       { id: "support", label: "Aide & Support", sub: "FAQ, contact", icon: "headset", color: "#06B6D4", path: "/aide-support" },
+      { id: "support-prem-maman", label: "Support Premium 💎", sub: "WhatsApp prioritaire + tutos", icon: "school", color: "#7C3AED", path: "/support-premium", keywords: ["premium", "tuto", "formation"] },
     ],
   },
   {
