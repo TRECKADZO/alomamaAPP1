@@ -104,7 +104,7 @@ export default function PartageDossier() {
                 <View style={{ gap: 6 }}>
                   <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#10B981" }]} onPress={() => valider(d.id)}>
                     <Ionicons name="checkmark" size={20} color="#fff" />
-                    <Text style={styles.actionText}>Autoriser</Text>
+                    <Text style={styles.actionText}>Valider</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#EF4444" }]} onPress={() => refuser(d.id)}>
                     <Ionicons name="close" size={20} color="#fff" />
