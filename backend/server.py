@@ -9358,7 +9358,7 @@ async def pro_patient_recherche(payload: dict, user=Depends(require_roles("profe
         "access_token": None,
         "access_expires_at": None,
         "created_at": now.isoformat(),
-        "expires_at": (now + timedelta(minutes=15)).isoformat(),  # la demande elle-même expire en 15 min
+        "expires_at": (now + timedelta(hours=24)).isoformat(),  # la demande reste actionnable 24h pour laisser le temps à la maman
     }
     await db.access_requests.insert_one(demande)
     demande.pop("_id", None)
@@ -9385,8 +9385,22 @@ async def pro_patient_recherche(payload: dict, user=Depends(require_roles("profe
 
 @api.get("/partage/demandes-recues")
 async def list_demandes_recues(user=Depends(require_roles("maman"))):
-    """La maman liste les demandes d'accès qu'elle a reçues (pending + récentes)."""
-    now = datetime.now(timezone.utc).isoformat()
+    """La maman liste les demandes d'accès qu'elle a reçues (pending + récentes).
+    Auto-nettoie les pending expirées en les passant à 'expired' avant retour."""
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    # Auto-cleanup : passer à 'expired' les pending dépassées
+    try:
+        await db.access_requests.update_many(
+            {
+                "maman_id": user["id"],
+                "status": "pending",
+                "expires_at": {"$lt": now_iso},
+            },
+            {"$set": {"status": "expired", "expired_at": now_iso}},
+        )
+    except Exception:
+        pass
     items = await db.access_requests.find(
         {"maman_id": user["id"]},
         {"_id": 0},

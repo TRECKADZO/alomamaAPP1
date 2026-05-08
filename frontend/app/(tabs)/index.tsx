@@ -161,12 +161,8 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
   const reminders = (data.reminders || []).filter((r: any) => !r.done).slice(0, 3);
   const documents = data.documents || [];
 
-  // 🔐 Demandes d'accès pro au dossier médical — en attente et non expirées
-  const demandesPending = (data.demandes || []).filter((d: any) => {
-    if (d.status !== "pending") return false;
-    if (!d.expires_at) return true;
-    try { return new Date(d.expires_at).getTime() > Date.now(); } catch { return true; }
-  });
+  // 🔐 Demandes d'accès pro au dossier médical — en attente (le backend gère l'expiration côté serveur)
+  const demandesPending = (data.demandes || []).filter((d: any) => d.status === "pending");
 
   // Calculs grossesse
   const weeksRaw = g?.date_debut
