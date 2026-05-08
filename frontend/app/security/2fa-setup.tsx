@@ -98,6 +98,14 @@ export default function TwoFASetup() {
       </LinearGradient>
 
       <ScrollView contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 80 }}>
+        {/* ⚠️ Bandeau Phase de Test */}
+        <View style={styles.testBanner}>
+          <Ionicons name="information-circle" size={22} color="#92400E" />
+          <Text style={styles.testBannerText}>
+            Phase de test : la 2FA est <Text style={{ fontWeight: "800" }}>optionnelle</Text>. Vous pouvez vous connecter normalement sans code.
+          </Text>
+        </View>
+
         {/* Statut actuel */}
         <View style={[styles.statusCard, status?.enabled ? styles.statusOk : styles.statusOff]}>
           <Ionicons name={status?.enabled ? "shield-checkmark" : "shield-outline"} size={28} color={status?.enabled ? "#10B981" : "#EF4444"} />
@@ -106,9 +114,7 @@ export default function TwoFASetup() {
               {status?.enabled ? "2FA activée" : "2FA désactivée"}
             </Text>
             <Text style={styles.statusSub}>
-              {status?.required_for_role
-                ? "Obligatoire pour votre rôle (Pro / Centre / Admin)"
-                : "Recommandée pour renforcer la sécurité"}
+              Optionnelle pendant la phase de test — recommandée à l'avenir
             </Text>
           </View>
         </View>
@@ -183,6 +189,9 @@ const styles = StyleSheet.create({
   statusOff: { backgroundColor: "#FEE2E2" },
   statusTitle: { fontSize: 15, fontWeight: "800" },
   statusSub: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+
+  testBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: RADIUS.md, marginBottom: 14, backgroundColor: "#FEF3C7", borderLeftWidth: 3, borderLeftColor: "#F59E0B" },
+  testBannerText: { flex: 1, fontSize: 12, color: "#92400E", lineHeight: 17 },
 
   infoCard: { padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderLeftWidth: 3, borderLeftColor: "#3B82F6", marginBottom: 16 },
   infoTitle: { fontSize: 14, fontWeight: "800", color: COLORS.textPrimary, marginBottom: 8 },

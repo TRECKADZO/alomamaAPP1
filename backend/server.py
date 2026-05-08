@@ -780,7 +780,9 @@ async def login(payload: LoginIn):
             user["phone"] = canon
 
     # 🔐 RGSSI Niveau 3 — 2FA TOTP obligatoire pour les Pros si activé
-    if user.get("totp_enabled"):
+    # ⚠️ Phase de test : possibilité de bypass via TWO_FACTOR_ENFORCEMENT="off"
+    _2fa_enforced = (os.environ.get("TWO_FACTOR_ENFORCEMENT", "on").strip().lower() not in ("off", "false", "0", "disabled", "no"))
+    if user.get("totp_enabled") and _2fa_enforced:
         otp = (payload.totp_code or "").strip().replace(" ", "")
         if not otp:
             # Code manquant → demander la 2e étape

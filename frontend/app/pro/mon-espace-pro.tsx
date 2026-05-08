@@ -89,7 +89,7 @@ const CATEGORIES: Category[] = [
       { id: "search", label: "Trouver un confrère", sub: "Annuaire pros", icon: "search", color: "#6366F1", path: "/search" },
       { id: "centres", label: "Centres de santé", sub: "Annuaire PMI, cliniques", icon: "business", color: "#14B8A6", path: "/centres" },
       { id: "support", label: "Aide & Support", sub: "FAQ, contact", icon: "headset", color: "#06B6D4", path: "/aide-support" },
-      { id: "2fa-pro", label: "Authentification 2FA", sub: "Obligatoire RGSSI", icon: "shield-checkmark", color: "#3B82F6", path: "/security/2fa-setup", keywords: ["2fa", "totp", "securité"] },
+      { id: "2fa-pro", label: "Authentification 2FA", sub: "Optionnel (phase test)", icon: "shield-checkmark", color: "#3B82F6", path: "/security/2fa-setup", keywords: ["2fa", "totp", "securité"] },
       { id: "incident-pro", label: "Signaler un incident", sub: "Sécurité ANSSI", icon: "warning", color: "#EF4444", path: "/security/incident-new", keywords: ["incident", "anssi"] },
     ],
   },
