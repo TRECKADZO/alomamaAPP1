@@ -10193,8 +10193,8 @@ class AutoPayoutConfigIn(BaseModel):
 @api.put("/pro/auto-payout")
 async def set_auto_payout(payload: AutoPayoutConfigIn, user=Depends(require_roles("professionnel"))):
     """Configurer le retrait automatique vers Mobile Money (PayDunya Disburse)."""
-    if payload.seuil_fcfa < (WITHDRAW_MIN_FCFA if "WITHDRAW_MIN_FCFA" in globals() else 5000):
-        raise HTTPException(400, f"Seuil minimum : {(WITHDRAW_MIN_FCFA if 'WITHDRAW_MIN_FCFA' in globals() else 5000)} FCFA")
+    if payload.seuil_fcfa < 5000:
+        raise HTTPException(400, "Seuil minimum auto-retrait : 5 000 FCFA")
     if payload.frequency not in ("weekly", "monthly"):
         raise HTTPException(400, "Fréquence invalide (weekly | monthly).")
     # Vérifier que le compte MM est configuré avant d'activer
