@@ -88,7 +88,7 @@ const CATEGORIES: Category[] = [
       { id: "ressources", label: "Ressources éducatives", sub: "Vidéos, fiches, conseils", icon: "library", color: "#A855F7", path: "/ressources", keywords: ["video", "education"] },
       { id: "glossaire", label: "Glossaire médical", sub: "Définitions claires", icon: "book", color: "#3B82F6", path: "/glossaire" },
       { id: "support", label: "Aide & Support", sub: "FAQ, contact", icon: "headset", color: "#06B6D4", path: "/aide-support" },
-      { id: "support-prem", label: "Support Premium 💎", sub: "Formation + WhatsApp prioritaire", icon: "school", color: "#7C3AED", path: "/support-premium", keywords: ["premium", "formation", "tutoriel"] },
+      { id: "support-prem", label: "Support Premium 💎", sub: "Formation · Email prioritaire", icon: "school", color: "#7C3AED", path: "/support-premium", keywords: ["premium", "formation", "tutoriel"] },
     ],
   },
 ];

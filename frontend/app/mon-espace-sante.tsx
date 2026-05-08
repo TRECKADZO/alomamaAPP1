@@ -128,7 +128,7 @@ const CATEGORIES: Category[] = [
       { id: "storage", label: "Mon stockage", sub: "Photos, documents, échos", icon: "save", color: "#0EA5E9", path: "/storage-usage", keywords: ["espace", "go", "mo"] },
       { id: "notifications", label: "Notifications", sub: "Centre des alertes", icon: "notifications", color: "#3B82F6", path: "/notifications" },
       { id: "support", label: "Aide & Support", sub: "FAQ, contact", icon: "headset", color: "#06B6D4", path: "/aide-support" },
-      { id: "support-prem-maman", label: "Support Premium 💎", sub: "WhatsApp prioritaire + tutos", icon: "school", color: "#7C3AED", path: "/support-premium", keywords: ["premium", "tuto", "formation"] },
+      { id: "support-prem-maman", label: "Support Premium 💎", sub: "Email prioritaire · Tutos vidéo", icon: "school", color: "#7C3AED", path: "/support-premium", keywords: ["premium", "tuto", "formation"] },
     ],
   },
   {

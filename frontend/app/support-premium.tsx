@@ -4,7 +4,7 @@
  * Route: /support-premium
  */
 import { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, Linking } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -73,26 +73,10 @@ export default function SupportPremium() {
   const faqs = isMaman ? FAQ_MAMAN : (isCentre ? FAQ_CENTRE : FAQ_PRO);
   const roleLabel = isMaman ? "Maman" : (isCentre ? "Centre" : "Pro");
 
-  const callSupport = () => {
-    Alert.alert(
-      "Contact Support",
-      "Pour des raisons de confidentialité, le support est uniquement disponible par WhatsApp ou email.\n\n📧 infos@e-medicare.co",
-      [{ text: "OK" }]
-    );
-  };
-
   const emailSupport = () => {
     const subject = encodeURIComponent(`[${roleLabel} Premium] Demande de support`);
     const body = encodeURIComponent(`Bonjour,\n\nJe rencontre la situation suivante :\n\n[Décrivez votre besoin]\n\nMerci.\n\n---\nUtilisateur : ${user?.name || ""}\nEmail : ${user?.email || ""}`);
     Linking.openURL(`mailto:infos@e-medicare.co?subject=${subject}&body=${body}`);
-  };
-
-  const openWhatsApp = () => {
-    // Numéro masqué côté UI — redirection wa.me sans afficher le numéro
-    const num = "15144757340"; // sans + ni espaces
-    const msg = encodeURIComponent(`Bonjour, je suis ${user?.name || "un membre Premium"}. J'ai besoin d'aide concernant...`);
-    const url = `https://wa.me/${num}?text=${msg}`;
-    Linking.openURL(url).catch(() => Alert.alert("WhatsApp", "Impossible d'ouvrir WhatsApp."));
   };
 
   return (
@@ -132,17 +116,11 @@ export default function SupportPremium() {
 
         {/* Contact prioritaire */}
         <Text style={styles.section}>Contact prioritaire</Text>
-        <View style={styles.contactRow}>
-          <TouchableOpacity style={[styles.contactBtn, { backgroundColor: "#10B981" }]} onPress={openWhatsApp}>
-            <Ionicons name="logo-whatsapp" size={22} color="#fff" />
-            <Text style={styles.contactText}>WhatsApp</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.contactBtn, { backgroundColor: "#A855F7" }]} onPress={emailSupport}>
-            <Ionicons name="mail" size={22} color="#fff" />
-            <Text style={styles.contactText}>Email</Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.contactNote}>📧 infos@e-medicare.co · WhatsApp prioritaire</Text>
+        <TouchableOpacity style={[styles.contactBtn, styles.contactBtnFull, { backgroundColor: "#A855F7" }]} onPress={emailSupport}>
+          <Ionicons name="mail" size={22} color="#fff" />
+          <Text style={styles.contactText}>Écrire au support</Text>
+        </TouchableOpacity>
+        <Text style={styles.contactNote}>📧 infos@e-medicare.co · Réponse prioritaire sous 2h en heures ouvrées</Text>
 
         {/* Formation en ligne */}
         <Text style={styles.section}>📚 Formation en ligne</Text>
@@ -177,7 +155,7 @@ export default function SupportPremium() {
         ))}
 
         <Text style={styles.disclaimer}>
-          💡 Pour toute question complexe ou demande de formation personnalisée, contactez-nous via WhatsApp pour une réponse en moins de 2h en heures ouvrées.
+          💡 Pour toute question complexe ou demande de formation personnalisée, écrivez-nous à <Text style={{ fontWeight: "800" }}>infos@e-medicare.co</Text> — réponse en moins de 2h en heures ouvrées.
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -202,7 +180,8 @@ const styles = StyleSheet.create({
 
   contactRow: { flexDirection: "row", gap: 8 },
   contactBtn: { flex: 1, alignItems: "center", justifyContent: "center", padding: 14, borderRadius: RADIUS.md, gap: 4, ...SHADOW },
-  contactText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  contactBtnFull: { flexDirection: "row", flex: 0, alignSelf: "stretch", gap: 8 },
+  contactText: { color: "#fff", fontSize: 13, fontWeight: "800" },
   contactNote: { fontSize: 11, color: COLORS.textMuted, textAlign: "center", marginTop: 8, fontStyle: "italic" },
 
   tutoCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
