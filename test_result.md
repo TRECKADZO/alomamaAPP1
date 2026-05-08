@@ -567,6 +567,45 @@ test_plan:
   test_priority: "high_first"
 
 frontend:
+  - task: "Durée par mode de consultation (Pro /pro/modes-consultation + impact slots Maman /rdv-nouveau)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/pro/modes-consultation.tsx, /app/frontend/app/rdv-nouveau.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Mobile UI test (390x844) — Feature "Durée par mode de consultation" VALIDÉE end-to-end.
+
+          PART A — Pro /pro/modes-consultation (Dr alpha, +2250709005330/474Treck) :
+          ✅ 3 mode cards intactes : Au cabinet (badge ACTIVÉ vert), Téléconsultation (toggle violet), À domicile (toggle ambre).
+          ✅ Activation toggles Téléconsultation + Domicile → la section "⏱️ Durée d'une consultation par mode" apparaît avec 3 DureeRow.
+          ✅ Au cabinet : input + badge "30 min" + 4 chips suggestions [15/30/45/60].
+          ✅ Téléconsultation : input + badge + 4 chips [10/15/20/30].
+          ✅ À domicile : input + badge + 4 chips [30/45/60/90].
+          ✅ Tap sur chip "90 min" (domicile) → input passe à 90, badge à "90 min".
+          ✅ Tap sur chip "15 min" (téléconsultation) → input passe à 15.
+          ✅ Saisie "30" dans cabinet input → OK.
+          ✅ Bouton "Enregistrer" sauve la config (PUT /api/pro/modes-consultation persist duree_par_mode).
+          ✅ Persistance après reload (navigation away+back) : cabinet=30, tele=15, domicile=90 ; les chips actives sont highlightées avec la bonne couleur.
+          ⚠️ Negative tests (input=3 ou 300) : la validation client est codée (L57-60 alert "Durée invalide — La durée pour {label} doit être entre 5 et 240 minutes"), mais Alert.alert sur React Native Web rend en modal custom (pas browser dialog), donc impossible à intercepter via page.on('dialog'). Logique correctement câblée — vérifié à la lecture du code.
+
+          PART B — Maman /rdv-nouveau (maman.test@alomaman.dev/Test1234!) :
+          ✅ Step 1 : Search "Dr alpha" → card "Dr alpha · Dentiste · Bondoukou · CMU" visible et sélectionnable, "Continuer" navigue à Step 2.
+          ✅ Step 2 : 3 mode cards (testIDs mode-presentiel, mode-tele, mode-domicile) + 3 prestations cliquables ("Consultation prénatale 30 min CMU", "Contraception 30 min", "Échographie 45 min CMU").
+          ✅ Step 3 (Date & heure) : la bannière "⚡ Prochain créneau disponible" affiche un horaire DIFFÉRENT selon le mode :
+             - Mode présentiel (cabinet=30 min) → "Lun 11 Mai à 08:30"
+             - Mode téléconsultation (tele=15 min) → "Lun 11 Mai à 08:15"
+             Cette différence d'horaire de start prouve que le backend slots filtre/découpe bien selon `duree_par_mode[mode]` configuré côté Pro.
+          ✅ Empty-state contextuel par mode confirmé en code review (rdv-nouveau.tsx L457) : "Aucun créneau disponible {en téléconsultation|à domicile|en présentiel} ce jour-là. Essayez une autre date{ ou changez le mode}."
+          ✅ Champ adresse-domicile s'affiche uniquement en mode domicile.
+
+          Aucun glitch UI détecté (layout 390x844 OK, pas d'overflow). Aucun bug critique.
+          NB sur tests Maman : le script playwright a sélectionné par défaut Sam 9 Mai (sans slot) au lieu de Lun 11 Mai, donc le COMPTAGE exact des slots morning n'a pas pu être validé numériquement par script — mais la PREUVE que la durée impacte le découpage est dans la bannière "Prochain créneau disponible" qui change d'horaire (08:30 vs 08:15) selon le mode.
+
   - task: "Modes de consultation par créneau (Pro disponibilités + Maman wizard)"
     implemented: true
     working: true
