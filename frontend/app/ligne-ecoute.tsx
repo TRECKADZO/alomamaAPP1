@@ -102,15 +102,12 @@ export default function LigneEcoute() {
                 <Ionicons name="logo-whatsapp" size={18} color="#fff" />
                 <Text style={styles.premBtnText}>WhatsApp</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.premBtn, { backgroundColor: "#3B82F6" }]} onPress={() => call(data.premium_dedicated.phone)}>
-                <Ionicons name="call" size={18} color="#fff" />
-                <Text style={styles.premBtnText}>Appeler</Text>
-              </TouchableOpacity>
               <TouchableOpacity style={[styles.premBtn, { backgroundColor: "#A855F7" }]} onPress={() => sendEmail(data.premium_dedicated.email)}>
                 <Ionicons name="mail" size={18} color="#fff" />
                 <Text style={styles.premBtnText}>Email</Text>
               </TouchableOpacity>
             </View>
+            <Text style={styles.premContactNote}>📧 infos@e-medicare.co · WhatsApp prioritaire (réponse &lt; 2h)</Text>
             <TouchableOpacity style={styles.bookBtn} onPress={() => setBookingOpen(true)}>
               <Ionicons name="calendar" size={16} color="#fff" />
               <Text style={styles.bookBtnText}>Réserver une session d'écoute</Text>
@@ -219,6 +216,7 @@ const styles = StyleSheet.create({
   premActions: { flexDirection: "row", gap: 6, marginBottom: 10 },
   premBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, padding: 10, borderRadius: 8 },
   premBtnText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  premContactNote: { fontSize: 11, color: "#9F1239", textAlign: "center", marginTop: 4, marginBottom: 8, fontStyle: "italic" },
   bookBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 12, backgroundColor: "#7C3AED", borderRadius: 8 },
   bookBtnText: { color: "#fff", fontWeight: "800", fontSize: 13 },
   sectionTitle: { fontSize: 14, fontWeight: "800", color: COLORS.textPrimary, marginTop: 14, marginBottom: 8 },

@@ -74,21 +74,22 @@ export default function SupportPremium() {
   const roleLabel = isMaman ? "Maman" : (isCentre ? "Centre" : "Pro");
 
   const callSupport = () => {
-    const num = "+225 27 22 49 50 50"; // Numéro support À lo Maman (placeholder)
-    Alert.alert("Support dédié 💎", `Notre équipe est joignable au\n${num}\n(7j/7, 8h-20h GMT)`, [
-      { text: "Annuler", style: "cancel" },
-      { text: "Appeler", onPress: () => Linking.openURL(`tel:${num.replace(/\s/g, "")}`) },
-    ]);
+    Alert.alert(
+      "Contact Support",
+      "Pour des raisons de confidentialité, le support est uniquement disponible par WhatsApp ou email.\n\n📧 infos@e-medicare.co",
+      [{ text: "OK" }]
+    );
   };
 
   const emailSupport = () => {
     const subject = encodeURIComponent(`[${roleLabel} Premium] Demande de support`);
     const body = encodeURIComponent(`Bonjour,\n\nJe rencontre la situation suivante :\n\n[Décrivez votre besoin]\n\nMerci.\n\n---\nUtilisateur : ${user?.name || ""}\nEmail : ${user?.email || ""}`);
-    Linking.openURL(`mailto:support@alomaman.com?subject=${subject}&body=${body}`);
+    Linking.openURL(`mailto:infos@e-medicare.co?subject=${subject}&body=${body}`);
   };
 
   const openWhatsApp = () => {
-    const num = "22527224950"; // sans + ni espaces
+    // Numéro masqué côté UI — redirection wa.me sans afficher le numéro
+    const num = "15144757340"; // sans + ni espaces
     const msg = encodeURIComponent(`Bonjour, je suis ${user?.name || "un membre Premium"}. J'ai besoin d'aide concernant...`);
     const url = `https://wa.me/${num}?text=${msg}`;
     Linking.openURL(url).catch(() => Alert.alert("WhatsApp", "Impossible d'ouvrir WhatsApp."));
@@ -136,15 +137,12 @@ export default function SupportPremium() {
             <Ionicons name="logo-whatsapp" size={22} color="#fff" />
             <Text style={styles.contactText}>WhatsApp</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.contactBtn, { backgroundColor: "#3B82F6" }]} onPress={callSupport}>
-            <Ionicons name="call" size={22} color="#fff" />
-            <Text style={styles.contactText}>Appel</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={[styles.contactBtn, { backgroundColor: "#A855F7" }]} onPress={emailSupport}>
             <Ionicons name="mail" size={22} color="#fff" />
             <Text style={styles.contactText}>Email</Text>
           </TouchableOpacity>
         </View>
+        <Text style={styles.contactNote}>📧 infos@e-medicare.co · WhatsApp prioritaire</Text>
 
         {/* Formation en ligne */}
         <Text style={styles.section}>📚 Formation en ligne</Text>
@@ -205,6 +203,7 @@ const styles = StyleSheet.create({
   contactRow: { flexDirection: "row", gap: 8 },
   contactBtn: { flex: 1, alignItems: "center", justifyContent: "center", padding: 14, borderRadius: RADIUS.md, gap: 4, ...SHADOW },
   contactText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  contactNote: { fontSize: 11, color: COLORS.textMuted, textAlign: "center", marginTop: 8, fontStyle: "italic" },
 
   tutoCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
   tutoIcon: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },

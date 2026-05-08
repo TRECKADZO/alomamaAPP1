@@ -9860,9 +9860,8 @@ async def ecoute_contacts(user=Depends(require_roles("maman"))):
         import urllib.parse as _up
         base["premium_dedicated"] = {
             "label": "Ligne d'écoute À lo Maman 💎",
-            "phone": "+225 27 22 49 50 50",
-            "whatsapp": "https://wa.me/22527224950?text=" + _up.quote("Bonjour, je suis Maman Premium et j'ai besoin d'écoute post-partum."),
-            "email": "ecoute@alomaman.com",
+            "whatsapp": "https://wa.me/15144757340?text=" + _up.quote("Bonjour, je suis Maman Premium et j'ai besoin d'écoute post-partum."),
+            "email": "infos@e-medicare.co",
             "horaires": "7j/7 · 8h-22h GMT (réponse < 2h)",
             "specialites": [
                 "Baby blues / dépression post-partum",
