@@ -4384,3 +4384,117 @@ agent_communication:
 
       IMPORTANT: La PRO et son secret TOTP étaient correctement gérés (idempotent : si déjà activé d'une run
       précédente, le test s'arrête proprement). Ici, état initial propre validé avant les tests.
+
+
+backend:
+  - task: "Module Paiement marketplace — RDV domicile/téléconsultation, commission différenciée, remboursement, stats par mode, frais déplacement"
+    implemented: true
+    working: false
+    file: "/app/backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          37/54 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_paiement.py).
+
+          ❌ BUG STRUCTUREL CRITIQUE — 5 endpoints du module Paiement NON REGISTERED :
+          • GET /api/rdv/{rid}/adresse-domicile          → 404 Not Found
+          • POST /api/pay/refund                          → 404 Not Found
+          • GET /api/pro/revenus/par-mode                 → 404 Not Found
+          • GET /api/pay/admin/stats-par-mode             → 404 Not Found
+          • PUT /api/pro/frais-deplacement                → 404 Not Found
+
+          CAUSE RACINE : ces endpoints sont définis sur `api` (APIRouter) entre les lignes 9989-10175
+          du fichier /app/backend/server.py, MAIS le dernier `app.include_router(api)` est à la
+          ligne 9977 — donc AVANT ces définitions. FastAPI/Starlette enregistre les routes au
+          MOMENT de l'appel `include_router` ; les routes ajoutées au router APRÈS cet appel ne
+          sont pas propagées vers `app.routes`. Le commentaire L10181-10186 dit "ces nouvelles
+          routes sont définies AVANT include_router" ce qui est FAUX dans le code actuel.
+
+          FIX REQUIS (au choix) :
+          (a) PRÉFÉRÉ — déplacer le bloc "🏠 PAIEMENTS — Mode domicile, remboursement, stats par
+              mode (RGSSI N3)" (lignes 9981-10175) AVANT la ligne 9977 (`app.include_router(api)`).
+          (b) Ajouter un 3e `app.include_router(api)` après la ligne 10175 et AVANT le
+              `app.add_middleware(CORSMiddleware, …)` ligne 10188. Note: cela peut dupliquer les
+              routes déjà incluses précédemment ; à valider.
+
+          ✅ CE QUI FONCTIONNE (modèles + logique RDV + paiement initiation OK) :
+          [1] POST /rdv teleconsultation (4/4 PASS) — mode=teleconsultation, frais_deplacement=0,
+              tarif_total=10000.
+          [2] POST /rdv domicile sans adresse → 400 (2/2 PASS) — message "l'adresse … requise".
+          [3] POST /rdv domicile complet (6/6 PASS) — mode=domicile, frais_deplacement=3000,
+              tarif_total=18000, adresse_domicile_enc='enc_v1:…' (AES-256-GCM), adresse_domicile
+              n'est PAS exposée en clair dans la réponse.
+          [5a] POST /pay/consultation domicile (8/8 PASS) — mode=domicile, amount=18000,
+               commission_rate=0.12 (PRO non-Premium → 12%), commission=2160, pro_amount=15840,
+               frais_deplacement_fcfa=3000.
+          [5b] POST /pay/consultation tele (6/6 PASS) — commission_rate=0.10 (10%),
+               commission=1000, pro_amount=9000.
+          [5c] PRO Premium → domicile commission_rate=0.07 (7%), commission=1260 ✓
+          [5d] PRO Premium → tele commission_rate=0.05 (5%), commission=500 ✓
+          [11b/11c] /pay/history maman + pro → 200 ✓
+          [11e] /famille (maman) → 200 ✓
+
+          ❌ CE QUI ÉCHOUE (à cause du bug structurel ci-dessus) :
+          [4] Pro lit adresse AVANT paiement — endpoint 404 au lieu de 402 payment_required.
+          [6] Pro lit adresse APRÈS paiement (simulé en DB) — endpoint 404.
+              Audit log read_address absent (l'endpoint ne s'exécute pas).
+          [7a/7b/7c] /pay/refund — endpoint 404 sur les 3 fenêtres (>24h, 6-24h, <6h).
+              Conséquence : aucune entrée db.refunds, payment.status reste "completed",
+              rdv.status reste "confirme", aucun audit log refund_request.
+          [7d] Skipped — adhoc maman register a 400 "numéro déjà utilisé" (téléphone réutilisé
+               par tests précédents). Test indépendant de paiement, peut être ignoré.
+          [8] /pro/revenus/par-mode — 404.
+          [9] /pay/admin/stats-par-mode — 404.
+          [10] PUT /pro/frais-deplacement — 404. Conséquence : la valeur 2500 n'est pas
+               persistée → la création RDV domicile suivante utilise le défaut 2000 (donc
+               frais_deplacement=2000 et tarif_total=17000 au lieu de 17500). C'est un effet
+               cascade du bug 404, pas un bug indépendant.
+
+          ❌ MINOR (régression non-bloquante, non liée au module paiement) :
+          [11d] POST /api/ai/chat sans session_id → 422 Pydantic "Field required". L'endpoint
+                /ai/chat exige maintenant `session_id` dans le body. Ajout récent ?
+                Soit la spec a changé et c'est attendu, soit le frontend doit être mis à jour
+                pour envoyer un session_id. Non bloquant pour le module Paiement.
+
+          ÉTAT DB après tests : restauré (PRO premium=initial, MAMAN premium=initial,
+          frais_deplacement_fcfa=initial, RDV+payments+refunds de test purgés).
+
+          ⚠️ ACTION REQUISE MAIN AGENT :
+          1. CORRIGER LE BUG STRUCTUREL — déplacer les endpoints du bloc PAIEMENTS L9981-10175
+             AVANT la ligne `app.include_router(api)` (L9977). Solution recommandée : déplacer
+             tout le bloc juste avant L9977.
+          2. (optionnel) clarifier la spec /ai/chat session_id pour la régression.
+          3. Re-tester le module Paiement après la correction.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      ❌ Module Paiement marketplace — 37/54 PASS, 5 endpoints CRITIQUES non enregistrés.
+
+      **BUG STRUCTUREL** : les endpoints ajoutés aux lignes 9989-10175 de server.py
+      (/rdv/{rid}/adresse-domicile, /pay/refund, /pro/revenus/par-mode,
+      /pay/admin/stats-par-mode, /pro/frais-deplacement) sont définis APRÈS le dernier
+      `app.include_router(api)` (L9977) → FastAPI ne les enregistre pas → 404 partout.
+
+      Le commentaire L10181-10186 prétend "ces nouvelles routes sont définies AVANT
+      include_router" mais c'est FAUX dans la version actuelle. Aucun include_router
+      n'existe entre L10175 et L10188 (CORS middleware).
+
+      ✅ La logique métier des nouveaux endpoints est CORRECTE (validée via le sous-ensemble
+      qui passe par /api/rdv et /api/pay/consultation, qui sont registered) :
+      - Création RDV domicile : adresse chiffrée AES-256-GCM, frais_deplacement, tarif_total OK.
+      - Validation adresse requise → 400 OK.
+      - Commission différenciée OK : domicile 12% (free) / 7% (Premium), tele 10% (free) / 5% (Premium).
+      - payment.amount intègre frais_deplacement.
+
+      🔧 FIX RECOMMANDÉ : déplacer le bloc "🏠 PAIEMENTS — Mode domicile, remboursement, stats
+      par mode (RGSSI N3)" (L9981-10175) AVANT la ligne 9977 (`app.include_router(api)`),
+      puis re-tester.
+
+      Aucune régression sur les endpoints existants (login 4 rôles, /pay/history, /famille).
+      Note non-bloquante : POST /ai/chat sans session_id → 422 (signature changée récemment ?).

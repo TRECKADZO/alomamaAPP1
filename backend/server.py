@@ -368,8 +368,21 @@ class RdvIn(BaseModel):
     motif: str
     tarif_fcfa: int = 10000
     type_consultation: Optional[str] = None
-    mode: Optional[str] = "presentiel"  # "presentiel" | "teleconsultation"
+    mode: Optional[str] = "presentiel"  # "presentiel" | "teleconsultation" | "domicile"
     prestation_id: Optional[str] = None
+    # 🏠 Consultation à domicile (chiffrée AES-256-GCM côté serveur)
+    adresse_domicile: Optional[str] = None  # ex: "Cocody, Riviera 3, Rue des Jardins, Villa 12"
+    quartier: Optional[str] = None
+    ville: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    frais_deplacement_fcfa: Optional[int] = None  # défaut = celui du Pro ou 2000
+
+
+class RefundIn(BaseModel):
+    rdv_id: Optional[str] = None
+    payment_id: Optional[str] = None
+    raison: Optional[str] = None
 
 
 class MessageIn(BaseModel):
@@ -1717,7 +1730,33 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
             tarif_fcfa = prestation["prix_fcfa"]
             if not motif:
                 motif = prestation["nom"]
-    # Quota freemium — max 10 RDV par mois pour une maman gratuite
+    # 🏠 Mode domicile : valider + appliquer les frais de déplacement
+    mode = (payload.mode or "presentiel").lower()
+    if mode not in ("presentiel", "teleconsultation", "domicile"):
+        raise HTTPException(400, "Mode invalide. Valeurs autorisées : presentiel, teleconsultation, domicile.")
+    frais_deplacement_fcfa = 0
+    adresse_enc = None
+    quartier = None
+    ville = None
+    lat = None
+    lng = None
+    if mode == "domicile":
+        if not (payload.adresse_domicile or "").strip():
+            raise HTTPException(400, "Pour une consultation à domicile, l'adresse complète est requise.")
+        # Frais déplacement = celui spécifié, sinon celui du Pro, sinon défaut 2000 F
+        frais_deplacement_fcfa = (
+            payload.frais_deplacement_fcfa
+            if payload.frais_deplacement_fcfa is not None
+            else (pro.get("frais_deplacement_fcfa") or 2000)
+        )
+        # 🔐 Chiffrer l'adresse (RGSSI)
+        from encryption import encrypt_str as _enc
+        adresse_enc = _enc((payload.adresse_domicile or "").strip())
+        quartier = (payload.quartier or "").strip()[:120] or None
+        ville = (payload.ville or "").strip()[:120] or None
+        lat = payload.lat
+        lng = payload.lng
+    # Quota freemium — max 3 RDV par mois pour une maman gratuite
     if not is_premium_active(user):
         now = datetime.now(timezone.utc)
         start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -1741,6 +1780,8 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         cmu_montant = int(round(tarif_fcfa * cmu_taux))
         reste_a_charge = tarif_fcfa - cmu_montant
         cmu_applique = True
+    # 💰 Total à payer (incluant frais de déplacement domicile)
+    tarif_total_fcfa = (reste_a_charge if cmu_applique else tarif_fcfa) + frais_deplacement_fcfa
     doc = {
         "id": str(uuid.uuid4()),
         "maman_id": user["id"],
@@ -1748,8 +1789,10 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "date": payload.date,
         "motif": motif,
         "tarif_fcfa": tarif_fcfa,
+        "frais_deplacement_fcfa": frais_deplacement_fcfa,
+        "tarif_total_fcfa": tarif_total_fcfa,
         "type_consultation": payload.type_consultation,
-        "mode": payload.mode or "presentiel",
+        "mode": mode,
         "prestation_id": payload.prestation_id,
         "prestation_nom": prestation.get("nom") if prestation else None,
         "cmu_applique": cmu_applique,
@@ -1758,6 +1801,12 @@ async def create_rdv(payload: RdvIn, user=Depends(require_roles("maman"))):
         "reste_a_charge_fcfa": reste_a_charge,
         # Note : on stocke le numéro CMU en clair sur le RDV car c'est nécessaire pour la facturation à la CNAM (visible par le Pro)
         "cmu_numero": maman_cmu_clear.get("numero") if cmu_applique else None,
+        # 🏠 Données domicile (adresse_domicile_enc = chiffré AES-256-GCM)
+        "adresse_domicile_enc": adresse_enc,
+        "quartier": quartier,
+        "ville": ville,
+        "lat": lat,
+        "lng": lng,
         "paye": False,
         "status": "en_attente",
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -7474,29 +7523,49 @@ async def pay_consultation(payload: ConsultationPayIn, user=Depends(require_role
     rdv = await db.rdv.find_one({"id": payload.rdv_id, "maman_id": user["id"]}, {"_id": 0})
     if not rdv:
         raise HTTPException(404, "RDV introuvable")
-    # Si CMU appliqué, on paie uniquement le reste-à-charge
-    amount = rdv.get("reste_a_charge_fcfa") if rdv.get("cmu_applique") else rdv.get("tarif_fcfa", 10000)
-    if not amount:
-        amount = rdv.get("tarif_fcfa", 10000)
-    # Commission dynamique : 5% si Pro Premium, sinon 10%
+    # 💰 Total à payer = (reste à charge si CMU sinon tarif) + frais de déplacement domicile
+    base_amount = rdv.get("reste_a_charge_fcfa") if rdv.get("cmu_applique") else rdv.get("tarif_fcfa", 10000)
+    if not base_amount:
+        base_amount = rdv.get("tarif_fcfa", 10000)
+    frais_deplacement = int(rdv.get("frais_deplacement_fcfa") or 0)
+    amount = int(base_amount) + frais_deplacement
+    # 💳 Commission différenciée selon mode + Premium
     pro = await db.users.find_one({"id": rdv["pro_id"]}, {"_id": 0})
-    commission_rate = 0.05 if (pro and is_premium_active(pro)) else 0.10
+    pro_premium = bool(pro and is_premium_active(pro))
+    mode = rdv.get("mode") or "presentiel"
+    if mode == "domicile":
+        commission_rate = 0.07 if pro_premium else 0.12  # 12% gratuit / 7% Premium (déplacement)
+    else:  # teleconsultation, presentiel
+        commission_rate = 0.05 if pro_premium else 0.10  # 10% gratuit / 5% Premium
     commission = int(round(amount * commission_rate))
     pro_amount = amount - commission
-    desc = f"Consultation À lo Maman · RDV {rdv['date'][:10]}"
+    desc = f"Consultation À lo Maman · {mode.title()} · RDV {rdv['date'][:10]}"
     return_url = f"{os.environ.get('APP_URL', '')}/api/pay/return"
     inv = await paydunya_create_invoice(
         amount, desc, user,
-        {"kind": "consultation", "rdv_id": payload.rdv_id, "maman_id": user["id"], "pro_id": rdv["pro_id"], "commission": commission, "commission_rate": commission_rate, "pro_amount": pro_amount},
+        {
+            "kind": "consultation",
+            "mode": mode,
+            "rdv_id": payload.rdv_id,
+            "maman_id": user["id"],
+            "pro_id": rdv["pro_id"],
+            "commission": commission,
+            "commission_rate": commission_rate,
+            "pro_amount": pro_amount,
+            "frais_deplacement_fcfa": frais_deplacement,
+        },
         return_url,
     )
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "kind": "consultation",
+        "mode": mode,
         "rdv_id": payload.rdv_id,
         "pro_id": rdv["pro_id"],
         "amount": amount,
+        "base_amount_fcfa": int(base_amount),
+        "frais_deplacement_fcfa": frais_deplacement,
         "commission": commission,
         "commission_rate": commission_rate,
         "pro_amount": pro_amount,
@@ -7507,6 +7576,11 @@ async def pay_consultation(payload: ConsultationPayIn, user=Depends(require_role
     }
     await db.payments.insert_one(doc)
     doc.pop("_id", None)
+    # 📊 Audit log RGSSI N3
+    try:
+        await _audit_log(user=user, action="pay_initiate", resource_type="Payment", resource_id=doc["id"], details={"amount": amount, "mode": mode, "pro_id": rdv["pro_id"], "commission": commission})
+    except Exception:
+        pass
     return {"payment": doc, "payment_url": inv.get("url"), "success": inv.get("success", False), "error": inv.get("error")}
 
 
@@ -7528,8 +7602,25 @@ async def pay_verify(token: str, user=Depends(get_current_user)):
             )
             await push_notif(p["user_id"], "Premium activé 🎉", f"Merci ! Votre abonnement est actif jusqu'au {end.strftime('%d/%m/%Y')}.", "info")
         elif p["kind"] == "consultation":
-            await db.rdv.update_one({"id": p["rdv_id"]}, {"$set": {"paye": True, "payment_token": token}})
-            await push_notif(p["pro_id"], "Consultation payée 💰", f"Votre RDV a été payé ({p['pro_amount']} FCFA après commission).", "info")
+            # 📅 RDV : status confirmé + paye=true
+            await db.rdv.update_one({"id": p["rdv_id"]}, {"$set": {"paye": True, "payment_token": token, "status": "confirme", "paid_at": now.isoformat()}})
+            mode = p.get("mode") or "presentiel"
+            # 🏠 Mode domicile : pousser l'adresse complète au Pro
+            if mode == "domicile":
+                rdv = await db.rdv.find_one({"id": p["rdv_id"]}, {"_id": 0}) or {}
+                from encryption import decrypt_str as _dec
+                adr = _dec(rdv.get("adresse_domicile_enc")) or "Adresse non renseignée"
+                quartier = rdv.get("quartier") or ""
+                ville = rdv.get("ville") or ""
+                full_addr = f"{adr}{(' · ' + quartier) if quartier else ''}{(' · ' + ville) if ville else ''}"
+                await push_notif(p["pro_id"], "🏠 Visite à domicile confirmée", f"Adresse de la patiente : {full_addr}. RDV payé : +{p['pro_amount']} F (après commission).", "rdv")
+            else:
+                await push_notif(p["pro_id"], "Consultation payée 💰", f"Votre RDV a été payé ({p['pro_amount']} FCFA après commission).", "info")
+            # 📊 Audit log
+            try:
+                await _audit_log(user=user, action="pay_completed", resource_type="Payment", resource_id=p["id"], details={"amount": p["amount"], "mode": mode, "rdv_id": p["rdv_id"]})
+            except Exception:
+                pass
         return {"status": "completed", "payment": {**p, "status": "completed"}}
     return {"status": p["status"], "paydunya_status": status_val, "raw": res}
 
@@ -7578,8 +7669,16 @@ async def pay_webhook(request: Request):
                 await db.users.update_one({"id": p["user_id"]}, {"$set": {"premium": True, "premium_until": end.isoformat()}})
                 await push_notif(p["user_id"], "Premium activé 🎉", f"Abonnement actif jusqu'au {end.strftime('%d/%m/%Y')}", "info")
             elif p["kind"] == "consultation":
-                await db.rdv.update_one({"id": p["rdv_id"]}, {"$set": {"paye": True, "payment_token": token}})
-                await push_notif(p["pro_id"], "Consultation payée 💰", f"+{p['pro_amount']} FCFA (après commission)", "info")
+                await db.rdv.update_one({"id": p["rdv_id"]}, {"$set": {"paye": True, "payment_token": token, "status": "confirme", "paid_at": now.isoformat()}})
+                mode = p.get("mode") or "presentiel"
+                if mode == "domicile":
+                    rdv = await db.rdv.find_one({"id": p["rdv_id"]}, {"_id": 0}) or {}
+                    from encryption import decrypt_str as _dec
+                    adr = _dec(rdv.get("adresse_domicile_enc")) or "Adresse non renseignée"
+                    full_addr = f"{adr}{(' · ' + rdv.get('quartier','')) if rdv.get('quartier') else ''}{(' · ' + rdv.get('ville','')) if rdv.get('ville') else ''}"
+                    await push_notif(p["pro_id"], "🏠 Visite à domicile confirmée", f"Adresse : {full_addr}. +{p['pro_amount']} F net.", "rdv")
+                else:
+                    await push_notif(p["pro_id"], "Consultation payée 💰", f"+{p['pro_amount']} FCFA (après commission)", "info")
     return {"ok": True}
 
 
@@ -9877,6 +9976,203 @@ async def list_rappels_contextuels(user=Depends(require_roles("maman"))):
 
 app.include_router(api)
 # (deuxième include_router ci-dessous est une no-op idempotente)
+
+
+# ============================================================================
+# 🏠 PAIEMENTS — Mode domicile, remboursement, stats par mode (RGSSI N3)
+# ============================================================================
+
+class FraisDeplacementIn(BaseModel):
+    frais_deplacement_fcfa: int
+
+
+@api.put("/pro/frais-deplacement")
+async def set_frais_deplacement(payload: FraisDeplacementIn, user=Depends(require_roles("professionnel"))):
+    """Définir le supplément déplacement par défaut du Pro (FCFA)."""
+    if payload.frais_deplacement_fcfa < 0 or payload.frais_deplacement_fcfa > 50000:
+        raise HTTPException(400, "Montant invalide (0 à 50 000 FCFA).")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"frais_deplacement_fcfa": int(payload.frais_deplacement_fcfa)}})
+    return {"ok": True, "frais_deplacement_fcfa": int(payload.frais_deplacement_fcfa)}
+
+
+@api.get("/rdv/{rid}/adresse-domicile")
+async def get_rdv_adresse_domicile(rid: str, user=Depends(get_current_user)):
+    """Récupérer l'adresse domicile (déchiffrée) — réservé au Pro assigné, RDV payé uniquement.
+    Audit log RGSSI N3."""
+    rdv = await db.rdv.find_one({"id": rid}, {"_id": 0})
+    if not rdv:
+        raise HTTPException(404, "RDV introuvable")
+    if rdv.get("mode") != "domicile":
+        raise HTTPException(400, "Ce RDV n'est pas un RDV à domicile.")
+    # Pro assigné OU maman propriétaire OU admin
+    is_pro_owner = (user["role"] == "professionnel" and rdv.get("pro_id") == user["id"])
+    is_maman_owner = (user["role"] == "maman" and rdv.get("maman_id") == user["id"])
+    is_admin = user["role"] == "admin"
+    if not (is_pro_owner or is_maman_owner or is_admin):
+        raise HTTPException(403, "Accès refusé.")
+    # Pour le Pro, exiger que le RDV soit payé (pas avant)
+    if is_pro_owner and not rdv.get("paye"):
+        raise HTTPException(
+            status_code=402,
+            detail={"error": "payment_required", "message": "L'adresse de la patiente sera disponible après paiement du RDV."},
+        )
+    from encryption import decrypt_str as _dec
+    adresse = _dec(rdv.get("adresse_domicile_enc")) or ""
+    # 📊 Audit log
+    try:
+        await _audit_log(user=user, action="read_address", resource_type="Rdv", resource_id=rid, details={"mode": rdv.get("mode"), "is_pro": is_pro_owner})
+    except Exception:
+        pass
+    return {
+        "rdv_id": rid,
+        "adresse": adresse,
+        "quartier": rdv.get("quartier"),
+        "ville": rdv.get("ville"),
+        "lat": rdv.get("lat"),
+        "lng": rdv.get("lng"),
+        "frais_deplacement_fcfa": rdv.get("frais_deplacement_fcfa") or 0,
+    }
+
+
+@api.post("/pay/refund")
+async def request_refund(payload: RefundIn, user=Depends(get_current_user)):
+    """Remboursement selon politique d'annulation :
+    - >24h avant le RDV : 100% remboursé
+    - 6-24h : 50% remboursé (commission retenue)
+    - <6h : 0% (RDV maintenu ou annulé sans remboursement)
+    """
+    q: dict = {}
+    if payload.payment_id:
+        q["id"] = payload.payment_id
+    elif payload.rdv_id:
+        q["rdv_id"] = payload.rdv_id
+        q["status"] = "completed"
+    else:
+        raise HTTPException(400, "Indiquez payment_id ou rdv_id.")
+    p = await db.payments.find_one(q, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Paiement introuvable")
+    if p["status"] != "completed":
+        raise HTTPException(400, "Ce paiement n'est pas dans un état remboursable.")
+    if p["kind"] != "consultation":
+        raise HTTPException(400, "Seuls les paiements de consultation sont remboursables.")
+    # Vérifier que c'est la maman ou un admin
+    if user["role"] != "admin" and p.get("user_id") != user["id"] and p.get("maman_id") != user["id"]:
+        raise HTTPException(403, "Vous n'êtes pas autorisée à demander ce remboursement.")
+    rdv = await db.rdv.find_one({"id": p["rdv_id"]}, {"_id": 0})
+    if not rdv:
+        raise HTTPException(404, "RDV associé introuvable.")
+    # Calcul du taux de remboursement selon délai
+    try:
+        rdv_dt = datetime.fromisoformat(rdv["date"].replace("Z", "+00:00"))
+    except Exception:
+        rdv_dt = datetime.now(timezone.utc) + timedelta(days=1)
+    now = datetime.now(timezone.utc)
+    if rdv_dt.tzinfo is None:
+        rdv_dt = rdv_dt.replace(tzinfo=timezone.utc)
+    delta_hours = (rdv_dt - now).total_seconds() / 3600
+    if delta_hours >= 24:
+        refund_rate = 1.0
+        rule = "100% (>24h)"
+    elif delta_hours >= 6:
+        refund_rate = 0.50
+        rule = "50% (6-24h)"
+    else:
+        refund_rate = 0.0
+        rule = "0% (<6h)"
+    refund_amount = int(round(p["amount"] * refund_rate))
+    refund_doc = {
+        "id": str(uuid.uuid4()),
+        "payment_id": p["id"],
+        "rdv_id": p["rdv_id"],
+        "user_id": p.get("user_id"),
+        "maman_id": p.get("maman_id") or p.get("user_id"),
+        "pro_id": p.get("pro_id"),
+        "original_amount": p["amount"],
+        "refund_rate": refund_rate,
+        "refund_amount_fcfa": refund_amount,
+        "rule_applied": rule,
+        "raison": (payload.raison or "").strip()[:500],
+        "status": "pending" if refund_amount > 0 else "no_refund",
+        "created_at": now.isoformat(),
+    }
+    await db.refunds.insert_one(refund_doc)
+    refund_doc.pop("_id", None)
+    # Marquer le paiement et le RDV
+    await db.payments.update_one({"id": p["id"]}, {"$set": {"status": "refunded" if refund_amount > 0 else "cancelled", "refund_id": refund_doc["id"]}})
+    await db.rdv.update_one({"id": p["rdv_id"]}, {"$set": {"status": "annule", "annule_par": user["role"], "annule_at": now.isoformat()}})
+    # Notifier
+    try:
+        await push_notif(p["pro_id"], "❌ RDV annulé", f"Le RDV du {rdv_dt.strftime('%d/%m %Hh%M')} a été annulé. Remboursement appliqué : {rule}.", "rdv")
+        await push_notif(p.get("user_id") or p.get("maman_id"), "Remboursement initié", f"Votre RDV est annulé. Montant remboursé : {refund_amount} FCFA ({rule}).", "info")
+    except Exception:
+        pass
+    # Audit log
+    try:
+        await _audit_log(user=user, action="refund_request", resource_type="Payment", resource_id=p["id"], details={"refund_amount": refund_amount, "rate": refund_rate, "rule": rule, "rdv_id": p["rdv_id"]})
+    except Exception:
+        pass
+    return {"refund": refund_doc, "rule": rule, "refund_amount_fcfa": refund_amount}
+
+
+@api.get("/pro/revenus/par-mode")
+async def pro_revenus_par_mode(user=Depends(require_roles("professionnel"))):
+    """Stats Pro segmentées par mode de consultation (RGSSI + Premium)."""
+    payments = await db.payments.find({"kind": "consultation", "pro_id": user["id"], "status": "completed"}, {"_id": 0}).to_list(5000)
+    by_mode: dict = {"presentiel": {}, "teleconsultation": {}, "domicile": {}}
+    for m in by_mode.keys():
+        by_mode[m] = {"count": 0, "brut": 0, "commission": 0, "net": 0, "frais_deplacement": 0}
+    total = {"count": 0, "brut": 0, "commission": 0, "net": 0}
+    for p in payments:
+        mode = p.get("mode") or "presentiel"
+        if mode not in by_mode:
+            mode = "presentiel"
+        by_mode[mode]["count"] += 1
+        by_mode[mode]["brut"] += int(p.get("amount") or 0)
+        by_mode[mode]["commission"] += int(p.get("commission") or 0)
+        by_mode[mode]["net"] += int(p.get("pro_amount") or 0)
+        by_mode[mode]["frais_deplacement"] += int(p.get("frais_deplacement_fcfa") or 0)
+        total["count"] += 1
+        total["brut"] += int(p.get("amount") or 0)
+        total["commission"] += int(p.get("commission") or 0)
+        total["net"] += int(p.get("pro_amount") or 0)
+    return {"total": total, "par_mode": by_mode}
+
+
+@api.get("/pay/admin/stats-par-mode")
+async def pay_admin_stats_par_mode(user=Depends(require_roles("admin"))):
+    """Statistiques admin globales par mode (pour rapports financiers)."""
+    payments = await db.payments.find({"kind": "consultation", "status": "completed"}, {"_id": 0}).to_list(10000)
+    refunds = await db.refunds.find({"status": "pending"}, {"_id": 0}).to_list(2000)
+    refunds_done = await db.refunds.find({"status": "refunded"}, {"_id": 0}).to_list(2000)
+    by_mode = {"presentiel": {}, "teleconsultation": {}, "domicile": {}}
+    for m in by_mode:
+        by_mode[m] = {"count": 0, "brut": 0, "commission": 0, "net_pro": 0, "frais_deplacement": 0}
+    total_brut = 0
+    total_commission = 0
+    total_net = 0
+    for p in payments:
+        mode = p.get("mode") or "presentiel"
+        if mode not in by_mode:
+            mode = "presentiel"
+        by_mode[mode]["count"] += 1
+        by_mode[mode]["brut"] += int(p.get("amount") or 0)
+        by_mode[mode]["commission"] += int(p.get("commission") or 0)
+        by_mode[mode]["net_pro"] += int(p.get("pro_amount") or 0)
+        by_mode[mode]["frais_deplacement"] += int(p.get("frais_deplacement_fcfa") or 0)
+        total_brut += int(p.get("amount") or 0)
+        total_commission += int(p.get("commission") or 0)
+        total_net += int(p.get("pro_amount") or 0)
+    return {
+        "totals": {"brut": total_brut, "commission": total_commission, "net_pros": total_net, "count": len(payments)},
+        "par_mode": by_mode,
+        "refunds": {
+            "pending_count": len(refunds),
+            "pending_amount": sum(int(r.get("refund_amount_fcfa") or 0) for r in refunds),
+            "done_count": len(refunds_done),
+            "done_amount": sum(int(r.get("refund_amount_fcfa") or 0) for r in refunds_done),
+        },
+    }
 
 
 # ============================================================================
