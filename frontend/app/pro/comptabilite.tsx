@@ -13,6 +13,7 @@ import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import PremiumGate from "../../components/PremiumGate";
 
 function monthsList(n: number = 12): string[] {
   const out: string[] = [];
@@ -37,20 +38,19 @@ export default function ProComptabilite() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [premiumBlocked, setPremiumBlocked] = useState<string | null>(null);
 
   const load = async (ym: string) => {
     setLoading(true);
     setData(null);
+    setPremiumBlocked(null);
     try {
       const r = await api.get(`/pro/comptabilite/export?mois=${ym}`);
       setData(r.data);
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
       if (detail?.error === "premium_required") {
-        Alert.alert("Premium requis 💎", detail.message, [
-          { text: "Plus tard", style: "cancel" },
-          { text: "Devenir Premium", onPress: () => router.push("/premium") },
-        ]);
+        setPremiumBlocked(detail.message || "L'export comptabilité est réservé aux Pro Premium.");
       } else {
         Alert.alert("Erreur", formatError(e));
       }
@@ -110,7 +110,15 @@ export default function ProComptabilite() {
 
         {loading && <ActivityIndicator color={COLORS.primary} size="large" style={{ marginTop: 24 }} />}
 
-        {!loading && data && (
+        {!loading && premiumBlocked && (
+          <PremiumGate
+            message={premiumBlocked}
+            color="#0EA5E9"
+            benefits="Inclus avec Pro Premium : Export comptabilité · IA Pro illimitée · Commission réduite à 5% · Badge ⭐ Pro Certifié."
+          />
+        )}
+
+        {!loading && !premiumBlocked && data && (
           <>
             <View style={styles.statsRow}>
               <Stat color="#10B981" label="Brut" value={`${data.total_brut?.toLocaleString() || 0} F`} />
@@ -163,4 +171,10 @@ const styles = StyleSheet.create({
   downloadBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#0EA5E9", padding: 14, borderRadius: RADIUS.md, ...SHADOW },
   downloadText: { color: "#fff", fontWeight: "800", fontSize: 14 },
   disclaimer: { fontSize: 11, color: COLORS.textMuted, textAlign: "center", marginTop: 16, lineHeight: 16, paddingHorizontal: 12 },
+  premiumBlock: { alignItems: "center", padding: 24, marginTop: 12, backgroundColor: "#F0F9FF", borderRadius: RADIUS.lg, borderWidth: 1, borderColor: "#BAE6FD" },
+  premiumTitle: { fontSize: 18, fontWeight: "800", color: "#0C4A6E", marginTop: 12 },
+  premiumMsg: { fontSize: 13, color: "#075985", textAlign: "center", marginTop: 8, lineHeight: 19, paddingHorizontal: 8 },
+  premiumBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#0EA5E9", paddingHorizontal: 22, paddingVertical: 12, borderRadius: 999, marginTop: 16 },
+  premiumBtnText: { color: "#fff", fontWeight: "800", fontSize: 13 },
+  premiumNote: { fontSize: 11, color: "#0369A1", textAlign: "center", marginTop: 12, paddingHorizontal: 12, lineHeight: 16 },
 });

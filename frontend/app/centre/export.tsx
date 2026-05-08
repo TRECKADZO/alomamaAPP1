@@ -13,6 +13,7 @@ import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import PremiumGate from "../../components/PremiumGate";
 
 function monthsList(n: number = 12): string[] {
   const out: string[] = [];
@@ -30,9 +31,11 @@ export default function CentreExport() {
   const [mois, setMois] = useState(months[0]);
   const [downloading, setDownloading] = useState(false);
   const [lastInfo, setLastInfo] = useState<any>(null);
+  const [premiumBlocked, setPremiumBlocked] = useState<string | null>(null);
 
   const exportFile = async (fmt: "csv" | "json") => {
     setDownloading(true);
+    setPremiumBlocked(null);
     try {
       const r = await api.get(`/centre/export?mois=${mois}&fmt=${fmt}`);
       const data = r.data;
@@ -60,10 +63,7 @@ export default function CentreExport() {
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
       if (detail?.error === "premium_required") {
-        Alert.alert("Premium requis 💎", detail.message, [
-          { text: "Plus tard", style: "cancel" },
-          { text: "Devenir Premium", onPress: () => router.push("/premium") },
-        ]);
+        setPremiumBlocked(detail.message || "L'export est réservé aux Centres Premium.");
       } else {
         Alert.alert("Erreur", formatError(e));
       }
@@ -85,6 +85,14 @@ export default function CentreExport() {
       </LinearGradient>
 
       <ScrollView contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 80 }}>
+        {premiumBlocked ? (
+          <PremiumGate
+            message={premiumBlocked}
+            color="#0EA5E9"
+            benefits="Inclus avec Centre Premium : Export CSV/JSON · Tableau de bord · Finance par pro · Support prioritaire."
+          />
+        ) : (
+        <>
         <Text style={styles.label}>Mois à exporter</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
           {months.map((m) => (
@@ -125,6 +133,8 @@ export default function CentreExport() {
         <Text style={styles.disclaimer}>
           📊 Le fichier contient toutes les consultations payées du mois sélectionné, regroupées par professionnel. Conservez ces relevés ≥ 5 ans pour vos obligations comptables.
         </Text>
+        </>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

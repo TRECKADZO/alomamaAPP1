@@ -11,24 +11,24 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import PremiumGate from "../../components/PremiumGate";
 
 export default function CentreFinance() {
   const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [premiumBlocked, setPremiumBlocked] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
+    setPremiumBlocked(null);
     try {
       const r = await api.get("/centre/finance");
       setData(r.data);
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
       if (detail?.error === "premium_required") {
-        Alert.alert("Premium requis 💎", detail.message, [
-          { text: "Plus tard", style: "cancel", onPress: () => router.back() },
-          { text: "Devenir Premium", onPress: () => router.push("/premium") },
-        ]);
+        setPremiumBlocked(detail.message || "La gestion financière est réservée aux Centres Premium.");
       } else {
         Alert.alert("Erreur", formatError(e));
       }
@@ -39,9 +39,6 @@ export default function CentreFinance() {
 
   useEffect(() => { load(); }, []);
 
-  if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator size="large" color={COLORS.primary} /></SafeAreaView>;
-  if (!data) return null;
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <LinearGradient colors={["#10B981", "#059669"]} style={styles.header}>
@@ -50,10 +47,21 @@ export default function CentreFinance() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Finance par Pro 💎</Text>
-          <Text style={styles.sub}>{data.membres_count} pro(s) · Revenus consolidés</Text>
+          <Text style={styles.sub}>{data?.membres_count ?? 0} pro(s) · Revenus consolidés</Text>
         </View>
       </LinearGradient>
 
+      {loading ? (
+        <View style={styles.loading}><ActivityIndicator size="large" color={COLORS.primary} /></View>
+      ) : premiumBlocked ? (
+        <ScrollView contentContainerStyle={{ padding: SPACING.lg }}>
+          <PremiumGate
+            message={premiumBlocked}
+            color="#10B981"
+            benefits="Inclus avec Centre Premium : Gestion financière par pro · Tableau de bord · Export comptable · Support prioritaire."
+          />
+        </ScrollView>
+      ) : !data ? null : (
       <ScrollView contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 80 }}>
         <View style={styles.totalsRow}>
           <Total label="Brut total" value={`${(data.total_brut_fcfa || 0).toLocaleString()} F`} color="#10B981" />
@@ -98,6 +106,7 @@ export default function CentreFinance() {
           💡 Le « Net Pro » est le montant qui revient au professionnel après déduction de la commission plateforme. La commission est de 5% pour les Pros Premium et 10% sinon.
         </Text>
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

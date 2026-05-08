@@ -11,24 +11,24 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { api, formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import PremiumGate from "../../components/PremiumGate";
 
 export default function CentreDashboard() {
   const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [premiumBlocked, setPremiumBlocked] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
+    setPremiumBlocked(null);
     try {
       const r = await api.get("/centre/dashboard");
       setData(r.data);
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
       if (detail?.error === "premium_required") {
-        Alert.alert("Premium requis 💎", detail.message, [
-          { text: "Plus tard", style: "cancel", onPress: () => router.back() },
-          { text: "Devenir Premium", onPress: () => router.push("/premium") },
-        ]);
+        setPremiumBlocked(detail.message || "Le tableau de bord agrégé est réservé aux Centres Premium.");
       } else {
         Alert.alert("Erreur", formatError(e));
       }
@@ -39,9 +39,6 @@ export default function CentreDashboard() {
 
   useEffect(() => { load(); }, []);
 
-  if (loading) return <SafeAreaView style={styles.loading}><ActivityIndicator size="large" color={COLORS.primary} /></SafeAreaView>;
-  if (!data) return null;
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <LinearGradient colors={["#A855F7", "#7C3AED"]} style={styles.header}>
@@ -50,10 +47,21 @@ export default function CentreDashboard() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Tableau de bord 💎</Text>
-          <Text style={styles.sub}>{data.centre?.nom || "Mon centre"}</Text>
+          <Text style={styles.sub}>{data?.centre?.nom || "Mon centre"}</Text>
         </View>
       </LinearGradient>
 
+      {loading ? (
+        <View style={styles.loading}><ActivityIndicator size="large" color={COLORS.primary} /></View>
+      ) : premiumBlocked ? (
+        <ScrollView contentContainerStyle={{ padding: SPACING.lg }}>
+          <PremiumGate
+            message={premiumBlocked}
+            color="#A855F7"
+            benefits="Inclus avec Centre Premium : Tableau de bord agrégé · Finance par pro · Export CSV/JSON · Pros membres illimités · Support prioritaire."
+          />
+        </ScrollView>
+      ) : !data ? null : (
       <ScrollView contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 80 }}>
         <Text style={styles.section}>Indicateurs clés</Text>
         <View style={styles.statsGrid}>
@@ -107,6 +115,7 @@ export default function CentreDashboard() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
