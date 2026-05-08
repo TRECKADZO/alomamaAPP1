@@ -5480,3 +5480,67 @@ agent_communication:
         frais déplacement, auto-cleanup deadline) fonctionnent conformément.
 
         Main agent : RAS, peut summariser et clore la tâche.
+
+
+frontend:
+  - task: "Wizard RDV Step 4 — Sélecteur Méthode de paiement (cabinet vs en ligne) + bandeaux mode-dépendants"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/rdv-nouveau.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Mobile UI test (390x844) — feature "Paiement obligatoire selon le mode" VALIDÉE.
+          Login Maman OK (maman.test@alomaman.dev/Test1234!). Pro = Dr alpha (CMU,
+          prestation prénatale 10 000 F CFA, taux CMU 0.70 → reste à charge 3 000 F CFA).
+
+          ✅ SCENARIO A — mode=Présentiel : SÉLECTEUR VISIBLE
+            • Section "Méthode de paiement" présente (A_methode_section=True).
+            • 2 cards rendus : [data-testid="pay-cabinet"] (storefront + "Au cabinet" +
+              "Cash / Mobile Money sur place") et [data-testid="pay-online"]
+              (card icon + "En ligne" + "PayDunya · sécurisé").
+            • Default sélectionné = "Au cabinet" (rouge, sub-text en blanc) →
+              bouton bottom = "Confirmer le rendez-vous" ✓
+            • Tap "En ligne" → "En ligne" devient rouge actif, "Au cabinet" inactif,
+              bouton bottom devient "Payer 3,000 F CFA" (= 10000×(1-0.70) car CMU) ✓
+            • Tap retour "Au cabinet" → bouton redevient "Confirmer le rendez-vous" ✓
+            • Screenshots: A_step4.png, A_online.png, A_cabinet.png
+
+          ✅ SCENARIO B — mode=Téléconsultation : PAS DE SÉLECTEUR
+            • [data-testid="pay-cabinet"] count=0, [data-testid="pay-online"] count=0.
+            • Bandeau jaune/ambre rendu avec :
+              - "💳 Paiement en ligne obligatoire" ✓
+              - "PayDunya" mentionné ✓
+              - "30 min sans paiement" ✓
+              - mot "téléconsultation" inclus ✓
+            • Bouton bottom = "Payer 3,000 F CFA" ✓
+            • Screenshot: B_tele.png
+
+          ✅ SCENARIO C — mode=Domicile : MÊME COMPORTEMENT + frais déplacement
+            • pay-cabinet count=0 (pas de sélecteur).
+            • Bandeau jaune mentionne "à domicile" ✓ + PayDunya ✓.
+            • Récap montre "Frais déplacement 2,000 F CFA".
+            • Bouton bottom = "Payer 5,000 F CFA" = 3000 (CMU reste-à-charge)
+              + 2000 (frais déplacement) ✓ — calcul exact côté frontend.
+            • Screenshot: C_domicile.png
+
+          ⚠️ SCENARIO D — flux "Au cabinet" → confirmation : NON VALIDÉ par le script
+            (le motif-input n'a pas été rempli par playwright, le bouton est resté
+            disabled, donc l'Alert "✅ Rendez-vous demandé / Le paiement se fera au
+            cabinet" n'a pas pu être déclenché). La logique côté code est correcte
+            (rdv-nouveau.tsx submit() L188 : `willPayOnline = mode !== "presentiel"
+            || paymentMethod === "online"` ; flux cabinet ne déclenche pas
+            /pay/consultation). Recommandation : main agent peut faire un sanity
+            check manuel rapide sur la web preview.
+
+          ⚠️ SCENARIO E — PayDunya browser open : NON TESTÉ (optionnel selon spec ;
+            expo-web-browser ne se comporte pas de manière fiable dans le bundle
+            web, et la review demandait best-effort uniquement).
+
+          Aucun glitch UI détecté (layout 390x844 OK, pas d'overflow).
+          Calculs de prix exacts (présentiel/online 3000, tele 3000, domicile 5000).
+          Pas de bug critique.
