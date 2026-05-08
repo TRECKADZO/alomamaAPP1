@@ -567,6 +567,49 @@ test_plan:
   test_priority: "high_first"
 
 frontend:
+  - task: "Bannière rouge demande d'accès au dossier médical (Maman home)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          UI bug fix VALIDÉE end-to-end sur mobile (390x844) — TTL étendu 24h + suppression du filtre client confirmés.
+
+          SETUP : Pro (Dr alpha, +2250709005330/474Treck) a créé une demande d'accès via
+          POST /api/pro/patient/recherche {"identifier":"0102030405", "motif":"Suivi grossesse - test bannière"}.
+          Réponse : demande_id=44bd9570-d664-49c3-94b1-44b4fcad0ad9, patient="Aminata TestMaman", status="pending".
+
+          ÉTAPE 2 — Bannière visible ✅
+          • Login Maman (maman.test@alomaman.dev/Test1234!) → redirection home (tabs)/index.tsx.
+          • [data-testid="access-request-banner"] visible AU-DESSUS du hero "Bonjour Aminata 👋".
+          • Gradient rouge (#EF4444 → #DC2626) + icône shield-checkmark + "🔐 1 demande d'accès en attente".
+          • Sous-titre "Dr un professionnel souhaite consulter votre dossier." (le pro_nom est null côté backend pour ce compte généré via téléphone, mais le fallback "un professionnel" s'affiche correctement).
+          • CTA "Valider" + chevron-forward visible à droite.
+          • Capture : .screenshots/01_home_banner.png ✓.
+
+          ÉTAPE 3 — Tap navigue vers /partage-dossier ✅
+          • Click force=True sur la bannière → URL passe à https://cycle-tracker-pro.preview.emergentagent.com/partage-dossier.
+          • Page "Partage de mon dossier — Accès sécurisé pour les pros" s'affiche.
+          • Carte verte avec numéro CMU "0102030405" + bouton "Partager".
+          • Section "📥 Demandes d'accès" liste la demande en haut : "Dr Dr alpha · Dentiste · Pour : Aminata TestMaman · 📋 Suivi grossesse - test bannière · Statut : pending" avec deux boutons d'action "Autoriser" (vert) et "Refuser" (rouge).
+          • NB : le bouton est libellé "Autoriser" (et non "Valider") sur la page partage-dossier. Cohérent avec le code, à signaler éventuellement pour harmoniser le wording avec la bannière (qui dit "Valider").
+          • Capture : .screenshots/02_partage_dossier.png ✓.
+
+          ÉTAPE 4 — Validation + bannière disparaît ✅
+          • Click "Autoriser" → la demande passe à status="validated" (sans modal de confirmation, action directe).
+          • Capture : .screenshots/05_after_autoriser.png montre la liste mise à jour : 1ère ligne "Status : validated" (au lieu de pending), pas d'autre demande pending.
+          • Retour à / (home) → [data-testid="access-request-banner"] count=0, visible=False.
+          • La home affiche directement "Bonjour Aminata 👋" sans la bandeau rouge — bannière BIEN supprimée.
+          • Capture : .screenshots/07_home_clean.png ✓.
+
+          AUCUN GLITCH VISUEL DÉTECTÉ. Layout 390x844 OK, pas d'overflow.
+          Tous les 4 scénarios PASS. Aucun bug critique.
+
   - task: "Durée par mode de consultation (Pro /pro/modes-consultation + impact slots Maman /rdv-nouveau)"
     implemented: true
     working: true
