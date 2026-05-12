@@ -10638,6 +10638,8 @@ async def create_home_request(payload: HomeRequestIn, user=Depends(require_roles
     }
     await db.home_requests.insert_one(doc)
     doc.pop("_id", None)
+    # Ne pas renvoyer le ciphertext de l'adresse dans la réponse de création
+    doc_out = {k: v for k, v in doc.items() if k != "adresse_enc"}
 
     # 📡 Broadcast aux Pros : tous ceux qui ont accepte_domicile=true (ou pricing_domicile défini)
     pros_q = {
@@ -10659,7 +10661,7 @@ async def create_home_request(payload: HomeRequestIn, user=Depends(require_roles
     except Exception:
         pass
 
-    return {**doc, "broadcast_count": len(pros)}
+    return {**doc_out, "broadcast_count": len(pros)}
 
 
 @api.get("/home-request/mine")
