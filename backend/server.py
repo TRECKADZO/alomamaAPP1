@@ -10507,10 +10507,435 @@ async def _auto_payouts_scheduler():
 # idempotent en pratique. Pour rester safe, ces nouvelles routes sont définies
 # AVANT include_router via le bloc précédent. Ce commentaire est documentation.
 
-# 🔄 Re-include nécessaire : FastAPI fige les routes au moment de l'appel.
-# Nous définissons des routes APRÈS le 1er include_router (Premium Maman + Paiement),
-# donc nous ré-incluons ici pour les enregistrer toutes.
-app.include_router(api)
+# ============================================================================
+# 🏠🆘 SOINS À DOMICILE / URGENCE À DOMICILE — Demande, propositions, validation
+# ============================================================================
+# Flow style "marketplace inverse" :
+#   1. Maman crée une demande (broadcast à tous les Pros qui acceptent le domicile)
+#   2. Chaque Pro propose son tarif (calcul auto + override possible)
+#   3. Maman compare les offres et accepte UNE proposition (validation manuelle)
+#   4. À l'acceptation → création d'un RDV pending_payment + URL PayDunya
+#   5. Notif au Pro après paiement réussi (adresse complète révélée)
+
+class HomePricingIn(BaseModel):
+    tarif_consultation: int = 10000  # F CFA
+    frais_zone_proche: int = 2000    # ≤ 5 km
+    frais_zone_moyen: int = 5000     # 5–15 km
+    frais_zone_loin: int = 10000     # > 15 km
+    majoration_nuit_fcfa: int = 0       # ajouté si 20h-7h
+    majoration_we_fcfa: int = 0         # ajouté si Sam/Dim
+    majoration_urgence_fcfa: int = 5000 # ajouté si type=urgence
+
+
+@api.put("/pro/pricing-domicile")
+async def set_pro_pricing_domicile(payload: HomePricingIn, user=Depends(require_roles("professionnel"))):
+    # Validation simple : tous les montants doivent être ≥ 0 et ≤ 500 000 F
+    data = payload.dict()
+    for k, v in data.items():
+        if not isinstance(v, int) or v < 0 or v > 500000:
+            raise HTTPException(400, f"Valeur invalide pour {k} (0 à 500 000 F).")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"pricing_domicile": data}})
+    return {"ok": True, **data}
+
+
+@api.get("/pro/pricing-domicile")
+async def get_pro_pricing_domicile(user=Depends(require_roles("professionnel"))):
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "pricing_domicile": 1}) or {}
+    return u.get("pricing_domicile") or HomePricingIn().dict()
+
+
+# ---- Modèles ----
+
+class HomeRequestIn(BaseModel):
+    type: str  # "domicile" | "urgence"
+    motif: str
+    adresse: str
+    quartier: Optional[str] = ""
+    ville: Optional[str] = ""
+    zone: str = "moyen"  # "proche" | "moyen" | "loin"
+    preferred_datetime: Optional[str] = None  # ISO, None si urgence ASAP
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    notes: Optional[str] = ""
+    audio_base64: Optional[str] = None  # data URI optionnel pour mode vocal
+
+
+class HomeProposalIn(BaseModel):
+    tarif_consultation: int
+    frais_deplacement: int
+    majoration_nuit: int = 0
+    majoration_we: int = 0
+    majoration_urgence: int = 0
+    message: Optional[str] = ""  # justification ou note du Pro
+
+
+class HomeAcceptIn(BaseModel):
+    proposal_id: str
+
+
+# ---- Helpers ----
+
+def _detect_majorations(req_type: str, preferred_iso: Optional[str]) -> Dict[str, bool]:
+    """Retourne {nuit:bool, we:bool, urgence:bool} pour suggérer les majorations."""
+    nuit = we = False
+    if preferred_iso:
+        try:
+            dt = datetime.fromisoformat(preferred_iso.replace("Z", "+00:00"))
+            h = dt.hour
+            nuit = (h >= 20) or (h < 7)
+            we = dt.weekday() >= 5
+        except Exception:
+            pass
+    else:
+        # Urgence ASAP → maintenant
+        now = datetime.now(timezone.utc)
+        h = now.hour
+        nuit = (h >= 20) or (h < 7)
+        we = now.weekday() >= 5
+    urg = req_type == "urgence"
+    return {"nuit": nuit, "we": we, "urgence": urg}
+
+
+# ---- Endpoints Maman ----
+
+@api.post("/home-request")
+async def create_home_request(payload: HomeRequestIn, user=Depends(require_roles("maman"))):
+    if payload.type not in ("domicile", "urgence"):
+        raise HTTPException(400, "Type invalide (domicile|urgence).")
+    if payload.zone not in ("proche", "moyen", "loin"):
+        raise HTTPException(400, "Zone invalide (proche|moyen|loin).")
+    if not payload.motif or len(payload.motif.strip()) < 3:
+        raise HTTPException(400, "Motif requis (3 caractères min).")
+    if not payload.adresse or len(payload.adresse.strip()) < 5:
+        raise HTTPException(400, "Adresse requise (5 caractères min).")
+
+    now = datetime.now(timezone.utc)
+    # Expiration : 30 min pour urgence, 24h pour domicile classique
+    ttl = timedelta(minutes=30) if payload.type == "urgence" else timedelta(hours=24)
+    # Chiffrement de l'adresse (sensible)
+    from encryption import encrypt_str as _enc
+    adresse_enc = _enc(payload.adresse.strip())
+    maj = _detect_majorations(payload.type, payload.preferred_datetime)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "maman_id": user["id"],
+        "type": payload.type,
+        "motif": payload.motif.strip(),
+        "adresse_enc": adresse_enc,
+        "quartier": (payload.quartier or "").strip(),
+        "ville": (payload.ville or "").strip(),
+        "zone": payload.zone,
+        "preferred_datetime": payload.preferred_datetime,
+        "lat": payload.lat,
+        "lng": payload.lng,
+        "notes": (payload.notes or "").strip(),
+        "audio_base64": payload.audio_base64,
+        "auto_majorations": maj,
+        "status": "open",
+        "proposals": [],
+        "created_at": now.isoformat(),
+        "expires_at": (now + ttl).isoformat(),
+    }
+    await db.home_requests.insert_one(doc)
+    doc.pop("_id", None)
+
+    # 📡 Broadcast aux Pros : tous ceux qui ont accepte_domicile=true (ou pricing_domicile défini)
+    pros_q = {
+        "role": "professionnel",
+        "$or": [{"accepte_domicile": True}, {"pricing_domicile": {"$exists": True}}],
+    }
+    pros = await db.users.find(pros_q, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    title = "🆘 URGENCE à domicile" if payload.type == "urgence" else "🏠 Nouvelle demande à domicile"
+    body_msg = f"{user.get('name', 'Une patiente')} : {payload.motif[:60]} · Zone {payload.zone} · {payload.ville or 'CI'}"
+    for p in pros:
+        try:
+            await push_notif(p["id"], title, body_msg, "rdv")
+        except Exception:
+            pass
+
+    # 📊 Audit
+    try:
+        await _audit_log(user=user, action="home_request_create", resource_type="HomeRequest", resource_id=doc["id"], details={"type": payload.type, "zone": payload.zone, "broadcast_count": len(pros)})
+    except Exception:
+        pass
+
+    return {**doc, "broadcast_count": len(pros)}
+
+
+@api.get("/home-request/mine")
+async def list_my_home_requests(user=Depends(require_roles("maman"))):
+    # Auto-cleanup : passer les open expirées à "expired"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        await db.home_requests.update_many(
+            {"maman_id": user["id"], "status": "open", "expires_at": {"$lt": now_iso}},
+            {"$set": {"status": "expired", "expired_at": now_iso}},
+        )
+    except Exception:
+        pass
+    items = await db.home_requests.find({"maman_id": user["id"]}, {"_id": 0, "adresse_enc": 0, "audio_base64": 0}).sort("created_at", -1).to_list(100)
+    # Enrichir avec noms des Pros pour chaque proposition
+    pro_ids = {p["pro_id"] for it in items for p in it.get("proposals", [])}
+    pros = {p["id"]: p for p in await db.users.find({"id": {"$in": list(pro_ids)}}, {"_id": 0, "id": 1, "name": 1, "specialite": 1, "rating": 1, "premium": 1, "premium_until": 1}).to_list(500)}
+    for it in items:
+        for p in it.get("proposals", []):
+            pdoc = pros.get(p["pro_id"]) or {}
+            p["pro_name"] = pdoc.get("name")
+            p["pro_specialite"] = pdoc.get("specialite")
+            p["pro_rating"] = pdoc.get("rating")
+            p["pro_premium"] = is_premium_active(pdoc) if pdoc else False
+    return items
+
+
+@api.post("/home-request/{req_id}/accept")
+async def accept_home_proposal(req_id: str, payload: HomeAcceptIn, user=Depends(require_roles("maman"))):
+    req = await db.home_requests.find_one({"id": req_id, "maman_id": user["id"]}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "Demande introuvable")
+    if req["status"] not in ("open", "proposed"):
+        raise HTTPException(400, f"Demande {req['status']}, validation impossible.")
+    prop = next((p for p in req.get("proposals", []) if p.get("id") == payload.proposal_id), None)
+    if not prop:
+        raise HTTPException(404, "Proposition introuvable")
+    pro = await db.users.find_one({"id": prop["pro_id"]}, {"_id": 0})
+    if not pro:
+        raise HTTPException(404, "Professionnel introuvable")
+    # 💳 Créer le RDV pending_payment associé
+    now = datetime.now(timezone.utc)
+    rdv_dt = req.get("preferred_datetime") or now.isoformat()
+    rdv_doc = {
+        "id": str(uuid.uuid4()),
+        "maman_id": user["id"],
+        "pro_id": prop["pro_id"],
+        "date": rdv_dt,
+        "motif": req["motif"],
+        "tarif_fcfa": prop["tarif_consultation"],
+        "frais_deplacement_fcfa": prop["frais_deplacement"] + prop.get("majoration_nuit", 0) + prop.get("majoration_we", 0) + prop.get("majoration_urgence", 0),
+        "tarif_total_fcfa": prop["total"],
+        "type_consultation": req["type"],
+        "mode": "domicile",
+        "prestation_id": None,
+        "prestation_nom": "Soins à domicile" if req["type"] == "domicile" else "Urgence à domicile",
+        "cmu_applique": False,
+        "adresse_domicile_enc": req["adresse_enc"],
+        "quartier": req["quartier"],
+        "ville": req["ville"],
+        "lat": req["lat"],
+        "lng": req["lng"],
+        "paye": False,
+        "payment_method": "online",
+        "payment_required": True,
+        "payment_deadline": (now + timedelta(minutes=30)).isoformat(),
+        "status": "pending_payment",
+        "home_request_id": req_id,
+        "created_at": now.isoformat(),
+    }
+    await db.rdv.insert_one(rdv_doc)
+    rdv_doc.pop("_id", None)
+    # Marquer la demande comme acceptée
+    await db.home_requests.update_one(
+        {"id": req_id},
+        {"$set": {"status": "accepted", "accepted_proposal_id": prop["id"], "accepted_at": now.isoformat(), "rdv_id": rdv_doc["id"]}},
+    )
+    # 💳 Initier le paiement PayDunya
+    return_url = f"{os.environ.get('APP_URL', '')}/api/pay/return"
+    inv = await paydunya_create_invoice(
+        prop["total"], f"Soins à domicile · {pro.get('name')}", user,
+        {
+            "kind": "consultation",
+            "mode": "domicile",
+            "rdv_id": rdv_doc["id"],
+            "maman_id": user["id"],
+            "pro_id": prop["pro_id"],
+        },
+        return_url,
+    )
+    pay_doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "kind": "consultation",
+        "mode": "domicile",
+        "rdv_id": rdv_doc["id"],
+        "pro_id": prop["pro_id"],
+        "amount": prop["total"],
+        "token": inv.get("token"),
+        "status": "pending" if inv.get("success") else "error",
+        "error": inv.get("error"),
+        "created_at": now.isoformat(),
+    }
+    await db.payments.insert_one(pay_doc)
+    pay_doc.pop("_id", None)
+    # 🔔 Notif au Pro (sans révéler encore l'adresse, juste pour info)
+    try:
+        await push_notif(prop["pro_id"], "✅ Tarif accepté", f"{user.get('name')} a validé votre tarif ({prop['total']} F). Paiement en cours.", "rdv")
+    except Exception:
+        pass
+    # 📊 Audit
+    try:
+        await _audit_log(user=user, action="home_request_accept", resource_type="HomeRequest", resource_id=req_id, details={"proposal_id": prop["id"], "total": prop["total"], "pro_id": prop["pro_id"]})
+    except Exception:
+        pass
+    return {"ok": True, "rdv": rdv_doc, "payment_url": inv.get("url"), "payment": pay_doc}
+
+
+@api.post("/home-request/{req_id}/cancel")
+async def cancel_home_request(req_id: str, user=Depends(require_roles("maman"))):
+    req = await db.home_requests.find_one({"id": req_id, "maman_id": user["id"]}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "Demande introuvable")
+    if req["status"] in ("accepted", "paid", "completed"):
+        raise HTTPException(400, "Demande déjà acceptée, impossible d'annuler.")
+    await db.home_requests.update_one({"id": req_id}, {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}})
+    try:
+        await _audit_log(user=user, action="home_request_cancel", resource_type="HomeRequest", resource_id=req_id)
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+# ---- Endpoints Pro ----
+
+@api.get("/home-request/open")
+async def list_open_home_requests(user=Depends(require_roles("professionnel"))):
+    """Liste les demandes ouvertes que le Pro peut servir."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # Auto-cleanup pour Pro aussi
+    try:
+        await db.home_requests.update_many(
+            {"status": "open", "expires_at": {"$lt": now_iso}},
+            {"$set": {"status": "expired", "expired_at": now_iso}},
+        )
+    except Exception:
+        pass
+    items = await db.home_requests.find(
+        {"status": "open", "expires_at": {"$gte": now_iso}},
+        {"_id": 0, "adresse_enc": 0, "audio_base64": 0},  # adresse révélée seulement après acceptation + paiement
+    ).sort("created_at", -1).to_list(100)
+    # Marquer si le Pro a déjà proposé sur cette demande
+    for it in items:
+        proposed = any(p.get("pro_id") == user["id"] for p in it.get("proposals", []))
+        it["has_my_proposal"] = proposed
+        # Anonymiser légèrement la Maman avant acceptation
+        maman = await db.users.find_one({"id": it["maman_id"]}, {"_id": 0, "name": 1, "age": 1})
+        if maman:
+            nm = (maman.get("name") or "").split(" ")[0]
+            it["maman_label"] = nm[0] + "***" if nm else "Patiente"
+    return items
+
+
+@api.get("/home-request/{req_id}/suggest")
+async def suggest_proposal(req_id: str, user=Depends(require_roles("professionnel"))):
+    """Calcule une suggestion de tarif basée sur le pricing_domicile du Pro + zone + majorations."""
+    req = await db.home_requests.find_one({"id": req_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "Demande introuvable")
+    pricing = (await db.users.find_one({"id": user["id"]}, {"_id": 0, "pricing_domicile": 1}) or {}).get("pricing_domicile") or HomePricingIn().dict()
+    zone = req.get("zone", "moyen")
+    frais_map = {
+        "proche": pricing["frais_zone_proche"],
+        "moyen": pricing["frais_zone_moyen"],
+        "loin": pricing["frais_zone_loin"],
+    }
+    frais = frais_map.get(zone, pricing["frais_zone_moyen"])
+    maj = req.get("auto_majorations") or {}
+    maj_nuit = pricing["majoration_nuit_fcfa"] if maj.get("nuit") else 0
+    maj_we = pricing["majoration_we_fcfa"] if maj.get("we") else 0
+    maj_urg = pricing["majoration_urgence_fcfa"] if maj.get("urgence") else 0
+    consultation = pricing["tarif_consultation"]
+    total = consultation + frais + maj_nuit + maj_we + maj_urg
+    return {
+        "tarif_consultation": consultation,
+        "frais_deplacement": frais,
+        "majoration_nuit": maj_nuit,
+        "majoration_we": maj_we,
+        "majoration_urgence": maj_urg,
+        "total": total,
+        "auto_flags": maj,
+        "zone": zone,
+    }
+
+
+@api.post("/home-request/{req_id}/propose")
+async def submit_proposal(req_id: str, payload: HomeProposalIn, user=Depends(require_roles("professionnel"))):
+    req = await db.home_requests.find_one({"id": req_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "Demande introuvable")
+    if req["status"] not in ("open", "proposed"):
+        raise HTTPException(400, f"Demande {req['status']}, propositions fermées.")
+    # Empêcher 2 propositions du même Pro
+    if any(p.get("pro_id") == user["id"] for p in req.get("proposals", [])):
+        raise HTTPException(400, "Vous avez déjà proposé un tarif. Annulez l'ancienne pour en refaire une.")
+    # Validation montants
+    for k, v in payload.dict().items():
+        if k == "message":
+            continue
+        if not isinstance(v, int) or v < 0 or v > 500000:
+            raise HTTPException(400, f"Valeur invalide pour {k} (0 à 500 000 F).")
+    total = (payload.tarif_consultation + payload.frais_deplacement +
+             payload.majoration_nuit + payload.majoration_we + payload.majoration_urgence)
+    if total <= 0:
+        raise HTTPException(400, "Le total doit être > 0.")
+    prop = {
+        "id": str(uuid.uuid4()),
+        "pro_id": user["id"],
+        "tarif_consultation": payload.tarif_consultation,
+        "frais_deplacement": payload.frais_deplacement,
+        "majoration_nuit": payload.majoration_nuit,
+        "majoration_we": payload.majoration_we,
+        "majoration_urgence": payload.majoration_urgence,
+        "total": total,
+        "message": (payload.message or "").strip()[:500],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.home_requests.update_one(
+        {"id": req_id},
+        {"$push": {"proposals": prop}, "$set": {"status": "proposed"}},
+    )
+    # 🔔 Notif à la Maman
+    pro_name = user.get("name") or "Un professionnel"
+    title = "💰 Nouvelle offre de soins"
+    body_msg = f"{pro_name} propose {total:,} F CFA pour votre demande à domicile.".replace(",", " ")
+    try:
+        await push_notif(req["maman_id"], title, body_msg, "rdv")
+    except Exception:
+        pass
+    # 📊 Audit
+    try:
+        await _audit_log(user=user, action="home_proposal_submit", resource_type="HomeRequest", resource_id=req_id, details={"proposal_id": prop["id"], "total": total})
+    except Exception:
+        pass
+    return {"ok": True, "proposal": prop}
+
+
+@api.get("/home-request/mine-proposals")
+async def my_proposals(user=Depends(require_roles("professionnel"))):
+    """Pro voit toutes ses propositions (acceptées, en attente, expirées)."""
+    items = await db.home_requests.find(
+        {"proposals.pro_id": user["id"]},
+        {"_id": 0, "adresse_enc": 0, "audio_base64": 0},
+    ).sort("created_at", -1).to_list(200)
+    out = []
+    for it in items:
+        my_p = next((p for p in it.get("proposals", []) if p.get("pro_id") == user["id"]), None)
+        if not my_p:
+            continue
+        accepted_id = it.get("accepted_proposal_id")
+        out.append({
+            "request_id": it["id"],
+            "type": it["type"],
+            "motif": it["motif"],
+            "zone": it["zone"],
+            "ville": it.get("ville"),
+            "quartier": it.get("quartier"),
+            "status": it["status"],
+            "my_proposal": my_p,
+            "is_accepted": accepted_id == my_p["id"],
+            "created_at": it["created_at"],
+        })
+    return out
+
+
+
 
 app.add_middleware(
     CORSMiddleware,

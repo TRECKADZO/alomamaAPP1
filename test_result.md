@@ -5023,6 +5023,155 @@ agent_communication:
         Compte test Maman : voir /app/memory/test_credentials.md.
 
 backend:
+  - task: "Marketplace inversé Soins à domicile / Urgence (broadcast multi-Pros + propose/accept/refuse + paiement)"
+    implemented: true
+    working: false
+    file: "backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: false
+        -agent: "testing"
+        -comment: |
+          ❌ CRITICAL — Tous les endpoints du module retournent 404 sur
+          https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_marketplace_inverse.py : 5/29 PASS, dont les
+          5 seuls qui passent sont des cas négatifs / régression existante).
+
+          🔥 ROOT CAUSE — Routes orphelines (non enregistrées dans le FastAPI app)
+          server.py contient DEUX appels `app.include_router(api)` :
+          - L9652 (premier)
+          - L10126 (deuxième)
+          Mais TOUS les nouveaux endpoints du module marketplace inversé sont
+          définis ENTRE L10520 et L10936, c'est-à-dire APRÈS le dernier
+          include_router. Or FastAPI's `include_router()` copie les routes du
+          router au moment de l'appel — toute route ajoutée APRÈS l'inclusion
+          est **ignorée** par l'app.
+
+          Le commentaire du dev à L10503-10508 prétendait que "FastAPI nécessite
+          que les routes soient attachées AVANT include_router. On utilise donc
+          une approche différente : on définit les endpoints sur l'objet api
+          puis on appelle re-include qui est idempotent en pratique." MAIS ce
+          re-include n'est jamais fait. Le commentaire à L10127 « (deuxième
+          include_router ci-dessous est une no-op idempotente) » est trompeur
+          car il N'Y A PAS de troisième include_router en bas de fichier — la
+          dernière ligne avant `app.add_middleware` (L10940) est la définition
+          de `mine-proposals` (L10936).
+
+          🔥 ENDPOINTS IMPACTÉS PAR LA MÊME RACINE (curl avec token Pro valide
+          → 404 sur tous) :
+          - `PUT/GET /api/pro/pricing-domicile` (marketplace inversé)
+          - `POST /api/home-request` + `GET /mine` + `GET /open` + `POST /accept`
+            + `POST /cancel` + `GET /{id}/suggest` + `POST /{id}/propose` +
+            `GET /mine-proposals` (marketplace inversé)
+          - `PUT/GET /api/pro/modes-consultation` (L10335, L10376)
+          - `PUT/GET /api/pro/auto-payout` (L10403, L10425)
+          - `PUT /api/pro/frais-deplacement` (L10138)
+          - `POST /api/pay/refund` (L10186)
+          - Tous les endpoints Premium MAMAN tardifs (storage, ecoute, etc.) si
+            définis après L10126 (à vérifier ligne par ligne)
+
+          ❗ Cela explique aussi pourquoi des tests précédemment passants
+          peuvent être maintenant régressés — il a dû y avoir un déplacement
+          de code ou suppression du 3e include_router lors du dernier commit
+          ajoutant la marketplace inversé.
+
+          🔧 FIX MINIMAL (1 ligne, à appliquer par le main agent) — ajouter
+          un troisième appel `app.include_router(api)` JUSTE AVANT
+          `app.add_middleware(...)` à L10940 :
+
+              # /app/backend/server.py — juste avant L10940
+              app.include_router(api)
+
+              app.add_middleware(
+                  CORSMiddleware,
+                  ...
+              )
+
+          OU déplacer les blocs marketplace inversé + Premium MAMAN tardifs
+          AVANT L10126 (plus invasif, déconseillé).
+
+          📊 DÉTAIL DES SCÉNARIOS NON-EXÉCUTABLES À CAUSE DU 404 (24/29) :
+          tous les scénarios 1→14 sont bloqués. Le script de test
+          (/app/backend_test_marketplace_inverse.py) couvre l'intégralité de
+          la review-request (pricing config + validation, création demande
+          domicile + urgence, broadcast, suggest, propose, accept→PayDunya,
+          cancel, auto-cleanup expirées via mongo direct, listing Pro/Maman,
+          régression /rdv + /pay/consultation) — il est prêt à être ré-exécuté
+          dès que le include_router est ajouté.
+
+          ✅ RÉGRESSION OK (5/5) : Login Pro+Maman OK, POST /rdv + POST
+          /pay/consultation pour un mode présentiel normal renvoient 200 et
+          créent les docs attendus. La régression hors-marketplace n'est
+          pas affectée par le bug.
+
+          ⚠️ ATTENTION : ce bug d'enregistrement de routes affecte AUSSI le
+          module "💸 Auto-Payouts PayDunya" et "Premium MAMAN" qui ont déjà
+          été marqués working=true dans test_result.md mais qui sont
+          PROBABLEMENT cassés depuis le dernier déploiement. Une vérification
+          post-fix est fortement recommandée.
+
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Nouveau module marketplace inversé pour soins à domicile / urgence.
+
+          **Modèle Pro** : `pricing_domicile` dans users
+            { tarif_consultation, frais_zone_proche, frais_zone_moyen, frais_zone_loin,
+              majoration_nuit_fcfa, majoration_we_fcfa, majoration_urgence_fcfa }
+          Tous validés entre 0 et 500 000 F.
+
+          **Endpoints Pro** :
+            - `GET /api/pro/pricing-domicile` → retourne valeurs (avec défauts si non config)
+            - `PUT /api/pro/pricing-domicile` → enregistre
+            - `GET /api/home-request/open` → liste des demandes ouvertes (anonymisées, sans adresse)
+            - `GET /api/home-request/{id}/suggest` → calcule auto le tarif basé sur zone + flags auto (nuit/we/urgence)
+            - `POST /api/home-request/{id}/propose` → soumet une proposition (un Pro = 1 seule proposition par demande)
+            - `GET /api/home-request/mine-proposals` → toutes ses propositions (incl. statut accepté ou non)
+
+          **Endpoints Maman** :
+            - `POST /api/home-request` → crée demande type=domicile|urgence, broadcast push à tous les Pros qui acceptent domicile. TTL : 30 min urgence, 24h domicile.
+            - `GET /api/home-request/mine` → ses demandes (avec proposals enrichies nom/spec/rating/premium Pro)
+            - `POST /api/home-request/{id}/accept` body {proposal_id} → crée un RDV pending_payment + génère URL PayDunya
+            - `POST /api/home-request/{id}/cancel` → annule
+
+          **Sécurité** :
+            - Adresse maman chiffrée AES-256-GCM (`adresse_enc`)
+            - Adresse NON révélée aux Pros avant acceptation+paiement (reuse du flow rdv pending_payment existant)
+            - Audit log RGSSI N3 sur create/accept/cancel/propose
+
+          **Auto-cleanup** : à chaque `GET /api/home-request/mine` ou `/open`, les demandes "open" expirées passent à "expired".
+
+          **Notif** :
+            - Création demande → push à tous Pros (titre adapté urgence vs domicile)
+            - Propose → push à Maman ("💰 Nouvelle offre de soins · Total X F")
+            - Accept → push au Pro ("✅ Tarif accepté, paiement en cours")
+            - Paiement réussi (réutilise `pay_webhook` existant) → push au Pro avec adresse complète (mode=domicile détecté)
+
+          Tests à effectuer :
+            1. Pro configure son pricing_domicile (PUT) → GET retourne valeurs persisted
+            2. Maman crée demande type=domicile zone=moyen → 200 broadcast_count > 0
+            3. Pro voit demande dans /home-request/open avec has_my_proposal=false
+            4. Pro fait GET /suggest → calcule total = consultation + frais_moyen + (auto majorations selon datetime)
+            5. Pro POST /propose → 200, proposal créée. 2e POST du même Pro = 400 "déjà proposé".
+            6. Maman GET /mine → voit la proposition enrichie avec pro_name
+            7. Maman POST /accept proposal_id → crée RDV pending_payment + payment_url PayDunya, status demande=accepted
+            8. Maman POST /cancel sur demande déjà accepted → 400 "déjà acceptée"
+            9. Régression : `pay_verify` confirme paiement → RDV confirme + adresse révélée Pro (flow domicile existant)
+
+agent_communication:
+    - agent: "main"
+      message: |
+        🆕 Module marketplace inversé Soins à domicile / Urgence prêt.
+
+        Architecture : Maman crée demande broadcast → N Pros proposent leur tarif → Maman valide UNE proposition → RDV pending_payment + PayDunya → paiement → adresse révélée Pro.
+
+        Frontend ajouté : `/home-request` (hub Maman avec 2 boutons), `/home-request/new`, `/home-request/[id]` (détail+offres), `/pro/home-requests`, `/pro/pricing-domicile`.
+
+        Comptes test : Dr alpha (+2250709005330 / 474Treck), Maman (maman.test@alomaman.dev / Test1234!).
+
+backend:
   - task: "Paiement obligatoire pour Téléconsultation/Domicile + choix Online/Cabinet pour Présentiel"
     implemented: true
     working: true
@@ -5544,3 +5693,60 @@ frontend:
           Aucun glitch UI détecté (layout 390x844 OK, pas d'overflow).
           Calculs de prix exacts (présentiel/online 3000, tele 3000, domicile 5000).
           Pas de bug critique.
+
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        ❌ CRITIQUE — Module **Marketplace inversé Soins à domicile / Urgence** :
+        TOUS les endpoints retournent **404 Not Found** sur la base URL prod
+        (https://cycle-tracker-pro.preview.emergentagent.com/api).
+
+        Script de test exhaustif créé : `/app/backend_test_marketplace_inverse.py`
+        couvrant les 15 scénarios de la review-request (pricing config Pro,
+        validation limites, création demande domicile + urgence, broadcast,
+        suggest auto, propose, accept→PayDunya, cancel, auto-cleanup expirées
+        via mongo direct, listing Pro/Maman, régression /rdv & /pay/consultation).
+        Résultat brut : **5/29 PASS** — les 24 échecs sont tous des 404 sur les
+        endpoints du module + endpoints connexes ; les 5 PASS sont des cas
+        négatifs (réponses vides) et la régression /rdv + /pay/consultation
+        qui marche normalement (preuve que login Pro+Maman fonctionne et que
+        la base API hors-module est OK).
+
+        🔥 RACINE — Routes orphelines : tous les endpoints du module sont
+        définis dans `/app/backend/server.py` entre **L10520 et L10936**, donc
+        APRÈS le dernier `app.include_router(api)` qui est à **L10126**.
+        FastAPI's include_router copie les routes du router AU MOMENT de
+        l'appel — les routes ajoutées au router APRÈS sont **ignorées par
+        l'app**. Le commentaire du dev à L10503-10508 prétend un "re-include"
+        idempotent, mais aucun `app.include_router(api)` supplémentaire n'est
+        appelé en bas de fichier (la dernière ligne avant `app.add_middleware`
+        à L10940 est la définition de `mine-proposals` à L10936).
+
+        🚨 IMPACT ÉLARGI — Le même bug touche AUSSI plusieurs endpoints récents
+        déjà marqués working=true dans test_result.md mais qui retournent
+        404 maintenant :
+          - `PUT/GET /api/pro/modes-consultation` (L10335, L10376)
+          - `PUT/GET /api/pro/auto-payout` (L10403, L10425)
+          - `PUT /api/pro/frais-deplacement` (L10138)
+          - `POST /api/pay/refund` (L10186)
+          - `GET /api/pro/revenus/par-mode` (à vérifier)
+        Vérifié manuellement par curl avec token Pro valide → 404 sur les 5.
+        Cela signifie qu'un déploiement antérieur cassé n'a pas été ré-attrapé
+        par les tests fonctionnels précédents.
+
+        🔧 FIX MINIMAL recommandé (1 ligne, main agent) — ajouter juste avant
+        `app.add_middleware(...)` à L10940 :
+
+            app.include_router(api)
+
+            app.add_middleware(
+                CORSMiddleware,
+                ...
+            )
+
+        Après ce fix, ré-exécuter `/app/backend_test_marketplace_inverse.py`
+        pour valider les 15 scénarios end-to-end.
+
+        ⚠️ Aucun fix n'a été appliqué par le testing agent : changement
+        structurel (registration du router) = job du main agent.

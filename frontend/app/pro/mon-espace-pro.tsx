@@ -75,6 +75,8 @@ const CATEGORIES: Category[] = [
     tools: [
       { id: "prestations", label: "Mes prestations", sub: "Services et tarifs", icon: "pricetag", color: "#10B981", path: "/pro/prestations" },
       { id: "modes", label: "Modes de consultation", sub: "Cabinet / Téléconsult / Domicile", icon: "options", color: "#3B82F6", path: "/pro/modes-consultation", keywords: ["domicile", "tele"] },
+      { id: "home-req", label: "🏠 Demandes à domicile", sub: "Voir les demandes ouvertes et proposer un tarif", icon: "medkit", color: "#F59E0B", path: "/pro/home-requests", keywords: ["domicile", "urgence", "demande"] },
+      { id: "pricing-dom", label: "💰 Tarifs domicile", sub: "Consultation + frais zones + majorations", icon: "pricetag", color: "#10B981", path: "/pro/pricing-domicile", keywords: ["tarif", "prix", "domicile"] },
       { id: "revenus", label: "Revenus", sub: "Statistiques cabinet", icon: "trending-up", color: "#10B981", path: "/pro/revenus" },
       { id: "revenus-mode", label: "Revenus par mode", sub: "Tele / Cabinet / Domicile", icon: "stats-chart", color: "#10B981", path: "/pro/revenus-par-mode", keywords: ["domicile", "stats"] },
       { id: "comptabilite", label: "Comptabilité 💎", sub: "Export CSV mensuel (Premium)", icon: "document-attach", color: "#0EA5E9", path: "/pro/comptabilite", keywords: ["export", "csv", "comptable"] },
