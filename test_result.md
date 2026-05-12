@@ -6110,3 +6110,118 @@ agent_communication:
 
         🎯 Le bug d'enregistrement du router est définitivement RÉSOLU. Aucune route
         marketplace ou endpoint Pro/Pay ne renvoie plus 404. Main agent peut clôturer.
+
+
+frontend:
+  - task: "🆘 Urgence sans-RDV accessible depuis Outils essentiels (home Maman) + form mode selector"
+    implemented: true
+    working: false
+    file: "/app/frontend/app/(tabs)/index.tsx, /app/frontend/app/home-request/new.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          Test mobile (390x844) — résultat MIXTE (2/3 OK).
+
+          ✅ STEP 1 — Présence en home (PASS)
+          • Login Maman (maman.test@alomaman.dev/Test1234!) OK → home (tabs)/index.tsx.
+          • Section "Outils essentiels" présente.
+          • Le bouton "🆘 Urgence sans-RDV" (icône medkit, color=#DC2626) est bien
+            visible et présent dans la grille des favoris.
+          • Code review (index.tsx L225 + L235-243) confirme : "urgence_dom" est PLACÉ
+            EN PREMIÈRE POSITION dans toutes les variantes contextuelles de
+            `favoritesKeys` (trimestre 1/2/3, maman avec enfants, onboarding sans
+            grossesse/enfants). Donc apparaît parmi les 2 premiers de la grille.
+          • Capture : .screenshots/step1_home_urgence_visible.png.
+
+          ✅ STEP 2 — Navigation directe (PASS partiel)
+          • Tap sur "🆘 Urgence sans-RDV" → URL passe à
+            /home-request/new?type=urgence (NON le hub /home-request) ✓.
+          • Le titre "🆘 Urgence à domicile" s'affiche en header (count=1) ✓.
+
+          ❌ STEP 2/3 — Sélecteur de mode 3-options MANQUANT (FAIL)
+          • La review-request demande qu'un sélecteur 3-options
+            (🏥 Au cabinet / 📹 Téléconsultation / 🏠 À domicile) soit visible en haut
+            du formulaire. Or get_by_text("Au cabinet")=0, get_by_text("Téléconsultation")=0
+            sur la page. La capture .screenshots/step2_urgence_form.png montre :
+            Motif → Adresse complète → Quartier → Ville → Zone → Notes → Envoyer.
+            AUCUN sélecteur de mode rendu.
+          • Code review (/app/frontend/app/home-request/new.tsx) confirme la cause :
+            - L18-22 : `const MODES = [...]` (presentiel/teleconsultation/domicile)
+              défini.
+            - L32 : `const [mode, setMode] = useState(...)` state initialisé.
+            - L154-156 : styles `modesRow`/`modeBtn`/`modeTxt` déclarés.
+            - **MAIS aucun `MODES.map(...)` ni JSX rendant les 3 boutons dans le
+              ScrollView (L84-148)**. Le sélecteur n'est tout simplement pas câblé
+              dans le rendu.
+
+          ❌ STEP 3 — Affichage conditionnel par mode (FAIL — non testable)
+          • Conséquence directe de l'absence du sélecteur : impossible de basculer
+            entre les modes.
+          • Code review confirme aussi que l'affichage des champs
+            adresse/quartier/ville/zone N'EST PAS conditionnel au mode :
+              - L94-117 du JSX rend "Adresse complète", "Quartier", "Ville", "Zone"
+                INCONDITIONNELLEMENT (pas de wrapper `{mode === "domicile" && (...)}`).
+              - Seul `{!isUrgence && (...)}` (L119) conditionne la "Date/heure
+                souhaitée", pas les champs d'adresse.
+          • La spec demande : (a) "Au cabinet" → adresse/quartier/zone CACHÉS, Ville
+            visible ; (b) "À domicile" → tous visibles ; (c) "Téléconsultation" →
+            adresse/quartier/zone cachés, Ville visible. NON IMPLÉMENTÉ.
+
+          🛠️ FIX REQUIS pour main agent dans /app/frontend/app/home-request/new.tsx :
+          1. Ajouter le rendu JSX du sélecteur de mode AVANT le champ Motif (ou juste
+             après la bannière banner) :
+               <Text style={styles.label}>Mode de consultation *</Text>
+               <View style={styles.modesRow}>
+                 {MODES.map((m) => (
+                   <TouchableOpacity
+                     key={m.id}
+                     onPress={() => setMode(m.id)}
+                     style={[styles.modeBtn, mode === m.id && { backgroundColor: m.color, borderColor: m.color }]}
+                     testID={`mode-${m.id}`}
+                   >
+                     <Ionicons name={m.icon} size={16} color={mode === m.id ? "#fff" : COLORS.textPrimary} />
+                     <Text style={[styles.modeTxt, mode === m.id && { color: "#fff" }]}>{m.label}</Text>
+                   </TouchableOpacity>
+                 ))}
+               </View>
+          2. Wrapper les champs adresse/quartier/zone avec `{mode === "domicile" && (...)}` :
+             - L94-96 (Adresse + hint) → condition mode==='domicile'
+             - L98-107 (row Quartier + Ville) → SPLIT : Quartier wrappé en `mode === 'domicile'`,
+               Ville TOUJOURS visible.
+             - L109-117 (Zone) → condition mode==='domicile'.
+          3. Adapter `submit()` (L46-67) : la validation `needsAddress` est déjà OK
+             (L33) mais bien initialiser mode='presentiel' pour urgence (déjà fait
+             L32).
+
+          Aucun glitch visuel sur les champs présents (layout 390x844 OK). Pas de
+          red-screen ni d'erreur runtime ; juste un défaut d'implémentation
+          (sélecteur de mode oublié dans le JSX).
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        🆘 Test mobile (390x844) — Urgence sans-RDV en home & form :
+        ✅ Bouton "🆘 Urgence sans-RDV" PRÉSENT et accessible directement depuis
+           "Outils essentiels" sur la home Maman, EN 1ʳᵉ POSITION (confirmé via
+           code review : favoritesKeys[0]='urgence_dom' dans les 5 variantes
+           contextuelles, index.tsx L225-243).
+        ✅ Navigation 1-clic OK vers /home-request/new?type=urgence (PAS vers
+           le hub /home-request). Titre "🆘 Urgence à domicile" affiché en header.
+        ❌ BUG D'IMPLÉMENTATION dans /app/frontend/app/home-request/new.tsx :
+           le sélecteur de mode 3-options (🏥 Au cabinet / 📹 Téléconsultation /
+           🏠 À domicile) N'EST PAS RENDU dans le JSX, alors que la constante
+           MODES, le state `mode` et les styles existent. Conséquence : impossible
+           de basculer entre les modes, et l'affichage conditionnel
+           adresse/quartier/zone (Step 3 du test) ne peut pas fonctionner — les
+           4 champs sont rendus INCONDITIONNELLEMENT pour tous les modes.
+        Action attendue main agent :
+          (1) Ajouter `<View style={styles.modesRow}>{MODES.map(...)}</View>` juste
+              après la bannière (avant Motif).
+          (2) Wrapper Adresse/Quartier/Zone dans `{mode === 'domicile' && (...)}`
+              (Ville reste toujours visible).
+          (3) Optionnel : ajouter testIDs mode-presentiel / mode-tele / mode-domicile
+              pour faciliter les futurs tests automatisés.
