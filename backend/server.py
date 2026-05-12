@@ -10548,11 +10548,12 @@ async def get_pro_pricing_domicile(user=Depends(require_roles("professionnel")))
 
 class HomeRequestIn(BaseModel):
     type: str  # "domicile" | "urgence"
+    mode: Optional[str] = None  # urgence: "presentiel"|"teleconsultation"|"domicile". Forcé "domicile" si type=domicile.
     motif: str
-    adresse: str
+    adresse: Optional[str] = None  # requis uniquement si mode résolu = "domicile"
     quartier: Optional[str] = ""
     ville: Optional[str] = ""
-    zone: str = "moyen"  # "proche" | "moyen" | "loin"
+    zone: Optional[str] = "moyen"  # ignoré si mode != domicile
     preferred_datetime: Optional[str] = None  # ISO, None si urgence ASAP
     lat: Optional[float] = None
     lng: Optional[float] = None

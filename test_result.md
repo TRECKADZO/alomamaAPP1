@@ -5025,12 +5025,48 @@ agent_communication:
 backend:
   - task: "Urgence sans-RDV multi-modes (cabinet / téléconsultation / domicile)"
     implemented: true
-    working: false
+    working: true
     file: "backend/server.py"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
+        -working: true
+        -agent: "testing"
+        -comment: |
+          ✅ RETEST APRÈS FIX (HomeRequestIn L10549-10561 — mode: Optional[str], adresse: Optional[str]).
+          Script /app/backend_test_urgence_multimode.py contre
+          https://cycle-tracker-pro.preview.emergentagent.com/api → **14/14 PASS (100%)**.
+
+          Scénarios validés :
+          • Login Pro (+2250709005330/474Treck) + Maman (maman.test@alomaman.dev/Test1234!) ✓.
+          • POST /home-request {type:urgence, mode:presentiel, motif, ville} SANS adresse → 200,
+            mode=presentiel, zone=None, pas d'adresse_enc, broadcast_count≥1, id retourné ✓.
+          • POST /home-request {type:urgence, mode:teleconsultation, motif, ville} SANS adresse → 200,
+            mode=teleconsultation ✓.
+          • POST /home-request {type:urgence, mode:domicile, motif, ville} SANS adresse → 400
+            "Adresse requise pour les soins à domicile (5 caractères min)." ✓.
+          • POST /home-request {type:domicile, mode:presentiel, adresse, zone:moyen} → 200,
+            mode forcé à "domicile" côté serveur, zone=moyen ✓.
+          • PUT /pro/pricing-domicile (tarif=15000, frais_proche=2000, moyen=5000, loin=10000,
+            maj_nuit=3000, maj_we=2000, maj_urgence=7000) → 200 ✓.
+          • GET /home-request/{id_presentiel}/suggest → frais_deplacement=0, zone=None,
+            mode=presentiel, tarif_consultation=15000, majoration_urgence=7000, total=22000 ✓.
+          • GET /home-request/{id_tele}/suggest → frais_deplacement=0, mode=teleconsultation,
+            total=22000 ✓.
+          • POST /home-request/{id_presentiel}/propose (tarif=15000, frais=0, maj_urgence=7000)
+            → 200, proposal.total=22000, proposal_id retourné ✓.
+          • POST /home-request/{id_presentiel}/accept {proposal_id} → 200,
+            rdv.mode=presentiel, rdv.adresse_domicile_enc=None, rdv.tarif_total_fcfa=22000,
+            payment_url présent ✓.
+          • Régression — GET /home-request/{id_domicile_classique}/suggest →
+            frais_deplacement=5000, zone=moyen, mode=domicile, total=20000 ✓.
+          • Cleanup — POST /home-request/{id}/cancel sur les demandes restantes → 200 ✓.
+
+          Fix validé : tous les modes (presentiel | teleconsultation | domicile) sont supportés,
+          la validation conditionnelle de l'adresse fonctionne (requise uniquement pour mode/type
+          domicile), /suggest met frais_deplacement=0 et zone=None hors domicile, et /accept
+          propage correctement le mode au RDV créé.
         -working: false
         -agent: "testing"
         -comment: |
@@ -5185,16 +5221,35 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Urgence sans-RDV multi-modes (cabinet / téléconsultation / domicile)"
-  stuck_tasks:
-    - "Urgence sans-RDV multi-modes (cabinet / téléconsultation / domicile)"
+  current_focus: []
+  stuck_tasks: []
   test_all: false
-  test_priority: "stuck_first"
+  test_priority: "high_first"
 
-# ARCHIVED previous agent_communication block (kept below for traceability):
-# (original main-agent message about the extension)
-agent_communication_archived:
+agent_communication:
+    - agent: "testing"
+      message: |
+        ✅ FIX VALIDÉ — `HomeRequestIn` (server.py L10549-10561) correctement corrigé : `mode: Optional[str]` et `adresse: Optional[str]` sont désormais bien pris en compte.
+
+        Relance du test "Urgence sans-RDV multi-modes" via /app/backend_test_urgence_multimode.py contre https://cycle-tracker-pro.preview.emergentagent.com/api → **14/14 PASS (100%)**.
+
+        Détails :
+        • Login Pro (+2250709005330/474Treck) + Maman (maman.test@alomaman.dev/Test1234!) OK.
+        • Création urgence mode=presentiel SANS adresse → 200 (mode persisté, zone=None, pas d'adresse_enc, broadcast OK).
+        • Création urgence mode=teleconsultation SANS adresse → 200.
+        • Création urgence mode=domicile SANS adresse → 400 "Adresse requise pour les soins à domicile (5 caractères min)." (validation conditionnelle fonctionne).
+        • Type=domicile force toujours mode=domicile côté serveur (override appliqué).
+        • PUT /pro/pricing-domicile (tarif=15000, frais zones 2k/5k/10k, majorations 3k/2k/7k) → 200.
+        • GET /suggest urgence presentiel → frais_deplacement=0, zone=None, mode=presentiel, total=22000 (15k + 7k urgence).
+        • GET /suggest urgence teleconsultation → frais=0, mode=teleconsultation, total=22000.
+        • POST /propose urgence presentiel → proposal.total=22000, proposal_id retourné.
+        • POST /accept → rdv.mode=presentiel, rdv.adresse_domicile_enc=None, rdv.tarif_total_fcfa=22000, payment_url présent.
+        • Régression domicile classique /suggest → frais=5000, zone=moyen, mode=domicile, total=20000 (non régressé).
+        • Cleanup cancel → 200.
+
+        Aucun bug critique restant. Tâche désormais marquée working:true, stuck_count=0, needs_retesting=false.
+
+agent_communication_archived_v2:
     - agent: "main"
       message: |
         🆕 Extension : urgence sans-RDV peut désormais être en cabinet, téléconsultation ou domicile.
