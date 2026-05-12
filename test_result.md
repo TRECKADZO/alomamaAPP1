@@ -5750,3 +5750,129 @@ agent_communication:
 
         ⚠️ Aucun fix n'a été appliqué par le testing agent : changement
         structurel (registration du router) = job du main agent.
+
+
+backend:
+  - task: "Marketplace inversé Soins à domicile / Urgence (15 scénarios + smoke endpoints)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ RETEST APRÈS FIX (app.include_router(api) ajouté en fin de server.py).
+          Tous les endpoints sont maintenant correctement enregistrés et répondent.
+
+          📊 Suite complète /app/backend_test_marketplace_inverse.py → 37/38 PASS sur
+          https://cycle-tracker-pro.preview.emergentagent.com/api.
+
+          Détail des 15 scénarios :
+          ✅ PRE-REQ : GET + PUT /pro/modes-consultation (accepte_domicile=true) — OK.
+          ✅ Scénario 1 (pricing) — 1a PUT /pro/pricing-domicile 200 + 1b GET round-trip OK.
+          ✅ Scénario 2 (validation pricing) — 2a tarif=-1 → 400 ; 2b frais_zone_proche=600000 → 400.
+          ✅ Scénario 3 (créer demande domicile) — 3a POST /home-request → 200 (id, status=open,
+             broadcast_count=1, auto_majorations) ; ⚠️ **3b** : la réponse contient `adresse_enc`
+             (ciphertext `enc_v1:...`) parmi les keys. Le test exigeait l'absence totale de
+             `adresse` et `adresse_enc` ; le ciphertext est inoffensif (pas de plaintext leak),
+             mais l'API expose le format de stockage. **MINEUR** — à harmoniser : soit purger
+             adresse_enc dans la sérialisation POST /home-request, soit accepter sa présence
+             (déjà filtré dans /home-request/open et autres list endpoints).
+          ✅ Scénario 4 (Maman /mine) — 4a la demande apparaît ; 4b pas d'adresse_enc dans /mine.
+          ✅ Scénario 5 (Pro /open) — 5a demande visible ; 5b has_my_proposal=false ;
+             5c maman_label='A***' (masking OK) ; 5d aucun champ adresse.
+          ✅ Scénario 6 (suggest auto) — 6a tarif=15000, frais=5000 (zone moyen), majorations=0,
+             total=20000 ; 6b auto_flags={nuit:false, we:false, urgence:false}.
+          ✅ Scénario 7 (propose) — 7a POST /propose 200 avec proposal.id + total=20000.
+          ✅ Scénario 8 (anti-duplicate) — 8a 2e /propose même Pro → 400 "déjà proposé".
+          ✅ Scénario 9 (Maman voit propal enrichie) — 9a /mine retourne 1 proposal avec
+             pro_name='Dr alpha'.
+          ✅ Scénario 10 (accept) — 10a POST /accept → 200 avec rdv + payment_url ;
+             10b rdv.status=pending_payment ; 10c mode=domicile ; 10d tarif_total_fcfa=20000 ;
+             10e payment_url réel PayDunya (https://paydunya.com/checkout/invoice/...) ;
+             10f /mine status=accepted + accepted_proposal_id matches.
+          ✅ Scénario 11 (cancel après accept) — 11a POST /cancel → 400 "Demande déjà acceptée".
+          ✅ Scénario 12 (urgence) — 12a POST type=urgence → 200 ; 12b TTL=30 min ;
+             12c Pro voit l'urgence dans /open ; 12d Maman cancel urgence → 200.
+          ✅ Scénario 13 (auto-cleanup expired) — 13a création OK ; 13b backdate via mongo ;
+             13c après GET /mine → status='expired' (cleanup auto déclenché).
+          ✅ Scénario 14 (Pro /mine-proposals) — 14a propal du Step 7 listée ;
+             14b is_accepted=true sur la propal acceptée.
+          ✅ Scénario 15 (régression) — 15a POST /rdv classique 200 (sans 500) ;
+             15b POST /pay/consultation 200.
+
+          📊 SMOKE TEST des 4 endpoints précédemment cassés (Routes 404) :
+          ✅ GET /api/pro/modes-consultation → **200**
+             body={"accepte_presentiel":true,"accepte_teleconsultation":true,
+             "accepte_domicile":true,"frais_deplacement_fcfa":2000,
+             "duree_par_mode":{"presentiel":30,"teleconsultation":15,"domicile":90}}
+          ✅ GET /api/pro/auto-payout → **200**
+             body={"enabled":false,"seuil_fcfa":50000,"frequency":"weekly","updated_at":null}
+          ✅ PUT /api/pro/frais-deplacement {"frais_deplacement_fcfa":2500} → **200**
+             body={"ok":true,"frais_deplacement_fcfa":2500}
+          ✅ POST /api/pay/refund {"payment_id":"bogus-id"} → **404** "Paiement introuvable"
+             (validation métier propre, PAS une 404 routing — le router est bien câblé).
+             POST /api/pay/refund {} → **400** "Indiquez payment_id ou rdv_id."
+
+          🎯 CONCLUSION : le fix `app.include_router(api)` ajouté en fin de server.py
+          est PLEINEMENT EFFECTIF. Toutes les routes marketplace inversé + les 4 endpoints
+          précédemment cassés répondent correctement.
+
+          ⚠️ Seul écart MINEUR (non bloquant) : 3b — le POST /home-request renvoie
+          `adresse_enc` (ciphertext) dans sa réponse. Sécurité OK (pas de plaintext),
+          mais peut être nettoyé côté sérialisation pour cohérence avec /home-request/open
+          et /mine qui ne l'exposent pas.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.5"
+  test_sequence: 10
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        ✅ RETEST MARKETPLACE INVERSÉ — FIX VALIDÉ (cycle-tracker-pro.preview.emergentagent.com).
+
+        Après ajout de `app.include_router(api)` en fin de server.py, TOUTES les routes
+        précédemment 404 répondent correctement :
+          • GET /api/pro/modes-consultation → 200 ✅
+          • GET /api/pro/auto-payout → 200 (défauts) ✅
+          • PUT /api/pro/frais-deplacement → 200 ✅
+          • POST /api/pay/refund → 404 (validation métier "Paiement introuvable")
+            ou 400 (validation body) — PAS de 404 routing. ✅
+
+        Suite complète Marketplace inversé : **37/38 PASS** (1 seul mineur).
+        Les 15 scénarios fonctionnent end-to-end :
+          1. Pricing domicile (PUT/GET) ✅
+          2. Validation limites ✅
+          3. Création demande domicile (avec note 3b mineur ci-dessous) ⚠️
+          4. Maman /home-request/mine ✅
+          5. Pro /home-request/open (masking maman_label='A***') ✅
+          6. Pro /suggest (calcul auto total=20000) ✅
+          7. Pro /propose ✅
+          8. Anti-duplicate proposal ✅
+          9. Maman voit propal enrichie (pro_name='Dr alpha') ✅
+         10. Maman /accept → RDV pending_payment + PayDunya URL réelle ✅
+         11. Cancel après accept → 400 ✅
+         12. Urgence (TTL 30 min, Pro voit, Maman cancel) ✅
+         13. Auto-cleanup expired (backdate mongo + GET /mine) ✅
+         14. Pro /mine-proposals (is_accepted=true) ✅
+         15. Régression /rdv + /pay/consultation ✅
+
+        ⚠️ Mineur 3b : POST /home-request renvoie `adresse_enc` (ciphertext "enc_v1:...")
+        dans sa réponse de création. Aucune fuite plaintext, mais à nettoyer côté
+        sérialisation pour homogénéité avec /open et /mine (qui omettent ce champ).
+        Non bloquant.
+
+        🎯 Le bug d'enregistrement du router est définitivement RÉSOLU. Aucune route
+        marketplace ou endpoint Pro/Pay ne renvoie plus 404. Main agent peut clôturer.

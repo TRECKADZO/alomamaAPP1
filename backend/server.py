@@ -10937,6 +10937,9 @@ async def my_proposals(user=Depends(require_roles("professionnel"))):
 
 
 
+# 🔄 Re-include final : enregistre toutes les routes ajoutées après les précédents include_router
+app.include_router(api)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
