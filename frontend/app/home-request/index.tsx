@@ -43,7 +43,7 @@ export default function HomeRequestList() {
           </TouchableOpacity>
           <TouchableOpacity style={[styles.ctaBtn, { backgroundColor: "#DC2626" }]} onPress={() => router.push("/home-request/new?type=urgence")}>
             <Ionicons name="medkit" size={20} color="#fff" />
-            <Text style={styles.ctaTxt}>🆘 Urgence à domicile</Text>
+            <Text style={styles.ctaTxt}>🆘 Urgence sans-RDV</Text>
           </TouchableOpacity>
         </View>
         {items.length === 0 && (
@@ -71,7 +71,7 @@ export default function HomeRequestList() {
                 <Text style={styles.cardBadgeTxt}>{isUrgence ? "🆘 URGENCE" : "🏠 DOMICILE"}</Text>
               </View>
               <Text style={styles.cardMotif}>{it.motif}</Text>
-              <Text style={styles.cardMeta}>Zone {it.zone} · {it.ville || "CI"} · {new Date(it.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
+              <Text style={styles.cardMeta}>{isUrgence ? `${(it.mode === "domicile" ? "À domicile" : it.mode === "teleconsultation" ? "Téléconsultation" : "Au cabinet")} · ` : `Zone ${it.zone} · `}{it.ville || "CI"} · {new Date(it.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
               <View style={styles.statusRow}>
                 <Text style={[styles.statusTxt, { color }]}>{statusLabel}</Text>
                 {(it.proposals || []).length > 0 && it.status !== "cancelled" && it.status !== "expired" && (

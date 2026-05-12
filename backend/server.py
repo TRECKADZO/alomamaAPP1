@@ -10602,29 +10602,43 @@ def _detect_majorations(req_type: str, preferred_iso: Optional[str]) -> Dict[str
 async def create_home_request(payload: HomeRequestIn, user=Depends(require_roles("maman"))):
     if payload.type not in ("domicile", "urgence"):
         raise HTTPException(400, "Type invalide (domicile|urgence).")
-    if payload.zone not in ("proche", "moyen", "loin"):
-        raise HTTPException(400, "Zone invalide (proche|moyen|loin).")
+    # 🎯 Détermine le mode selon le type :
+    #   - type=domicile → mode forcé à "domicile"
+    #   - type=urgence  → mode au choix de la maman (presentiel|teleconsultation|domicile). Défaut : presentiel.
+    if payload.type == "domicile":
+        mode = "domicile"
+    else:
+        mode = (payload.mode or "presentiel").lower()
+        if mode not in ("presentiel", "teleconsultation", "domicile"):
+            raise HTTPException(400, "Mode invalide pour urgence (presentiel|teleconsultation|domicile).")
     if not payload.motif or len(payload.motif.strip()) < 3:
         raise HTTPException(400, "Motif requis (3 caractères min).")
-    if not payload.adresse or len(payload.adresse.strip()) < 5:
-        raise HTTPException(400, "Adresse requise (5 caractères min).")
+    # Adresse + zone obligatoires uniquement pour mode=domicile
+    if mode == "domicile":
+        if not (payload.adresse or "").strip() or len((payload.adresse or "").strip()) < 5:
+            raise HTTPException(400, "Adresse requise pour les soins à domicile (5 caractères min).")
+        if (payload.zone or "moyen") not in ("proche", "moyen", "loin"):
+            raise HTTPException(400, "Zone invalide (proche|moyen|loin).")
 
     now = datetime.now(timezone.utc)
     # Expiration : 30 min pour urgence, 24h pour domicile classique
     ttl = timedelta(minutes=30) if payload.type == "urgence" else timedelta(hours=24)
-    # Chiffrement de l'adresse (sensible)
-    from encryption import encrypt_str as _enc
-    adresse_enc = _enc(payload.adresse.strip())
+    # Chiffrement de l'adresse uniquement si domicile
+    adresse_enc = None
+    if mode == "domicile":
+        from encryption import encrypt_str as _enc
+        adresse_enc = _enc((payload.adresse or "").strip())
     maj = _detect_majorations(payload.type, payload.preferred_datetime)
     doc = {
         "id": str(uuid.uuid4()),
         "maman_id": user["id"],
         "type": payload.type,
+        "mode": mode,
         "motif": payload.motif.strip(),
         "adresse_enc": adresse_enc,
         "quartier": (payload.quartier or "").strip(),
         "ville": (payload.ville or "").strip(),
-        "zone": payload.zone,
+        "zone": payload.zone if mode == "domicile" else None,
         "preferred_datetime": payload.preferred_datetime,
         "lat": payload.lat,
         "lng": payload.lng,
@@ -10642,13 +10656,23 @@ async def create_home_request(payload: HomeRequestIn, user=Depends(require_roles
     doc_out = {k: v for k, v in doc.items() if k != "adresse_enc"}
 
     # 📡 Broadcast aux Pros : tous ceux qui ont accepte_domicile=true (ou pricing_domicile défini)
-    pros_q = {
-        "role": "professionnel",
-        "$or": [{"accepte_domicile": True}, {"pricing_domicile": {"$exists": True}}],
-    }
+    # Pour urgence en cabinet/téléconsult, on inclut TOUS les Pros disponibles dans la spécialité ciblée (fallback : tous les pros actifs)
+    if mode == "domicile":
+        pros_q = {
+            "role": "professionnel",
+            "$or": [{"accepte_domicile": True}, {"pricing_domicile": {"$exists": True}}],
+        }
+    else:
+        # Urgence sans-RDV en cabinet ou téléconsultation : tous les pros actifs
+        pros_q = {"role": "professionnel"}
     pros = await db.users.find(pros_q, {"_id": 0, "id": 1, "name": 1}).to_list(500)
-    title = "🆘 URGENCE à domicile" if payload.type == "urgence" else "🏠 Nouvelle demande à domicile"
-    body_msg = f"{user.get('name', 'Une patiente')} : {payload.motif[:60]} · Zone {payload.zone} · {payload.ville or 'CI'}"
+    if payload.type == "urgence":
+        title = "🆘 URGENCE sans-RDV"
+        mode_lbl = {"presentiel": "au cabinet", "teleconsultation": "en téléconsultation", "domicile": "à domicile"}[mode]
+        body_msg = f"{user.get('name', 'Une patiente')} : {payload.motif[:60]} · {mode_lbl}"
+    else:
+        title = "🏠 Nouvelle demande à domicile"
+        body_msg = f"{user.get('name', 'Une patiente')} : {payload.motif[:60]} · Zone {payload.zone} · {payload.ville or 'CI'}"
     for p in pros:
         try:
             await push_notif(p["id"], title, body_msg, "rdv")
@@ -10657,7 +10681,7 @@ async def create_home_request(payload: HomeRequestIn, user=Depends(require_roles
 
     # 📊 Audit
     try:
-        await _audit_log(user=user, action="home_request_create", resource_type="HomeRequest", resource_id=doc["id"], details={"type": payload.type, "zone": payload.zone, "broadcast_count": len(pros)})
+        await _audit_log(user=user, action="home_request_create", resource_type="HomeRequest", resource_id=doc["id"], details={"type": payload.type, "mode": mode, "zone": payload.zone, "broadcast_count": len(pros)})
     except Exception:
         pass
 
@@ -10705,6 +10729,10 @@ async def accept_home_proposal(req_id: str, payload: HomeAcceptIn, user=Depends(
     # 💳 Créer le RDV pending_payment associé
     now = datetime.now(timezone.utc)
     rdv_dt = req.get("preferred_datetime") or now.isoformat()
+    req_mode = req.get("mode") or "domicile"
+    type_label = "Soins à domicile" if req.get("type") == "domicile" else (
+        f"Urgence {'à domicile' if req_mode == 'domicile' else ('en téléconsultation' if req_mode == 'teleconsultation' else 'au cabinet')}"
+    )
     rdv_doc = {
         "id": str(uuid.uuid4()),
         "maman_id": user["id"],
@@ -10715,15 +10743,15 @@ async def accept_home_proposal(req_id: str, payload: HomeAcceptIn, user=Depends(
         "frais_deplacement_fcfa": prop["frais_deplacement"] + prop.get("majoration_nuit", 0) + prop.get("majoration_we", 0) + prop.get("majoration_urgence", 0),
         "tarif_total_fcfa": prop["total"],
         "type_consultation": req["type"],
-        "mode": "domicile",
+        "mode": req_mode,
         "prestation_id": None,
-        "prestation_nom": "Soins à domicile" if req["type"] == "domicile" else "Urgence à domicile",
+        "prestation_nom": type_label,
         "cmu_applique": False,
-        "adresse_domicile_enc": req["adresse_enc"],
-        "quartier": req["quartier"],
-        "ville": req["ville"],
-        "lat": req["lat"],
-        "lng": req["lng"],
+        "adresse_domicile_enc": req.get("adresse_enc") if req_mode == "domicile" else None,
+        "quartier": req.get("quartier"),
+        "ville": req.get("ville"),
+        "lat": req.get("lat"),
+        "lng": req.get("lng"),
         "paye": False,
         "payment_method": "online",
         "payment_required": True,
@@ -10832,13 +10860,19 @@ async def suggest_proposal(req_id: str, user=Depends(require_roles("professionne
     if not req:
         raise HTTPException(404, "Demande introuvable")
     pricing = (await db.users.find_one({"id": user["id"]}, {"_id": 0, "pricing_domicile": 1}) or {}).get("pricing_domicile") or HomePricingIn().dict()
-    zone = req.get("zone", "moyen")
-    frais_map = {
-        "proche": pricing["frais_zone_proche"],
-        "moyen": pricing["frais_zone_moyen"],
-        "loin": pricing["frais_zone_loin"],
-    }
-    frais = frais_map.get(zone, pricing["frais_zone_moyen"])
+    req_mode = req.get("mode", "domicile")
+    # Frais de déplacement uniquement si mode=domicile
+    if req_mode == "domicile":
+        zone = req.get("zone") or "moyen"
+        frais_map = {
+            "proche": pricing["frais_zone_proche"],
+            "moyen": pricing["frais_zone_moyen"],
+            "loin": pricing["frais_zone_loin"],
+        }
+        frais = frais_map.get(zone, pricing["frais_zone_moyen"])
+    else:
+        zone = None
+        frais = 0  # pas de déplacement pour cabinet/téléconsult
     maj = req.get("auto_majorations") or {}
     maj_nuit = pricing["majoration_nuit_fcfa"] if maj.get("nuit") else 0
     maj_we = pricing["majoration_we_fcfa"] if maj.get("we") else 0
@@ -10854,6 +10888,7 @@ async def suggest_proposal(req_id: str, user=Depends(require_roles("professionne
         "total": total,
         "auto_flags": maj,
         "zone": zone,
+        "mode": req_mode,
     }
 
 

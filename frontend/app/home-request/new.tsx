@@ -15,12 +15,22 @@ const ZONES = [
   { id: "loin", label: "Loin (> 15 km)", icon: "earth" as const },
 ];
 
+const MODES = [
+  { id: "presentiel" as const, label: "Au cabinet", icon: "business" as const, color: "#3B82F6" },
+  { id: "teleconsultation" as const, label: "Téléconsultation", icon: "videocam" as const, color: "#8B5CF6" },
+  { id: "domicile" as const, label: "À domicile", icon: "home" as const, color: "#F59E0B" },
+];
+
 export default function NewHomeRequest() {
   const router = useRouter();
   const params = useLocalSearchParams<{ type?: string }>();
   const type = (params.type === "urgence" ? "urgence" : "domicile") as "domicile" | "urgence";
   const isUrgence = type === "urgence";
   const color = isUrgence ? "#DC2626" : "#F59E0B";
+
+  // Mode : pour type=domicile c'est forcément "domicile"; pour urgence, la maman choisit
+  const [mode, setMode] = useState<"presentiel" | "teleconsultation" | "domicile">(isUrgence ? "presentiel" : "domicile");
+  const needsAddress = mode === "domicile";
 
   const [motif, setMotif] = useState("");
   const [adresse, setAdresse] = useState("");
@@ -33,19 +43,25 @@ export default function NewHomeRequest() {
 
   const submit = async () => {
     if (motif.trim().length < 3) return Alert.alert("Motif requis", "Décrivez brièvement votre besoin.");
-    if (adresse.trim().length < 5) return Alert.alert("Adresse requise", "Indiquez votre adresse précise (chiffrée, partagée uniquement après paiement).");
+    if (needsAddress && adresse.trim().length < 5) return Alert.alert("Adresse requise", "Pour un soin à domicile, indiquez votre adresse précise.");
     setSubmitting(true);
     try {
-      const r = await api.post("/home-request", {
+      const body: any = {
         type,
+        mode,
         motif: motif.trim(),
-        adresse: adresse.trim(),
-        quartier: quartier.trim(),
-        ville: ville.trim(),
-        zone,
         preferred_datetime: preferredDate || null,
         notes: notes.trim(),
-      });
+      };
+      if (needsAddress) {
+        body.adresse = adresse.trim();
+        body.quartier = quartier.trim();
+        body.ville = ville.trim();
+        body.zone = zone;
+      } else {
+        body.ville = ville.trim();
+      }
+      const r = await api.post("/home-request", body);
       Alert.alert(
         "✅ Demande envoyée",
         `Votre demande a été envoyée à ${r.data?.broadcast_count || 0} professionnel(s). Vous serez notifiée dès qu'une offre arrive.`,
@@ -135,6 +151,9 @@ const styles = StyleSheet.create({
   zones: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
   zoneBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, padding: 10, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   zoneTxt: { fontSize: 11, fontWeight: "700", color: COLORS.textPrimary },
+  modesRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
+  modeBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, padding: 10, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
+  modeTxt: { fontSize: 11, fontWeight: "700", color: COLORS.textPrimary },
   submitBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", padding: 14, borderRadius: RADIUS.md, gap: 8, marginTop: 16 },
   submitTxt: { color: "#fff", fontWeight: "800", fontSize: 14 },
 });
