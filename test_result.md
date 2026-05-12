@@ -6115,7 +6115,7 @@ agent_communication:
 frontend:
   - task: "🆘 Urgence sans-RDV accessible depuis Outils essentiels (home Maman) + form mode selector"
     implemented: true
-    working: false
+    working: true
     file: "/app/frontend/app/(tabs)/index.tsx, /app/frontend/app/home-request/new.tsx"
     stuck_count: 0
     priority: "high"
@@ -6200,6 +6200,51 @@ frontend:
           Aucun glitch visuel sur les champs présents (layout 390x844 OK). Pas de
           red-screen ni d'erreur runtime ; juste un défaut d'implémentation
           (sélecteur de mode oublié dans le JSX).
+      - working: true
+        agent: "testing"
+        comment: |
+          RE-TEST mobile (390x844) après fix — TOUT PASS ✅
+
+          Note préliminaire : 1ère tentative renvoyait l'ancien bundle (sélecteur absent
+          + Adresse complète rendue par défaut). Après `supervisorctl restart expo` pour
+          forcer un re-bundle, le nouveau code de `home-request/new.tsx` s'affiche
+          correctement. Le main agent devrait toujours kick le service expo après une
+          modification UI majeure.
+
+          ✅ Sélecteur de mode 3-options présent et fonctionnel :
+          • testID="mode-presentiel" (count=1), testID="mode-teleconsultation" (count=1),
+            testID="mode-domicile" (count=1) — tous présents dans le DOM.
+          • Label "Mode de consultation souhaité *" rendu en haut du formulaire,
+            juste sous la bannière rouge et le champ Motif.
+          • Couleurs respectées par mode actif : Au cabinet=#3B82F6 (bleu),
+            Téléconsultation=#8B5CF6 (violet/A855F7 famille), À domicile=#F59E0B (orange).
+          • Hint contextuel sous le sélecteur change selon le mode :
+            "Vous vous rendez au cabinet sans RDV" (presentiel) /
+            "Consultation vidéo immédiate" (tele) /
+            "Le pro vient chez vous" (domicile).
+
+          ✅ Affichage conditionnel par mode :
+          • Default (presentiel) : Adresse_complete_count=0, Zone_count=0,
+            "Ville (pour trouver un pro proche)" count=1. ✓ EXACT.
+          • Mode domicile : Adresse_complete=1, Quartier=1, Zone (distance estimée)=1,
+            "Ville (pour trouver un pro proche)" simple=0 (remplacée par les 2 colonnes
+            Quartier/Ville dans la grille adresse). ✓ EXACT.
+          • Mode téléconsultation : Adresse_complete=0, Zone=0, Ville simple=1. ✓ EXACT.
+
+          ✅ 3 screenshots capturés :
+          • .screenshots/01_default_presentiel.png — état initial : "Au cabinet" en
+            bleu actif, hint "Vous vous rendez au cabinet sans RDV", uniquement Ville.
+          • .screenshots/02_mode_domicile.png — "À domicile" en orange actif, hint
+            "Le pro vient chez vous", Adresse complète + Quartier/Ville en grille +
+            Zone (Proche/Moyen/Loin) avec "Moyen (5–15 km)" pré-sélectionné en rouge.
+          • .screenshots/03_mode_tele.png — "Téléconsultation" en violet actif, hint
+            "Consultation vidéo immédiate", uniquement Ville visible.
+
+          Aucun glitch visuel, aucun overflow, aucune erreur runtime. La validation
+          submit() (L44-46) blocking si motif<3 chars ou (needsAddress && adresse<5 chars)
+          reste correctement câblée. Bug d'implémentation initialement signalé est
+          DÉFINITIVEMENT RÉSOLU.
+
 
 agent_communication:
     - agent: "testing"

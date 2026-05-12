@@ -91,30 +91,67 @@ export default function NewHomeRequest() {
           <Text style={styles.label}>Motif (que ressentez-vous ?) *</Text>
           <TextInput style={styles.input} value={motif} onChangeText={setMotif} placeholder="Ex: Fièvre 39°, douleurs ventre, suivi grossesse..." multiline numberOfLines={2} placeholderTextColor={COLORS.textMuted} />
 
-          <Text style={styles.label}>Adresse complète *</Text>
-          <TextInput style={styles.input} value={adresse} onChangeText={setAdresse} placeholder="Ex: Cocody Riviera 3, Rue des Jardins, Villa 12" placeholderTextColor={COLORS.textMuted} />
-          <Text style={styles.hint}>🔒 Chiffré, révélé au pro après paiement uniquement</Text>
+          {/* 🆘 Sélecteur de mode pour URGENCES uniquement */}
+          {isUrgence && (
+            <>
+              <Text style={styles.label}>Mode de consultation souhaité *</Text>
+              <View style={styles.modesRow}>
+                {MODES.map((m) => {
+                  const active = mode === m.id;
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      testID={`mode-${m.id}`}
+                      onPress={() => setMode(m.id)}
+                      style={[styles.modeBtn, active && { backgroundColor: m.color, borderColor: m.color }]}
+                    >
+                      <Ionicons name={m.icon} size={16} color={active ? "#fff" : m.color} />
+                      <Text style={[styles.modeTxt, active && { color: "#fff" }]}>{m.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={styles.hint}>
+                💡 {mode === "domicile" ? "Le pro vient chez vous" : mode === "teleconsultation" ? "Consultation vidéo immédiate" : "Vous vous rendez au cabinet sans RDV"}
+              </Text>
+            </>
+          )}
 
-          <View style={styles.row}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Quartier</Text>
-              <TextInput style={styles.input} value={quartier} onChangeText={setQuartier} placeholder="Cocody" placeholderTextColor={COLORS.textMuted} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Ville</Text>
+          {/* Champs adresse — uniquement si mode=domicile */}
+          {needsAddress ? (
+            <>
+              <Text style={styles.label}>Adresse complète *</Text>
+              <TextInput style={styles.input} value={adresse} onChangeText={setAdresse} placeholder="Ex: Cocody Riviera 3, Rue des Jardins, Villa 12" placeholderTextColor={COLORS.textMuted} />
+              <Text style={styles.hint}>🔒 Chiffré, révélé au pro après paiement uniquement</Text>
+
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Quartier</Text>
+                  <TextInput style={styles.input} value={quartier} onChangeText={setQuartier} placeholder="Cocody" placeholderTextColor={COLORS.textMuted} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Ville</Text>
+                  <TextInput style={styles.input} value={ville} onChangeText={setVille} placeholder="Abidjan" placeholderTextColor={COLORS.textMuted} />
+                </View>
+              </View>
+
+              <Text style={styles.label}>Zone (distance estimée Pro → vous)</Text>
+              <View style={styles.zones}>
+                {ZONES.map((z) => (
+                  <TouchableOpacity key={z.id} onPress={() => setZone(z.id)} style={[styles.zoneBtn, zone === z.id && { backgroundColor: color, borderColor: color }]}>
+                    <Ionicons name={z.icon} size={16} color={zone === z.id ? "#fff" : COLORS.textPrimary} />
+                    <Text style={[styles.zoneTxt, zone === z.id && { color: "#fff" }]}>{z.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          ) : (
+            // Cabinet / Téléconsultation : juste la ville
+            <>
+              <Text style={styles.label}>Ville (pour trouver un pro proche)</Text>
               <TextInput style={styles.input} value={ville} onChangeText={setVille} placeholder="Abidjan" placeholderTextColor={COLORS.textMuted} />
-            </View>
-          </View>
-
-          <Text style={styles.label}>Zone (distance estimée Pro → vous)</Text>
-          <View style={styles.zones}>
-            {ZONES.map((z) => (
-              <TouchableOpacity key={z.id} onPress={() => setZone(z.id)} style={[styles.zoneBtn, zone === z.id && { backgroundColor: color, borderColor: color }]}>
-                <Ionicons name={z.icon} size={16} color={zone === z.id ? "#fff" : COLORS.textPrimary} />
-                <Text style={[styles.zoneTxt, zone === z.id && { color: "#fff" }]}>{z.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+            </>
+          )}
 
           {!isUrgence && (
             <>
