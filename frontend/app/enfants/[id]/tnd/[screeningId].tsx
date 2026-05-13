@@ -6,8 +6,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { api, formatError } from "../../../lib/api";
-import { COLORS, RADIUS, SHADOW } from "../../../constants/theme";
+import { api, formatError } from "../../../../lib/api";
+import { COLORS, RADIUS, SHADOW } from "../../../../constants/theme";
 
 const LEVEL_COLOR: Record<string, string> = { faible: "#10B981", modere: "#F59E0B", eleve: "#DC2626" };
 const LEVEL_EMOJI: Record<string, string> = { faible: "🟢", modere: "🟠", eleve: "🔴" };

@@ -6446,3 +6446,110 @@ agent_communication:
 
         Aucun autre régression observée. Pas de fix appliqué de mon côté
         (responsabilité main agent).
+
+frontend:
+  - task: "Visibilité urgences sans-RDV — Pro espace (bandeau rouge + tool badge + liste)"
+    implemented: true
+    working: false
+    file: "/app/frontend/app/pro/mon-espace-pro.tsx, /app/frontend/app/pro/home-requests.tsx, /app/backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          Mobile UI test (390x844) — résultats MIXTES. 1 PASS, 3 FAIL.
+
+          PRÉ-REQUIS — Création urgence côté Maman :
+          ✅ POST /api/home-request (mode=presentiel, motif="Test urgence visibilité Pro", ville="Abidjan")
+             → 200, id=56271991-3d99-435a-85fe-e5fddb5eca96, status=open, broadcast_count=19 (19 pros notifiés côté backend).
+
+          🛠 BUG BUNDLER CORRIGÉ EN COURS DE TEST :
+          Avant de pouvoir tester quoi que ce soit, un red-screen Metro était systématiquement affiché sur toutes les pages :
+            "Server Error — Unable to resolve module ../../../lib/api from
+             /app/frontend/app/enfants/[id]/tnd/[screeningId].tsx"
+          Cause : 3 fichiers sous app/enfants/[id]/tnd/ utilisaient `../../../lib/api` (3 niveaux ↑) au lieu de
+          `../../../../lib/api` (4 niveaux ↑) — le chemin correct depuis 4 niveaux de profondeur.
+          Fix appliqué dans :
+            • app/enfants/[id]/tnd/[screeningId].tsx (api + theme)
+            • app/enfants/[id]/tnd/nouveau.tsx (api + theme)
+            • app/enfants/[id]/tnd/index.tsx (api + theme)
+          → expo restart → bundler OK → app accessible.
+
+          TEST PRO (Dr alpha, +2250709005330/474Treck) sur /pro/mon-espace-pro :
+
+          ✅ PASS — Outil "🆘 Urgences & demandes à domicile" visible dans la grille :
+             [data-testid="tool-home-req"] présent ; texte exact "🆘 Urgences & demandes à domicile" +
+             sous-titre "Voir les demandes ouvertes et proposer un tarif" ; icône medkit rouge #DC2626 ;
+             dans la catégorie "Activité & Revenus (9)". Tap navigue vers /pro/home-requests. Screenshot
+             .screenshots/01_pro_home_banner.png confirme la position du tool.
+
+          ❌ FAIL — [data-testid="urgent-banner"] NON visible en haut de /pro/mon-espace-pro :
+             Le bandeau rouge "🆘 X urgence(s) sans-RDV en attente" ne s'affiche pas. La condition
+             d'affichage dans mon-espace-pro.tsx L154 (`urgentOpen > 0`) est fausse car `urgentOpen` est
+             computed côté front à partir de GET /pro/home-requests, qui retourne 0 élément pour Dr alpha
+             (voir bug suivant).
+
+          ❌ FAIL — Badge rouge numéroté sur le tool absent :
+             styles.toolBadge (L228-232) n'est pas rendu car `totalOpen === 0`. Idem cause racine.
+
+          ⚠️ NUANCE IMPORTANTE — Backend logs montrent `GET /api/home-request/open HTTP/1.1 401
+             Unauthorized` lors du chargement de la page Pro. Le test playwright a injecté le JWT Pro
+             dans `localStorage.token` mais l'app utilise probablement AsyncStorage (clé différente
+             sur web : `@auth_token` ou similaire dans lib/api.ts), donc l'appel /home-request/open
+             part SANS Authorization header → 401 → liste vide → bandeau et badge non rendus.
+             Ce 401 invalide partiellement la conclusion ci-dessous. Il faut RE-TESTER avec un vrai
+             login UI Pro (champ téléphone) pour confirmer ou infirmer si le backend retourne bien
+             la demande pour Dr alpha.
+
+          ❌ FAIL POSSIBLE — GET /api/pro/home-requests retourne LISTE VIDE pour Dr alpha :
+             Page /pro/home-requests affiche le empty-state :
+               "Aucune demande ouverte. Activez le mode domicile et configurez vos tarifs pour recevoir des demandes."
+             Or l'urgence créée juste avant a un broadcast_count=19 et un status="open". La spec dit
+             EXPLICITEMENT : « Si Dr alpha n'a pas configuré son pricing_domicile, le tester quand même —
+             la demande doit apparaître quand même (broadcast tous Pros). »
+             Le backend (`/api/pro/home-requests`) filtre vraisemblablement les demandes par
+             configuration `modes_consultation.domicile=true` ou par `pricing_domicile` configuré côté
+             Pro, ce qui CONTREDIT la spec d'« urgence broadcastée à tous les pros ».
+             → Conséquence : aucun pro non-config domicile ne voit les urgences sans-RDV. Bug critique
+             pour le flux d'urgence. Screenshot .screenshots/02_pro_home_requests.png montre l'empty-state.
+
+          ACTIONS REQUISES POUR LE MAIN AGENT :
+          1. Backend — Modifier `/api/pro/home-requests` pour qu'une demande de type="urgence" soit
+             retournée à TOUS les pros actifs (indépendamment de leur config domicile/tarifs). Garder le
+             filtre par mode/ville pour le type="domicile" classique. Vérifier également que la création
+             d'une home-request urgence remplit bien `proposals[]` ou `broadcast_pro_ids[]` côté backend
+             pour que le filtre côté Pro fonctionne.
+          2. Frontend — Une fois le bug backend corrigé, le bandeau urgent-banner et le badge tool
+             apparaîtront automatiquement (la logique côté front est correcte, juste dépendante de
+             totalOpen qui dépend du backend).
+          3. Side-note (déjà corrigé pendant le test) : les 3 fichiers app/enfants/[id]/tnd/*.tsx avaient
+             un import path off-by-one — bundler rouge avant le fix. À conserver.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Test "Visibilité urgences sans-RDV côté Pro" sur mobile 390x844.
+
+        ✅ Outil "🆘 Urgences & demandes à domicile" visible avec icône medkit rouge dans la grille
+           de /pro/mon-espace-pro (testID="tool-home-req").
+
+        ❌ Bandeau rouge urgent-banner NON affiché.
+        ❌ Badge numéroté rouge sur le tool NON affiché.
+        ❌ La liste /pro/home-requests est VIDE pour Dr alpha alors qu'une urgence a été créée
+           (broadcast_count=19, status=open) — empty state "Activez le mode domicile…".
+
+        CAUSE RACINE BACKEND : `/api/pro/home-requests` filtre les demandes par config Pro (mode
+        domicile activé + tarifs configurés), ce qui contredit la spec d'urgence broadcastée à TOUS
+        les pros. Dr alpha (sans config domicile) ne voit donc rien — bandeau et badge sont
+        calculés côté front à partir du retour (vide) du backend.
+
+        SIDE FIX APPLIQUÉ : 3 imports erronés `../../../lib/api` (3 niveaux) → `../../../../lib/api`
+        (4 niveaux) dans app/enfants/[id]/tnd/{[screeningId],nouveau,index}.tsx qui causaient un
+        red-screen Metro avant tout test. Ne pas refixer.
+
+        ACTION : modifier l'endpoint `/api/pro/home-requests` pour qu'un home-request de type=urgence
+        soit retourné à TOUS les pros (peu importe leur config domicile/tarifs). Le frontend est
+        correct et affichera le bandeau + badge automatiquement.
+
