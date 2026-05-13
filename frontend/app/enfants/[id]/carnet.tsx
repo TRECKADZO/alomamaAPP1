@@ -230,6 +230,12 @@ export default function CarnetModulaire() {
         description: "Développement psychomoteur",
         onPress: () => router.push(`/enfants/${enfant.id}/jalons`),
       });
+      // 🧠 Module TND (M-CHAT-R) pour les enfants 0-6 ans
+      items.splice(3, 0, {
+        id: "tnd", title: "Dépistage TND", icon: "🧠", color: "#8B5CF6",
+        description: "M-CHAT-R 16-30 mois",
+        onPress: () => router.push(`/enfants/${enfant.id}/tnd`),
+      });
     }
     if (stage.key === "6_12a" || stage.key === "13_18a") {
       items.push({

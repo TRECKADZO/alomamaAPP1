@@ -19,7 +19,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal, Dict
+from typing import List, Optional, Literal, Dict, Any
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status, Response
 from starlette.middleware.cors import CORSMiddleware
@@ -10972,6 +10972,185 @@ async def my_proposals(user=Depends(require_roles("professionnel"))):
         })
     return out
 
+
+# ============================================================================
+# 🧠 SUIVI DU DÉVELOPPEMENT & DÉPISTAGE PRÉCOCE TND (M-CHAT-R)
+# ============================================================================
+# Module communautaire de dépistage des Troubles du Neurodéveloppement (16-30 mois).
+# Basé sur le questionnaire M-CHAT-R validé scientifiquement.
+# ⚠️ IMPORTANT : Outil de DÉPISTAGE, ne remplace JAMAIS un diagnostic médical.
+
+# M-CHAT-R™ — 20 questions. Pour chaque question :
+#   - `critical_answer` = réponse considérée "à risque" (qui contribue au score)
+#   - Les questions 2, 5 et 12 sont des "items critiques" pondérés plus fortement
+MCHAT_R_QUESTIONS = [
+    {"id": 1,  "fr": "Si vous pointez quelque chose à l'autre bout de la pièce, votre enfant le regarde-t-il ?", "critical_answer": "no", "weighted": False},
+    {"id": 2,  "fr": "Avez-vous déjà pensé que votre enfant pourrait être sourd ?", "critical_answer": "yes", "weighted": True},
+    {"id": 3,  "fr": "Votre enfant joue-t-il à faire semblant (donner à manger à une poupée, parler au téléphone) ?", "critical_answer": "no", "weighted": False},
+    {"id": 4,  "fr": "Votre enfant aime-t-il grimper sur des choses (escaliers, meubles) ?", "critical_answer": "no", "weighted": False},
+    {"id": 5,  "fr": "Votre enfant fait-il d'étranges mouvements répétitifs avec ses doigts près des yeux ?", "critical_answer": "yes", "weighted": True},
+    {"id": 6,  "fr": "Votre enfant pointe-t-il du doigt pour demander quelque chose ou pour obtenir de l'aide ?", "critical_answer": "no", "weighted": False},
+    {"id": 7,  "fr": "Votre enfant pointe-t-il du doigt pour vous montrer quelque chose d'intéressant ?", "critical_answer": "no", "weighted": False},
+    {"id": 8,  "fr": "Votre enfant s'intéresse-t-il aux autres enfants ?", "critical_answer": "no", "weighted": False},
+    {"id": 9,  "fr": "Votre enfant vous montre-t-il des objets en vous les apportant ou en les soulevant ?", "critical_answer": "no", "weighted": False},
+    {"id": 10, "fr": "Votre enfant répond-il à son prénom quand vous l'appelez ?", "critical_answer": "no", "weighted": False},
+    {"id": 11, "fr": "Quand vous souriez à votre enfant, vous répond-il par un sourire ?", "critical_answer": "no", "weighted": False},
+    {"id": 12, "fr": "Votre enfant est-il dérangé par les bruits du quotidien (aspirateur, musique forte) ?", "critical_answer": "yes", "weighted": True},
+    {"id": 13, "fr": "Votre enfant marche-t-il ?", "critical_answer": "no", "weighted": False},
+    {"id": 14, "fr": "Votre enfant vous regarde-t-il dans les yeux quand vous lui parlez ou le changez ?", "critical_answer": "no", "weighted": False},
+    {"id": 15, "fr": "Votre enfant essaie-t-il de copier ce que vous faites (geste, son) ?", "critical_answer": "no", "weighted": False},
+    {"id": 16, "fr": "Si vous regardez quelque chose, votre enfant regarde-t-il dans la même direction ?", "critical_answer": "no", "weighted": False},
+    {"id": 17, "fr": "Votre enfant essaie-t-il d'attirer votre attention sur lui ?", "critical_answer": "no", "weighted": False},
+    {"id": 18, "fr": "Votre enfant comprend-il quand vous lui dites de faire quelque chose ?", "critical_answer": "no", "weighted": False},
+    {"id": 19, "fr": "Quand il se passe quelque chose de nouveau, votre enfant vous regarde-t-il pour voir votre réaction ?", "critical_answer": "no", "weighted": False},
+    {"id": 20, "fr": "Votre enfant apprécie-t-il les jeux de mouvement (être balancé, sauté) ?", "critical_answer": "no", "weighted": False},
+]
+
+
+@api.get("/tnd/questions")
+async def tnd_questions():
+    """Retourne les 20 questions M-CHAT-R."""
+    return {"questions": MCHAT_R_QUESTIONS, "total": len(MCHAT_R_QUESTIONS), "version": "M-CHAT-R v1.0 FR"}
+
+
+def _compute_tnd_score(answers: Dict[str, str]) -> Dict[str, Any]:
+    """Calcule le score M-CHAT-R standardisé.
+    answers = {"1": "yes"|"no", "2": "yes"|"no", ...}
+    Score brut = nombre de réponses 'à risque' (1 point chacune).
+    Items critiques (Q2, Q5, Q12) ne sont pas pondérés différemment dans la v officielle mais
+    on les signale dans le résultat car ils ont valeur diagnostique forte si à risque.
+    """
+    risk_count = 0
+    critical_risk = []
+    for q in MCHAT_R_QUESTIONS:
+        qid = str(q["id"])
+        ans = (answers.get(qid) or "").lower().strip()
+        if ans not in ("yes", "no"):
+            continue
+        if ans == q["critical_answer"]:
+            risk_count += 1
+            if q["weighted"]:
+                critical_risk.append(q["id"])
+    # Niveau standardisé M-CHAT-R :
+    #   0-2 = Faible (pas d'action immédiate)
+    #   3-7 = Modéré (réévaluation + consultation pédiatre)
+    #   8+  = Élevé (consultation spécialisée prioritaire)
+    if risk_count <= 2:
+        level = "faible"
+    elif risk_count <= 7:
+        level = "modere"
+    else:
+        level = "eleve"
+    return {"score": risk_count, "level": level, "critical_risk": critical_risk, "total_questions": len(MCHAT_R_QUESTIONS)}
+
+
+def _tnd_recommandations(level: str, critical_risk: List[int]) -> Dict[str, Any]:
+    base = {
+        "faible": {
+            "title": "🟢 Risque faible",
+            "message": "Le développement de votre enfant semble se dérouler normalement à ce stade. Continuez vos belles interactions quotidiennes (jeux, lecture, conversation).",
+            "actions": [
+                "Refaire un dépistage dans 6 mois pour suivre l'évolution",
+                "Continuer les rendez-vous pédiatriques de routine",
+                "Stimuler votre enfant via des jeux et activités adaptés à son âge",
+            ],
+            "urgency": "low",
+        },
+        "modere": {
+            "title": "🟠 Risque modéré",
+            "message": "Quelques signaux méritent une attention particulière. Cela ne signifie pas que votre enfant a un trouble — c'est simplement une invitation à consulter un pédiatre qui pourra approfondir.",
+            "actions": [
+                "Prendre RDV avec un pédiatre dans les 4 semaines",
+                "Refaire ce dépistage dans 1 mois",
+                "Tenir un petit journal des comportements observés",
+            ],
+            "urgency": "medium",
+        },
+        "eleve": {
+            "title": "🔴 Risque élevé — Consultation recommandée",
+            "message": "Plusieurs signaux suggèrent qu'un avis médical spécialisé serait précieux. Cela permettra à votre enfant de bénéficier au plus tôt d'un accompagnement adapté si nécessaire.",
+            "actions": [
+                "Prendre RDV avec un pédiatre ou pédopsychiatre dans les 2 semaines",
+                "Demander une orientation vers un centre de référence TND",
+                "Apporter ce rapport au pro de santé lors de la consultation",
+            ],
+            "urgency": "high",
+        },
+    }
+    out = base[level]
+    if critical_risk:
+        out["critical_note"] = f"⚠️ Question(s) critique(s) signalée(s) : {', '.join(f'Q{x}' for x in critical_risk)}. Mentionnez-le au pro de santé."
+    return out
+
+
+class TndScreeningIn(BaseModel):
+    enfant_id: str
+    answers: Dict[str, str]  # {"1": "yes", "2": "no", ...}
+    age_months: Optional[int] = None
+    notes: Optional[str] = ""
+
+
+@api.post("/tnd/screening")
+async def submit_tnd_screening(payload: TndScreeningIn, user=Depends(require_roles("maman", "professionnel"))):
+    """Soumet un dépistage M-CHAT-R et calcule automatiquement le score."""
+    # Vérifier l'enfant appartient bien à la maman (ou contexte pro autorisé)
+    enf = await db.enfants.find_one({"id": payload.enfant_id}, {"_id": 0})
+    if not enf:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and enf.get("maman_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé à cet enfant")
+    # Validation : au moins 80% des questions répondues
+    if len([a for a in payload.answers.values() if a in ("yes", "no")]) < 16:
+        raise HTTPException(400, "Veuillez répondre à au moins 16 questions sur 20.")
+    score_data = _compute_tnd_score(payload.answers)
+    recos = _tnd_recommandations(score_data["level"], score_data["critical_risk"])
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "enfant_id": payload.enfant_id,
+        "enfant_name": enf.get("prenom") or enf.get("name"),
+        "maman_id": enf.get("maman_id"),
+        "submitted_by": user["id"],
+        "submitted_by_role": user["role"],
+        "answers": payload.answers,
+        "score": score_data["score"],
+        "level": score_data["level"],
+        "critical_risk": score_data["critical_risk"],
+        "recommandations": recos,
+        "age_months": payload.age_months,
+        "notes": (payload.notes or "").strip()[:500],
+        "version": "M-CHAT-R v1.0 FR",
+        "created_at": now.isoformat(),
+    }
+    await db.tnd_screenings.insert_one(doc)
+    doc.pop("_id", None)
+    # 📊 Audit
+    try:
+        await _audit_log(user=user, action="tnd_screening_submit", resource_type="TndScreening", resource_id=doc["id"], details={"enfant_id": payload.enfant_id, "level": score_data["level"], "score": score_data["score"]})
+    except Exception:
+        pass
+    return doc
+
+
+@api.get("/tnd/screenings/{enfant_id}")
+async def list_tnd_screenings(enfant_id: str, user=Depends(get_current_user)):
+    enf = await db.enfants.find_one({"id": enfant_id}, {"_id": 0})
+    if not enf:
+        raise HTTPException(404, "Enfant introuvable")
+    if user["role"] == "maman" and enf.get("maman_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    items = await db.tnd_screenings.find({"enfant_id": enfant_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return items
+
+
+@api.get("/tnd/screening/{screening_id}")
+async def get_tnd_screening(screening_id: str, user=Depends(get_current_user)):
+    doc = await db.tnd_screenings.find_one({"id": screening_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Dépistage introuvable")
+    if user["role"] == "maman" and doc.get("maman_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    return doc
 
 
 

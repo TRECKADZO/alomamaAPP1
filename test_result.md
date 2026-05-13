@@ -6270,3 +6270,130 @@ agent_communication:
               (Ville reste toujours visible).
           (3) Optionnel : ajouter testIDs mode-presentiel / mode-tele / mode-domicile
               pour faciliter les futurs tests automatisés.
+
+backend:
+  - task: "Module Suivi Développement & Dépistage TND (M-CHAT-R) — questions/screening/listes/sécurité"
+    implemented: true
+    working: false
+    file: "/app/backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          15/21 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_tnd.py). **1 BUG CRITIQUE BLOQUANT** identifié.
+
+          ✅ GET /api/tnd/questions (public, 9/9) : 200, total=20, version="M-CHAT-R v1.0 FR",
+             20 questions avec ids 1..20, libellés `fr` non-vides, `critical_answer` ∈ {yes,no},
+             `weighted` bool, et **uniquement Q2/Q5/Q12 ont weighted=true**. ✓ Exactement spec.
+
+          ✅ Login maman.test@alomaman.dev / Test1234! + GET /enfants → 1 enfant existant
+             (enfant_id=e41c8152-…). Pas de création nécessaire.
+
+          ❌ POST /api/tnd/screening (faible) → **403 "Accès refusé à cet enfant"**.
+          ❌ POST /api/tnd/screening (modere) → 403.
+          ❌ POST /api/tnd/screening (eleve) → 403.
+          ❌ GET /api/tnd/screenings/{enfant_id} (propre enfant) → 403 "Accès refusé".
+          ❌ Test validation < 16 réponses → 403 au lieu de 400 (jamais atteint).
+          ❌ GET /api/tnd/screening/{screening_id} → skippé (aucune création possible).
+
+          ✅ Sécurité — GET /api/tnd/screenings/{enfant_id_étranger} → 403 ✓
+             (mais passe pour la mauvaise raison, voir RCA ci-dessous).
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          🐛 RCA (Root Cause Analysis) — server.py L11096-11152
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          Le module TND utilise le mauvais nom de champ pour relier un enfant à sa maman.
+          La collection `enfants` stocke l'ownership sous **`user_id`** (cf. L1399
+          `"user_id": user["id"]` dans `create_enfant`, et toutes les autres routes
+          /enfants utilisent `{"user_id": user["id"]}`).
+
+          Or les 3 endpoints TND filtrent sur `enf.get("maman_id")` qui retourne
+          **toujours None** (ce champ n'existe pas en DB). Conséquences :
+
+          • L11100 (POST /tnd/screening) :
+              if user["role"] == "maman" and enf.get("maman_id") != user["id"]:
+                  raise HTTPException(403, "Accès refusé à cet enfant")
+            → None != user["id"] → **VRAI** → 403 systématique pour la propriétaire.
+
+          • L11112 stocke `"maman_id": enf.get("maman_id")` → toujours None dans le doc.
+
+          • L11140 (GET /tnd/screenings/{enfant_id}) : même bug → 403.
+
+          • L11151 (GET /tnd/screening/{screening_id}) : `doc.get("maman_id") != user["id"]`
+            où maman_id est None → 403 pour tout le monde.
+
+          Le test "sécurité" passe par EFFET DE BORD du même bug (None ≠ user_id),
+          PAS parce que la sécurité fonctionne.
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          🛠️ FIX MINIMAL (4 remplacements `maman_id` → `user_id`)
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          Dans /app/backend/server.py :
+
+          (1) L11100 — POST /tnd/screening :
+              -    if user["role"] == "maman" and enf.get("maman_id") != user["id"]:
+              +    if user["role"] == "maman" and enf.get("user_id") != user["id"]:
+
+          (2) L11112 — stockage dans le doc :
+              -        "maman_id": enf.get("maman_id"),
+              +        "maman_id": enf.get("user_id"),
+              (on garde le NOM "maman_id" dans le doc tnd_screenings pour cohérence
+               métier, mais on lit la BONNE source côté enfant).
+
+          (3) L11140 — GET /tnd/screenings/{enfant_id} :
+              -    if user["role"] == "maman" and enf.get("maman_id") != user["id"]:
+              +    if user["role"] == "maman" and enf.get("user_id") != user["id"]:
+
+          (4) L11151 — GET /tnd/screening/{screening_id} : la doc tnd_screenings
+              stocke "maman_id" (clé interne à TND) — ce check reste correct
+              UNE FOIS que (2) est appliqué (le doc contiendra alors le bon owner).
+
+          Après ce fix, les 6 scénarios bloqués doivent passer (faible/modere/eleve,
+          listes, get single, validation<16) ET la sécurité reste correcte
+          (un enfant étranger renverra bien 403).
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          ⚠️ Je n'ai PAS appliqué ce fix — il s'agit d'un bug fonctionnel à corriger
+          côté main agent. Re-tester avec /app/backend_test_tnd.py après le patch.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        🧠 Module TND (M-CHAT-R) — Tests backend exécutés (15/21 PASS).
+
+        ✅ GET /api/tnd/questions (public) : 100% conforme spec — 20 questions,
+           version exacte "M-CHAT-R v1.0 FR", Q2/Q5/Q12 sont bien les seules
+           weighted=true, structure parfaite.
+
+        ❌ BUG BLOQUANT : POST /api/tnd/screening, GET /api/tnd/screenings/{enfant_id}
+           et GET /api/tnd/screening/{screening_id} renvoient TOUS un 403
+           "Accès refusé" même pour la propriétaire légitime de l'enfant.
+
+           Cause racine (server.py L11100, L11112, L11140, L11151) :
+           le module TND filtre les enfants sur `enf.get("maman_id")`, mais la
+           collection `enfants` stocke l'ownership sous `user_id` (cf. L1399
+           dans create_enfant). Donc `enf.get("maman_id")` est toujours None
+           → `None != user["id"]` est toujours vrai → 403 systématique.
+
+           Le test "sécurité enfant étranger → 403" passe par effet de bord
+           (None ≠ user_id), pas parce que le contrôle d'accès est réellement
+           câblé.
+
+        🛠️ FIX : remplacer dans /app/backend/server.py les 4 occurrences
+           `enf.get("maman_id")` / `doc.get("maman_id")` du module TND
+           (L11100, L11112, L11140, L11151 — voir détail dans status_history).
+           Concrètement : `maman_id` → `user_id` quand on lit le doc enfant.
+
+        Après ton patch, relance /app/backend_test_tnd.py — les 6 cas bloqués
+        devraient tous passer (score=0 pour les non-risques, level=faible/
+        modere/eleve attendus, critical_risk contenant 2 pour Q2=yes, etc.).
+
+        Aucun autre régression observée. Pas de fix appliqué de mon côté
+        (responsabilité main agent).
