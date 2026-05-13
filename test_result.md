@@ -6274,9 +6274,9 @@ agent_communication:
 backend:
   - task: "Module Suivi Développement & Dépistage TND (M-CHAT-R) — questions/screening/listes/sécurité"
     implemented: true
-    working: false
+    working: true
     file: "/app/backend/server.py"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
@@ -6362,6 +6362,55 @@ backend:
 
           ⚠️ Je n'ai PAS appliqué ce fix — il s'agit d'un bug fonctionnel à corriger
           côté main agent. Re-tester avec /app/backend_test_tnd.py après le patch.
+      - working: true
+        agent: "testing"
+        comment: |
+          🟢 RETEST après fix `maman_id` → `user_id` par main agent — **35/35 PASS**
+          sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script /app/backend_test_tnd.py).
+
+          ✅ Vérification du patch dans /app/backend/server.py :
+            • L11100 (POST /tnd/screening) : `enf.get("user_id") != user["id"]` ✓
+            • L11112 (storage doc) : `"maman_id": enf.get("user_id")` ✓
+            • L11140 (GET /tnd/screenings/{enfant_id}) : `enf.get("user_id") != user["id"]` ✓
+            • L11151 (GET /tnd/screening/{screening_id}) : `doc.get("maman_id") != user["id"]`
+              (correct car le doc stocke désormais le bon owner via (2))
+
+          ✅ Tous les 6 cas précédemment bloqués passent maintenant :
+            • POST /tnd/screening (faible) → 200, score=0, level="faible", title="🟢 Risque faible"
+            • POST /tnd/screening (modere) → 200, score=5, level="modere"
+            • POST /tnd/screening (eleve, Q2=yes) → 200, score=12, level="eleve", critical_risk=[2]
+            • GET /tnd/screenings/{enfant_id} → 200, array de 3 items triés desc par created_at
+            • GET /tnd/screening/{screening_id} → 200, doc.id et doc.level présents
+            • POST /tnd/screening avec 10 réponses → 400 "Veuillez répondre à au moins 16 questions sur 20."
+
+          ✅ Sécurité préservée :
+            • GET /api/tnd/screenings/{enfant_id_étranger} → 403 "Accès refusé"
+              (par la maman secondaire créée à la volée — vrai contrôle d'ACL, plus
+              effet de bord du bug précédent).
+
+          ✅ GET /api/tnd/questions (public) toujours conforme :
+            • total=20, version="M-CHAT-R v1.0 FR"
+            • ids 1..20, libellés fr OK, critical_answer ∈ {yes,no}, weighted bool
+            • Seules Q2/Q5/Q12 weighted=true.
+
+          Aucun bug détecté. Module TND complètement fonctionnel pour la maman.
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        🟢 RETEST TND — **35/35 PASS** après fix ACL (`maman_id` → `user_id`).
+
+        Les 6 cas qui échouaient en 403 passent désormais :
+          ✅ POST /tnd/screening (faible/modere/eleve) → 200 avec scores et levels conformes
+          ✅ GET /tnd/screenings/{enfant_id} → 200 avec liste triée desc
+          ✅ GET /tnd/screening/{screening_id} → 200 avec doc complet
+          ✅ Validation < 16 réponses → 400 "Veuillez répondre à au moins 16 questions sur 20."
+
+        Sécurité ACL vérifiée fonctionnellement : un enfant_id étranger renvoie bien 403
+        "Accès refusé" via le check `enf.user_id != user.id` (et non plus par effet de bord
+        du bug). GET /tnd/questions public toujours conforme (20 Q, version exacte, Q2/Q5/Q12
+        weighted). Le module TND M-CHAT-R est désormais 100% opérationnel pour la maman.
 
 agent_communication:
     - agent: "testing"

@@ -11097,7 +11097,7 @@ async def submit_tnd_screening(payload: TndScreeningIn, user=Depends(require_rol
     enf = await db.enfants.find_one({"id": payload.enfant_id}, {"_id": 0})
     if not enf:
         raise HTTPException(404, "Enfant introuvable")
-    if user["role"] == "maman" and enf.get("maman_id") != user["id"]:
+    if user["role"] == "maman" and enf.get("user_id") != user["id"]:
         raise HTTPException(403, "Accès refusé à cet enfant")
     # Validation : au moins 80% des questions répondues
     if len([a for a in payload.answers.values() if a in ("yes", "no")]) < 16:
@@ -11109,7 +11109,7 @@ async def submit_tnd_screening(payload: TndScreeningIn, user=Depends(require_rol
         "id": str(uuid.uuid4()),
         "enfant_id": payload.enfant_id,
         "enfant_name": enf.get("prenom") or enf.get("name"),
-        "maman_id": enf.get("maman_id"),
+        "maman_id": enf.get("user_id"),
         "submitted_by": user["id"],
         "submitted_by_role": user["role"],
         "answers": payload.answers,
@@ -11137,7 +11137,7 @@ async def list_tnd_screenings(enfant_id: str, user=Depends(get_current_user)):
     enf = await db.enfants.find_one({"id": enfant_id}, {"_id": 0})
     if not enf:
         raise HTTPException(404, "Enfant introuvable")
-    if user["role"] == "maman" and enf.get("maman_id") != user["id"]:
+    if user["role"] == "maman" and enf.get("user_id") != user["id"]:
         raise HTTPException(403, "Accès refusé")
     items = await db.tnd_screenings.find({"enfant_id": enfant_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
     return items
