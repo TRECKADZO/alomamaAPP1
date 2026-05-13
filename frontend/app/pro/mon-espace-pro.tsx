@@ -2,13 +2,14 @@
  * Mon espace Pro — Hub central de TOUS les outils du professionnel de santé.
  * Organisé en catégories thématiques + recherche.
  */
-import { useState, useMemo } from "react";
-import { useRouter } from "expo-router";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { useRouter, useFocusEffect } from "expo-router";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
+import { api } from "../../lib/api";
 
 type Tool = {
   id: string;
@@ -105,6 +106,20 @@ export default function MonEspacePro() {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [activeCat, setActiveCat] = useState<string>("all");
+  // 🆘 Compteurs des demandes domicile/urgence ouvertes sans proposition du Pro
+  const [urgentOpen, setUrgentOpen] = useState(0);
+  const [totalOpen, setTotalOpen] = useState(0);
+
+  const loadOpenRequests = useCallback(async () => {
+    try {
+      const r = await api.get("/home-request/open");
+      const items: any[] = r.data || [];
+      const myMissing = items.filter((it) => !it.has_my_proposal);
+      setUrgentOpen(myMissing.filter((it) => it.type === "urgence").length);
+      setTotalOpen(myMissing.length);
+    } catch { /* silently ignore */ }
+  }, []);
+  useFocusEffect(useCallback(() => { loadOpenRequests(); }, [loadOpenRequests]));
 
   const filteredCategories = useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -135,6 +150,24 @@ export default function MonEspacePro() {
           <Text style={styles.sub}>{totalTools} outils en un endroit</Text>
         </View>
       </LinearGradient>
+
+      {/* 🆘 Bandeau urgences ouvertes — visible UNIQUEMENT s'il y a au moins 1 urgence non encore traitée */}
+      {urgentOpen > 0 && (
+        <TouchableOpacity
+          style={styles.urgentBanner}
+          onPress={() => router.push("/pro/home-requests")}
+          testID="urgent-banner"
+        >
+          <View style={styles.urgentBadge}>
+            <Text style={styles.urgentBadgeText}>{urgentOpen}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.urgentTitle}>🆘 {urgentOpen} urgence{urgentOpen > 1 ? "s" : ""} sans-RDV en attente</Text>
+            <Text style={styles.urgentSub}>Proposez votre tarif rapidement — paiement immédiat à validation</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={22} color="#fff" />
+        </TouchableOpacity>
+      )}
 
       {/* Recherche */}
       <View style={styles.searchBar}>
@@ -179,7 +212,10 @@ export default function MonEspacePro() {
                 {c.emoji} {c.label} <Text style={styles.catCount}>({c.tools.length})</Text>
               </Text>
               <View style={styles.toolGrid}>
-                {c.tools.map((t) => (
+                {c.tools.map((t) => {
+                  const isHomeReq = t.path === "/pro/home-requests";
+                  const showBadge = isHomeReq && totalOpen > 0;
+                  return (
                   <TouchableOpacity
                     key={t.id}
                     style={styles.toolCard}
@@ -189,10 +225,16 @@ export default function MonEspacePro() {
                     <View style={[styles.toolIcon, { backgroundColor: `${t.color}1F` }]}>
                       <Ionicons name={t.icon as any} size={22} color={t.color} />
                     </View>
+                    {showBadge && (
+                      <View style={styles.toolBadge}>
+                        <Text style={styles.toolBadgeText}>{totalOpen}</Text>
+                      </View>
+                    )}
                     <Text style={styles.toolLabel} numberOfLines={2}>{t.label}</Text>
                     <Text style={styles.toolSub} numberOfLines={2}>{t.sub}</Text>
                   </TouchableOpacity>
-                ))}
+                  );
+                })}
               </View>
             </View>
           ))
@@ -235,6 +277,14 @@ const styles = StyleSheet.create({
   toolGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   toolCard: { width: "48%", padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, ...SHADOW },
   toolIcon: { width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center", marginBottom: 8 },
+  toolBadge: { position: "absolute", top: 8, right: 8, minWidth: 22, height: 22, paddingHorizontal: 6, backgroundColor: "#DC2626", borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  toolBadgeText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  // 🆘 Bandeau urgences
+  urgentBanner: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: SPACING.lg, marginTop: 12, padding: 14, backgroundColor: "#DC2626", borderRadius: RADIUS.md, ...SHADOW },
+  urgentBadge: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
+  urgentBadgeText: { color: "#DC2626", fontSize: 14, fontWeight: "900" },
+  urgentTitle: { color: "#fff", fontSize: 13, fontWeight: "800" },
+  urgentSub: { color: "rgba(255,255,255,0.92)", fontSize: 11, marginTop: 2 },
   toolLabel: { fontSize: 13, fontWeight: "700", color: COLORS.textPrimary },
   toolSub: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2, lineHeight: 14 },
 
