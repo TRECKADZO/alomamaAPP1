@@ -55,6 +55,14 @@ Voir `/app/memory/test_credentials.md`
 - **Revenus transactionnels** : 10% sur chaque RDV payant
 - **Revenus B2B futurs** : API FHIR pour cliniques/hôpitaux partenaires
 
+## Phase 6 — Accessibilité vocale + Offline DMP/TND (Feb 2026)
+Mode vocal complet et mode hors-ligne pour les modules de dépistage médical, optimisés pour mamans peu lettrées en zone rurale.
+- **Composant VoiceQA** réutilisable (`/components/VoiceQA.tsx`) : TTS lecture des questions en français (expo-speech) + STT capture vocale "oui"/"non" tolérante (expo-speech-recognition, fonctionne sur iOS/Android/Web).
+- Détection d'intentions tolérante : "voilà", "ouais", "awo" (Dioula), "absolument", "pas du tout", "ayi" (Dioula), "jamais".
+- Intégré dans le **bilan rapide DMP** (52 jalons / 7 domaines) et le **dépistage TND M-CHAT-R** (20 questions / 0-6 ans).
+- **Mode hors-ligne** : `cachedGet` + `smartPost`/`smartDelete` sur tous les écrans (liste DMP, détail DMP, bilan, liste TND, nouveau TND). Bannière "📡 Hors-ligne" affichée + file d'attente locale flushée automatiquement à la reconnexion.
+- Permissions : `NSSpeechRecognitionUsageDescription` (iOS) + plugin `expo-speech-recognition` configuré.
+
 ## Deferred
 2FA · Mode offline mutations queue · Refactor modulaire backend · Upgrade versions Expo (`npx expo install --fix`)
 

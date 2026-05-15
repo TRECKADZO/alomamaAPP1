@@ -7,21 +7,23 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { api, formatError } from "../../../../lib/api";
+import { cachedGet, smartPost, useOnlineStatus } from "../../../../lib/offline";
+import VoiceQA from "../../../../components/VoiceQA";
 import { COLORS, RADIUS, SHADOW } from "../../../../constants/theme";
 
 export default function TndNew() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const online = useOnlineStatus();
   const [questions, setQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [idx, setIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-
   useEffect(() => {
     (async () => {
       try {
-        const r = await api.get("/tnd/questions");
+        const r = await cachedGet("/tnd/questions");
         setQuestions(r.data?.questions || []);
       } catch (e) { Alert.alert("Erreur", formatError(e)); }
       finally { setLoading(false); }
@@ -74,8 +76,13 @@ export default function TndNew() {
     }
     setSubmitting(true);
     try {
-      const r = await api.post("/tnd/screening", { enfant_id: id, answers });
-      router.replace(`/enfants/${id}/tnd/${r.data.id}` as any);
+      const r = await smartPost("/tnd/screening", { enfant_id: id, answers });
+      if (r.queued) {
+        Alert.alert("📡 Hors-ligne", "Votre dépistage sera envoyé dès que vous serez reconnectée.");
+        router.replace(`/enfants/${id}/tnd` as any);
+      } else {
+        router.replace(`/enfants/${id}/tnd/${r.data.id}` as any);
+      }
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
     finally { setSubmitting(false); }
   };
@@ -99,9 +106,26 @@ export default function TndNew() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {!online && (
+          <View style={{ backgroundColor: "#FEF3C7", padding: 10, borderRadius: 8, marginBottom: 12, flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="cloud-offline" size={16} color="#92400E" />
+            <Text style={{ color: "#92400E", fontSize: 12, fontWeight: "700", flex: 1 }}>Mode hors-ligne. Votre dépistage sera envoyé à la reconnexion.</Text>
+          </View>
+        )}
         <View style={styles.questionBox}>
           <Text style={styles.questionNum}>Question {q.id}</Text>
           <Text style={styles.questionTxt}>{q.fr}</Text>
+          <View style={{ marginTop: 12 }}>
+            <VoiceQA
+              key={`v-${q.id}`}
+              question={q.fr}
+              prefix={`Question ${idx + 1} sur ${total}`}
+              autoRead={false}
+              onYes={() => answer("yes")}
+              onNo={() => answer("no")}
+              color="#8B5CF6"
+            />
+          </View>
         </View>
 
         <View style={styles.actionsRow}>

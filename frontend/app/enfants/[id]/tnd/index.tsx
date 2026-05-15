@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { api, formatError } from "../../../../lib/api";
+import { cachedGet } from "../../../../lib/offline";
 import { COLORS, RADIUS, SHADOW } from "../../../../constants/theme";
 
 const LEVEL_LABEL: Record<string, { label: string; color: string; emoji: string }> = {
@@ -24,7 +25,7 @@ export default function TndList() {
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      const r = await api.get(`/tnd/screenings/${id}`);
+      const r = await cachedGet(`/tnd/screenings/${id}`);
       setItems(r.data || []);
     } catch (e) { Alert.alert("Erreur", formatError(e)); }
     finally { setLoading(false); }

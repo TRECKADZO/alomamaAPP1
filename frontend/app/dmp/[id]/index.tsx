@@ -11,6 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api } from "../../../lib/api";
+import { cachedGet, smartPost, smartDelete } from "../../../lib/offline";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
 
 type Domain = { key: string; label: string; emoji: string; color: string; score: number | null; acquis: number; non_acquis?: number; total_attendus: number; total_milestones: number; alertes: number };
@@ -28,7 +29,7 @@ export default function DmpEnfant() {
 
   const load = async () => {
     try {
-      const r = await api.get(`/enfants/${id}/dmp`);
+      const r = await cachedGet(`/enfants/${id}/dmp`);
       setData(r.data);
     } catch (e: any) {
       Alert.alert("Erreur", "Impossible de charger le bilan");
@@ -44,9 +45,9 @@ export default function DmpEnfant() {
     try {
       // Si même réponse → on annule (toggle)
       if (item.response === value) {
-        await api.delete(`/enfants/${id}/dmp/${item.id}`);
+        await smartDelete(`/enfants/${id}/dmp/${item.id}`);
       } else {
-        await api.post(`/enfants/${id}/dmp/${item.id}`, { response: value });
+        await smartPost(`/enfants/${id}/dmp/${item.id}`, { response: value });
       }
       load();
     } catch (e: any) {

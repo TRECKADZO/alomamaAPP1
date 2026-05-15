@@ -11,6 +11,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api } from "../../../lib/api";
+import { cachedGet, smartPost } from "../../../lib/offline";
+import VoiceQA from "../../../components/VoiceQA";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
 
 type Item = {
@@ -63,7 +65,7 @@ export default function BilanRapide() {
 
   const load = async () => {
     try {
-      const r = await api.get(`/enfants/${id}/dmp/bilan-rapide`);
+      const r = await cachedGet(`/enfants/${id}/dmp/bilan-rapide`);
       setData(r.data);
     } catch (e: any) {
       Alert.alert("Erreur", "Impossible de démarrer le bilan");
@@ -89,7 +91,7 @@ export default function BilanRapide() {
     if (!item) return;
     setSubmitting(true);
     try {
-      await api.post(`/enfants/${id}/dmp/${item.id}`, { response: value });
+      await smartPost(`/enfants/${id}/dmp/${item.id}`, { response: value });
       setResults((prev) => ({ ...prev, [item.id]: value }));
       animateNext();
       // Avancer
@@ -271,6 +273,18 @@ export default function BilanRapide() {
           <Text style={styles.question}>
             {data.enfant?.nom || "L'enfant"} y arrive ?
           </Text>
+
+          {/* Mode vocal */}
+          <View style={{ alignItems: "center", marginBottom: 12 }}>
+            <VoiceQA
+              key={`vqa-${item.id}`}
+              question={`${item.titre}. ${item.description}. ${data.enfant?.nom || "Votre enfant"} y arrive ?`}
+              prefix={`Item ${idx + 1} sur ${data.items.length}`}
+              onYes={() => respond("oui")}
+              onNo={() => respond("non")}
+              color={domainColor}
+            />
+          </View>
 
           {/* Boutons Oui / Non — gros */}
           <View style={styles.bigBtnRow}>

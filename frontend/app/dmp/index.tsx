@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api } from "../../lib/api";
+import { cachedGet } from "../../lib/offline";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../constants/theme";
 
 export default function DmpIndex() {
@@ -17,7 +18,7 @@ export default function DmpIndex() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get("/enfants").then((r) => setEnfants(r.data || [])).finally(() => setLoading(false));
+    cachedGet("/enfants").then((r) => setEnfants(r.data || [])).finally(() => setLoading(false));
   }, []);
 
   const ageLabel = (iso: string) => {

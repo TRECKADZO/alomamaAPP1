@@ -14,7 +14,8 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Scanner ordonnances et prendre photos médicales",
         "NSPhotoLibraryUsageDescription": "Partager photos dans dossier médical",
-        "NSMicrophoneUsageDescription": "Téléconsultation avec les professionnels",
+        "NSMicrophoneUsageDescription": "Téléconsultation et mode vocal des questionnaires",
+        "NSSpeechRecognitionUsageDescription": "Répondre à la voix aux questionnaires DMP et TND",
         "NSLocationWhenInUseUsageDescription": "Trouver les centres de santé près de vous"
       }
     },
@@ -81,6 +82,14 @@
         }
       ],
       "expo-web-browser",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Pour répondre à la voix aux questionnaires DMP et TND",
+          "speechRecognitionPermission": "Pour reconnaître votre réponse oui/non",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+        }
+      ],
       "./plugins/with-remove-permissions.js"
     ],
     "experiments": {
