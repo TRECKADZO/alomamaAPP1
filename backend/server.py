@@ -11153,6 +11153,119 @@ async def get_tnd_screening(screening_id: str, user=Depends(get_current_user)):
     return doc
 
 
+# ============================================================================
+# 🤰 GROSSESSE + — Module premium d'accompagnement semaine par semaine
+# ============================================================================
+# Inspiré de Pregnancy+ (Philips), adapté au contexte ivoirien.
+# Phase 1 MVP : tableau de bord + contenu éducatif 4 → 41 semaines.
+
+# Contenu hebdomadaire condensé. Sources : OMS, INSPQ, recommandations ivoiriennes.
+# Format : {week: {size_cm, weight_g, fruit, emoji, dev, changes, tip}}
+PREGNANCY_WEEKLY = {
+    4:  {"size_cm": 0.1, "weight_g": 0,    "fruit": "graine de pavot",     "emoji": "🌱", "dev": "L'embryon s'implante dans l'utérus. Les premières cellules nerveuses se forment.", "changes": "Vous ne ressentez peut-être rien encore. Possible légère fatigue, sensibilité des seins.", "tip": "Commencez l'acide folique (5 mg/jour). Évitez alcool, tabac et automédication."},
+    5:  {"size_cm": 0.2, "weight_g": 0,    "fruit": "grain de sésame",      "emoji": "✨", "dev": "Le cœur commence à battre. Tube neural en formation.", "changes": "Premiers signes possibles : retard de règles, nausées légères.", "tip": "Prenez RDV pour votre première CPN (consultation prénatale)."},
+    6:  {"size_cm": 0.5, "weight_g": 0,    "fruit": "lentille",             "emoji": "🫘", "dev": "Yeux, oreilles, membres en formation. Cœur bat ~110 fois/min.", "changes": "Nausées plus fréquentes. Envie d'uriner souvent.", "tip": "Mangez en petites quantités fréquemment pour limiter les nausées."},
+    7:  {"size_cm": 1.0, "weight_g": 1,    "fruit": "myrtille",             "emoji": "🫐", "dev": "Le cerveau se développe rapidement. Doigts visibles.", "changes": "Fatigue intense possible. Hypersalivation.", "tip": "Reposez-vous. Le 1er trimestre est physiquement éprouvant — c'est normal."},
+    8:  {"size_cm": 1.6, "weight_g": 1,    "fruit": "haricot",              "emoji": "🫛", "dev": "Le bébé bouge déjà ses bras et jambes (vous ne le sentez pas encore).", "changes": "Sensibilité des seins très marquée. Sautes d'humeur.", "tip": "Échographie de datation entre semaines 8 et 12."},
+    9:  {"size_cm": 2.3, "weight_g": 2,    "fruit": "cerise",               "emoji": "🍒", "dev": "Tous les organes principaux sont en place. Le bébé est officiellement un fœtus.", "changes": "Possibles ballonnements, constipation.", "tip": "Buvez 1,5 L d'eau/jour minimum. Fibres ++."},
+    10: {"size_cm": 3.1, "weight_g": 4,    "fruit": "fraise",               "emoji": "🍓", "dev": "Empreintes digitales visibles. Le bébé avale du liquide amniotique.", "changes": "Nausées peuvent commencer à diminuer.", "tip": "Annoncez la grossesse à votre entourage si vous le souhaitez."},
+    11: {"size_cm": 4.1, "weight_g": 7,    "fruit": "citron vert",          "emoji": "🍋", "dev": "Le bébé peut bâiller, se mettre dans toutes les positions.", "changes": "Premières envies alimentaires. Légère prise de poids.", "tip": "Évitez les fromages au lait cru, charcuterie, poisson cru (listeria)."},
+    12: {"size_cm": 5.4, "weight_g": 14,   "fruit": "prune",                "emoji": "🍑", "dev": "Tous les muscles fonctionnent. Le sexe peut commencer à être visible.", "changes": "Fin du 1er trimestre — vous respirez !", "tip": "1ère échographie morphologique entre 11 et 13 SA + dépistage T21."},
+    13: {"size_cm": 7.4, "weight_g": 23,   "fruit": "pêche",                "emoji": "🍑", "dev": "Cordes vocales en formation. Le bébé commence à entendre.", "changes": "Énergie revient. Faim accrue.", "tip": "Parlez à votre bébé — il entend votre voix dès maintenant."},
+    14: {"size_cm": 8.7, "weight_g": 43,   "fruit": "citron",               "emoji": "🍋", "dev": "Le bébé fait des grimaces, fronce les sourcils.", "changes": "Le ventre commence à s'arrondir.", "tip": "Pensez aux vêtements de grossesse confortables."},
+    15: {"size_cm": 10.1,"weight_g": 70,   "fruit": "pomme",                "emoji": "🍎", "dev": "Le bébé entend votre cœur. Cheveux et sourcils se forment.", "changes": "Peau du visage parfois plus pigmentée (masque de grossesse).", "tip": "Protégez votre visage du soleil ; appliquez écran solaire."},
+    16: {"size_cm": 11.6,"weight_g": 100,  "fruit": "avocat",               "emoji": "🥑", "dev": "Mouvements de plus en plus coordonnés. Le bébé suce son pouce.", "changes": "Premiers mouvements possibles (pour les 2e grossesses).", "tip": "Mangez riche en fer (foie, lentilles) pour prévenir l'anémie."},
+    17: {"size_cm": 13,  "weight_g": 140,  "fruit": "poire",                "emoji": "🍐", "dev": "Le bébé a maintenant des empreintes uniques.", "changes": "Ventre rond visible. Possible douleurs ligamentaires.", "tip": "Marchez doucement 30 min/jour. Pas de sports violents."},
+    18: {"size_cm": 14.2,"weight_g": 190,  "fruit": "poivron",              "emoji": "🫑", "dev": "Le bébé entend distinctement les sons extérieurs.", "changes": "Premiers vrais mouvements ressentis (1ère grossesse).", "tip": "Faites jouer de la musique douce — le bébé adore."},
+    19: {"size_cm": 15.3,"weight_g": 240,  "fruit": "mangue",               "emoji": "🥭", "dev": "Verbix caséeuse (couche protectrice) recouvre la peau.", "changes": "Possible essoufflement à l'effort.", "tip": "Préférez petites portions et plusieurs collations légères."},
+    20: {"size_cm": 16.4,"weight_g": 300,  "fruit": "banane",               "emoji": "🍌", "dev": "Mi-grossesse 🎉 ! Le bébé pèse environ 300 g.", "changes": "Vous sentez nettement les coups.", "tip": "2e échographie morphologique entre 20 et 25 SA."},
+    21: {"size_cm": 26.7,"weight_g": 360,  "fruit": "carotte",              "emoji": "🥕", "dev": "Le bébé avale jusqu'à 250 ml de liquide amniotique/jour.", "changes": "Appétit important. Léger gonflement des chevilles.", "tip": "Réduisez le sel pour limiter la rétention d'eau."},
+    22: {"size_cm": 27.8,"weight_g": 430,  "fruit": "papaye",               "emoji": "🍈", "dev": "Le sens du goût se développe. Le bébé sourit parfois.", "changes": "Insomnies possibles. Crampes nocturnes.", "tip": "Magnésium (banane, chocolat noir) pour les crampes."},
+    23: {"size_cm": 28.9,"weight_g": 500,  "fruit": "noix de coco",         "emoji": "🥥", "dev": "Poumons se développent vite. Première graisse brune.", "changes": "Vergetures possibles. Démangeaisons du ventre.", "tip": "Hydratez le ventre avec une huile végétale (karité, coco)."},
+    24: {"size_cm": 30,  "weight_g": 600,  "fruit": "épi de maïs",          "emoji": "🌽", "dev": "Cellules visuelles complètes. Le bébé peut respirer brièvement hors utérus si naissance prématurée.", "changes": "Dépistage du diabète gestationnel à faire.", "tip": "Test HGPO entre 24 et 28 SA — important pour le bébé."},
+    25: {"size_cm": 34.6,"weight_g": 660,  "fruit": "chou-fleur",           "emoji": "🥦", "dev": "Le bébé répond aux stimuli (lumière, sons forts).", "changes": "Possible hypertension à surveiller.", "tip": "Mesurez votre tension régulièrement. Signalez si > 140/90."},
+    26: {"size_cm": 35.6,"weight_g": 760,  "fruit": "salade verte",         "emoji": "🥬", "dev": "Cycles veille/sommeil distincts.", "changes": "Ventre dur par moments (contractions de Braxton-Hicks).", "tip": "Reposez-vous si contractions douloureuses. Sinon, c'est normal."},
+    27: {"size_cm": 36.6,"weight_g": 875,  "fruit": "chou",                 "emoji": "🥬", "dev": "Fin du 2e trimestre. Le bébé rêve (REM detected).", "changes": "Fatigue revient progressivement.", "tip": "Inscrivez-vous aux cours de préparation à l'accouchement."},
+    28: {"size_cm": 37.6,"weight_g": 1005, "fruit": "aubergine",            "emoji": "🍆", "dev": "Yeux ouverts. Cils visibles. Réflexe de succion.", "changes": "Début du 3e trimestre. Ventre proéminent.", "tip": "Échographie de croissance entre 28 et 32 SA."},
+    29: {"size_cm": 38.6,"weight_g": 1150, "fruit": "courge butternut",     "emoji": "🎃", "dev": "Le cerveau a 100 milliards de neurones.", "changes": "Difficultés à dormir sur le ventre.", "tip": "Dormez sur le côté gauche pour favoriser circulation."},
+    30: {"size_cm": 39.9,"weight_g": 1320, "fruit": "courgette",            "emoji": "🥒", "dev": "Le bébé prend du poids rapidement (~200 g/semaine).", "changes": "Plus de mouvements et plus vigoureux.", "tip": "Comptez les mouvements : 10 mouvements en 2h = normal."},
+    31: {"size_cm": 41.1,"weight_g": 1500, "fruit": "ananas",               "emoji": "🍍", "dev": "Os complètement formés mais souples.", "changes": "Souffle court fréquent.", "tip": "Respirez profondément. Évitez position allongée sur le dos."},
+    32: {"size_cm": 42.4,"weight_g": 1700, "fruit": "courge", "emoji": "🎃", "dev": "Le bébé se met (souvent) en position tête en bas.", "changes": "Possibles œdèmes mains/pieds.", "tip": "Surélevez vos jambes 15 min/jour. Tension à surveiller."},
+    33: {"size_cm": 43.7,"weight_g": 1920, "fruit": "céleri-rave",          "emoji": "🌰", "dev": "Système immunitaire en développement via anticorps maternels.", "changes": "Bébé prend de la place — souffle court continue.", "tip": "Préparez votre sac maternité — listes dispos dans l'app."},
+    34: {"size_cm": 45,  "weight_g": 2150, "fruit": "melon cantaloup",      "emoji": "🍈", "dev": "Ongles atteignent le bout des doigts.", "changes": "Faux travail possible (contractions irrégulières).", "tip": "Sachez distinguer fausses contractions du vrai travail : régularité + durée."},
+    35: {"size_cm": 46.2,"weight_g": 2380, "fruit": "ananas Victoria",      "emoji": "🍍", "dev": "Poumons matures à 95%. Le bébé pourrait survivre sans aide.", "changes": "Le bébé descend dans le bassin.", "tip": "Préparez le trajet jusqu'à votre maternité. Notez les numéros d'urgence."},
+    36: {"size_cm": 47.4,"weight_g": 2620, "fruit": "laitue romaine",       "emoji": "🥬", "dev": "Vernix caséeuse s'épaissit. Bébé prêt à naître.", "changes": "Col commence parfois à se modifier.", "tip": "Visite prénatale toutes les semaines maintenant."},
+    37: {"size_cm": 48.6,"weight_g": 2860, "fruit": "blette",               "emoji": "🥬", "dev": "Grossesse à terme dès cette semaine !", "changes": "Vous attendez le moment...", "tip": "Sac maternité prêt près de la porte. Contact maternité validé."},
+    38: {"size_cm": 49.8,"weight_g": 3080, "fruit": "poireau",              "emoji": "🥬", "dev": "Empreintes du cerveau profondes. Cordes vocales prêtes.", "changes": "Contractions plus rapprochées.", "tip": "Comptez les espaces entre contractions. À l'hôpital si < 5 min régulièrement."},
+    39: {"size_cm": 50.7,"weight_g": 3290, "fruit": "petite pastèque",      "emoji": "🍉", "dev": "Vernix protège la peau. Liquide amniotique diminue.", "changes": "Sensation de pression pelvienne.", "tip": "Reposez-vous au maximum. Restez près du téléphone."},
+    40: {"size_cm": 51.2,"weight_g": 3460, "fruit": "petite citrouille",    "emoji": "🎃", "dev": "Bébé prêt à découvrir le monde 🌍 !", "changes": "Vous pouvez accoucher à tout moment.", "tip": "Patientez sereinement. Promenades douces si col favorable."},
+    41: {"size_cm": 51.7,"weight_g": 3600, "fruit": "potiron",              "emoji": "🎃", "dev": "Bébé a dépassé le terme officiel.", "changes": "Suivi rapproché — déclenchement possible.", "tip": "Surveillance accrue. Consultez la maternité quotidiennement."},
+}
+
+
+@api.get("/grossesse-plus/week/{week}")
+async def grossesse_week(week: int):
+    """Retourne la fiche éducative pour une semaine donnée (4-41)."""
+    if week < 4 or week > 41:
+        raise HTTPException(400, "Semaine hors plage (4-41).")
+    data = PREGNANCY_WEEKLY.get(week)
+    if not data:
+        raise HTTPException(404, "Fiche introuvable")
+    trimester = 1 if week <= 13 else (2 if week <= 27 else 3)
+    return {
+        "week": week,
+        "trimester": trimester,
+        **data,
+    }
+
+
+@api.get("/grossesse-plus/dashboard")
+async def grossesse_dashboard(user=Depends(require_roles("maman"))):
+    """Tableau de bord : âge grossesse + DPA + fiche semaine actuelle."""
+    g = await db.grossesse.find_one({"user_id": user["id"]}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "Aucune grossesse active. Renseignez votre date de dernières règles dans votre profil.")
+    ddr = g.get("ddr")
+    if not ddr:
+        raise HTTPException(400, "Date de dernières règles manquante.")
+    try:
+        ddr_dt = datetime.fromisoformat(ddr.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(400, "Format DDR invalide")
+    now = datetime.now(timezone.utc)
+    delta = now - ddr_dt
+    days_total = delta.days
+    weeks = days_total // 7
+    days = days_total % 7
+    # DPA = DDR + 280 jours
+    dpa = ddr_dt + timedelta(days=280)
+    days_to_dpa = (dpa - now).days
+    week_for_content = max(4, min(41, weeks))
+    fiche = PREGNANCY_WEEKLY.get(week_for_content) or {}
+    trimester = 1 if week_for_content <= 13 else (2 if week_for_content <= 27 else 3)
+    return {
+        "weeks": weeks,
+        "days": days,
+        "label": f"{weeks} semaines et {days} jour{'s' if days > 1 else ''}",
+        "trimester": trimester,
+        "dpa": dpa.isoformat(),
+        "days_to_dpa": days_to_dpa,
+        "current_week_content": {"week": week_for_content, "trimester": trimester, **fiche},
+        "total_weeks_available": list(range(4, 42)),
+    }
+
+
+@api.get("/grossesse-plus/weeks")
+async def list_all_weeks():
+    """Liste des 38 semaines avec leurs miniatures."""
+    out = []
+    for w in range(4, 42):
+        d = PREGNANCY_WEEKLY.get(w)
+        if d:
+            out.append({"week": w, "trimester": 1 if w <= 13 else (2 if w <= 27 else 3), "fruit": d["fruit"], "emoji": d["emoji"], "size_cm": d["size_cm"], "weight_g": d["weight_g"]})
+    return out
+
+
 
 # 🔄 Re-include final : enregistre toutes les routes ajoutées après les précédents include_router
 app.include_router(api)
