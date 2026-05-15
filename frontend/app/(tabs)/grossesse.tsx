@@ -135,6 +135,18 @@ export default function Grossesse() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: SPACING.xl, paddingTop: 10, paddingBottom: 60 }}>
+        {/* Premium CTA */}
+        <TouchableOpacity style={styles.premiumBanner} onPress={() => router.push("/grossesse-plus" as any)}>
+          <View style={styles.premiumIcon}>
+            <Text style={{ fontSize: 24 }}>💎</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.premiumTitle}>Grossesse + Premium</Text>
+            <Text style={styles.premiumSub}>Suivi médical complet, journal, contractions, alertes intelligentes...</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#fff" />
+        </TouchableOpacity>
+
         {!g ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>🤰</Text>
@@ -359,4 +371,8 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, color: COLORS.textPrimary, fontWeight: "600", marginBottom: 6, marginTop: 10 },
   modalInput: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: 12, color: COLORS.textPrimary },
   helperTxt: { color: COLORS.textMuted, fontSize: 11, marginTop: 4, fontStyle: "italic" },
+  premiumBanner: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: "#7C3AED", borderRadius: RADIUS.lg, marginBottom: 16 },
+  premiumIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+  premiumTitle: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  premiumSub: { color: "rgba(255,255,255,0.85)", fontSize: 12, marginTop: 2 },
 });

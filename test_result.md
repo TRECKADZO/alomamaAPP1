@@ -566,6 +566,136 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend:
+  - task: "Grossesse + Premium Module - Complete Backend"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          42/42 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_grossesse_plus.py).
+
+          ✅ 1. CONTENU HEBDOMADAIRE PUBLIC (4/4)
+          • GET /grossesse-plus/week/12 → 200 avec size_cm, weight_g, fruit, emoji, dev, changes, tip, trimester.
+          • GET /week/3 → 400 (week<4) ; GET /week/42 → 400 (week>41).
+          • GET /weeks → 38 fiches (week 4 à 41) avec emoji, fruit, size, weight.
+
+          ✅ 2. DASHBOARD + PREMIUM GATING (5/5)
+          • Premium maman → 200 avec weeks=23, days=4, dpa=2026-09-08, days_to_dpa, progression_pct=57, current_week_content, consent_partage_pro.
+          • No auth → 401 Unauthorized.
+          • Pro user → 403 Accès refusé (require_roles("maman")).
+          • Non-premium maman → 402 avec detail.error="premium_required" + upgrade_url="/premium".
+          • /tracking non-premium → 402 idem.
+
+          ✅ 3. SETUP GROSSESSE (4/4)
+          • {source=ddr, date_debut=2026-01-01} → 200 active=True.
+          • {source=dpa, date_terme=2026-10-15} → 200 ; DDR calculée rétroactivement à 2026-01-08 (=DPA-280j) ✓.
+          • {source=ddr} sans date_debut → 400 "Date de dernières règles requise".
+          • {source=dpa} sans date_terme → 400 "Date prévue d'accouchement requise pour cette source".
+
+          ✅ 4. TRACKING MÉDICAL + ALERTES (7/7)
+          • POST {poids=62.5, tension=145/92} → 200, alerts=[(warning, "Tension élevée")].
+          • POST {tension=165/115} → 200, alerts=[(critical, "Tension très élevée")] (pré-éclampsie).
+          • POST {glycemie=1.45} → 200, alerts=[(critical, "Glycémie très élevée")] (diabète gestationnel).
+          • POST {temperature=38.7} → 200, alerts=[(critical, "Fièvre")] (paludisme/infection).
+          • POST {poids=62.5} puis {poids=64.5} (+2kg en SA≥14) → 200, alerts=[(warning, "Prise de poids rapide")].
+          • GET /tracking retourne items[], weight_series[], tension_series[], count.
+          • DELETE /tracking/{tid} → 200 {deleted:true}.
+
+          ✅ 5. JOURNAL (5/5)
+          • POST {content, type=souvenir, mood=heureuse} → 200.
+          • POST {content, type=echographie, photo_base64=data:image/jpeg;base64,…} → 200 avec photo stockée.
+          • POST content="" → 200 (note : modèle Pydantic sans min_length, pas d'erreur de validation côté backend — comportement actuel).
+          • GET /journal → liste desc par created_at.
+          • DELETE /journal/{jid} → 200 {deleted:true}.
+
+          ✅ 6. CONTRACTIONS COUNTER (3/3)
+          • POST {started_at, ended_at=start+45s, intensity=moyenne} → 200 duration_sec=45.
+          • 5 contractions supplémentaires à intervalles ~3 min (toutes dans les 25 dernières minutes) → GET /contractions advice.level="critical" message "Contractions très rapprochées (< 5 min). Rendez-vous à la maternité maintenant." ✓.
+          • DELETE /contractions/{cid} → 200.
+
+          ✅ 7. TROUSSEAU CHECKLIST (3/3)
+          • Premier GET → 17 items par défaut (Pour maman, Pour bébé, Administratif) chacun avec id UUID, contexte ivoirien (CMU, pagne, livret de famille…).
+          • PATCH avec 5 items done=true → 200.
+          • GET suivant → 17 items dont 5 marqués done=true (persistance OK).
+
+          ✅ 8. CONSENT GRANULAIRE (3/3)
+          • POST {partage_pro:true} → 200 {consent_partage_pro:true, _centre:false, _famille:false}.
+          • GET /dashboard reflète consent_partage_pro=true.
+          • POST {partage_centre:true, partage_famille:false} → 200, pro reste true, centre passe true, famille false.
+
+          ✅ 9. BREATHING (1/1)
+          • GET /breathing → 4 exercices ids=[carre, vague, cohérence, accouchement] avec steps[] phase+seconds.
+
+          ✅ 10. CPN SCHEDULE (1/1)
+          • GET /cpn → current_week=23, 10 RDV au calendrier, past=4 (SA ≤23), upcoming=6, next={"week":24, "title":"Test HGPO (diabète gestationnel)", important:true}.
+
+          ✅ 11. DECLARER NAISSANCE (4/4)
+          • POST {nom:"Bébé Test Naissance", sexe:"F", date_naissance:"2026-08-15"} → 200 success=true ; enfant créé.
+          • GET /enfants inclut le nouveau bébé.
+          • GET /dashboard après déclaration → 404 "Aucune grossesse active. Configurez d'abord votre grossesse dans l'onglet Grossesse."
+          • POST /setup ddr=2025-12-01 recrée la grossesse → 200.
+
+          ✅ 12. PREMIUM GATING ACL (2/2)
+          • Login pro@alomaman.dev → GET /grossesse-plus/dashboard → 403 (role!="maman").
+          • Désactivation premium côté DB (premium=False) → GET /tracking → 402 detail.error="premium_required".
+
+          NOTES :
+          • Aucun bug critique détecté.
+          • Note mineure (non bloquante) : le modèle JournalIn n'a pas de validation min_length sur content, donc content="" est accepté (200). Si voulu strict, ajouter Field(..., min_length=1) sur JournalIn.content L11531.
+          • Cleanup complet effectué : grossesse rétablie à 2025-12-01, premium ré-activé pour 30 jours, tracking/journal/contractions/enfant de test supprimés. Idempotent pour futures exécutions.
+
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Module Grossesse + premium complet inspiré de Pregnancy+ (Philips), adapté contexte ivoirien.
+
+          ENDPOINTS (tous protégés par _require_premium_maman sauf weeks publiques) :
+          - GET  /api/grossesse-plus/week/{week} : fiche éducative semaine 4-41 (publique)
+          - GET  /api/grossesse-plus/weeks : liste 38 semaines (publique)
+          - GET  /api/grossesse-plus/dashboard : SA + DPA + progression + fiche semaine
+          - POST /api/grossesse-plus/setup : DDR/DPA/écho + groupe sanguin + consentement
+          - POST /api/grossesse-plus/tracking : poids, tension, glycémie, hauteur utérine, symptômes
+            + ALERTES INTELLIGENTES (pré-éclampsie, diabète, prise poids excessive, mouvements bas, fièvre)
+          - GET  /api/grossesse-plus/tracking : historique + courbes poids/tension
+          - DELETE /api/grossesse-plus/tracking/{tid}
+          - POST/GET/DELETE /api/grossesse-plus/journal : journal + photos écho (base64) + humeur
+          - POST/GET/DELETE /api/grossesse-plus/contractions : compteur + analyse intervalles
+          - GET/PATCH /api/grossesse-plus/trousseau : checklist (17 items par défaut, contexte ivoirien)
+          - POST /api/grossesse-plus/consent : consentement granulaire (pro/centre/famille)
+          - GET  /api/grossesse-plus/breathing : 4 exercices respiration (carrée, vague, cohérence, accouchement)
+          - GET  /api/grossesse-plus/cpn : calendrier CPN (10 RDV importants avec conseils)
+          - POST /api/grossesse-plus/declarer-naissance : clôture grossesse + auto-création carnet enfant
+
+          GATING PREMIUM : _require_premium_maman() retourne 402 (premium_required) si non Premium ou rôle != maman.
+
+          TESTS MANUELS RÉUSSIS (curl) :
+          - Dashboard : weeks=23, days=4, DPA correcte (2026-09-08)
+          - Tracking POST : alerte "Tension élevée" générée pour 145/92 mmHg
+          - Trousseau : auto-init avec 17 items contextuels (pagne, CMU, etc.)
+          - Contractions : durée + advice généré
+          - CPN : current_week=23, schedule complet, next RDV correct
+          - Breathing : 4 exercices avec steps phases retournés
+
+          TESTING REQUIS :
+          1. /grossesse-plus/dashboard avec/sans Premium (402)
+          2. /grossesse-plus/setup avec DDR vs DPA vs écho
+          3. /grossesse-plus/tracking : tester chaque alerte (tension critique 160/110, glycémie 1.4, fièvre 38.5, gain >1.5kg)
+          4. /grossesse-plus/journal : POST avec photo_base64 + DELETE
+          5. /grossesse-plus/contractions : 5 contractions rapides → advice critical
+          6. /grossesse-plus/trousseau : GET initial + PATCH avec items modifiés
+          7. /grossesse-plus/consent : updates partiels
+          8. /grossesse-plus/cpn : current_week dynamique
+          9. /grossesse-plus/declarer-naissance : vérif création enfant + clôture grossesse + active=False
+
+metadata_grossesse_plus:
+
 frontend:
   - task: "Bannière rouge demande d'accès au dossier médical (Maman home)"
     implemented: true
@@ -6553,3 +6683,39 @@ agent_communication:
         soit retourné à TOUS les pros (peu importe leur config domicile/tarifs). Le frontend est
         correct et affichera le bandeau + badge automatiquement.
 
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        ✅ Module Grossesse + Premium testé end-to-end — 42/42 PASS (script /app/backend_test_grossesse_plus.py).
+        Tous les endpoints /api/grossesse-plus/* fonctionnent correctement.
+
+        DÉTAIL DES TESTS :
+          1. Public weekly (week/{w}, weeks) — bornes 4-41 validées, 38 fiches retournées
+          2. Dashboard premium-gated — 200 maman premium (weeks=23, dpa=2026-09-08, progression=57%),
+             401 no auth, 403 pro, 402 maman non-premium avec detail.error="premium_required"
+          3. Setup ddr/dpa — DPA→DDR rétroactif OK (DPA-280j) ; 400 si date manquante
+          4. Tracking + alertes intelligentes :
+             • Tension 145/92 → WARNING "Tension élevée"
+             • Tension 165/115 → CRITICAL "Tension très élevée"
+             • Glycémie 1.45 → CRITICAL diabète gestationnel
+             • Fièvre 38.7 → CRITICAL paludisme/infection
+             • Prise poids +2kg → WARNING "Prise de poids rapide"
+             • GET retourne items[] + weight_series[] + tension_series[]
+          5. Journal (note/echographie/souvenir avec photo_base64 + mood) — CRUD complet
+          6. Contractions counter — duration_sec calculé exactement (45s) ;
+             6 contractions à ~3 min d'intervalle → advice.level="critical" "Maternité maintenant"
+          7. Trousseau 17 items par défaut (contexte ivoirien : pagne, CMU, livret famille) + persistance done
+          8. Consent granulaire pro/centre/famille — updates partiels OK, reflété dans dashboard
+          9. Breathing — 4 exercices ids=[carre, vague, cohérence, accouchement] avec steps[]
+         10. CPN schedule — current_week=23 dynamique, 10 RDV, past=4, next=HGPO week 24
+         11. Déclarer naissance — crée enfant, ferme grossesse (active=False), dashboard→404 ;
+             /enfants inclut le nouveau bébé
+         12. ACL : pro=403, non-premium=402 OK avec detail.error="premium_required"
+
+        NOTE MINEURE NON BLOQUANTE :
+        • JournalIn.content ne valide pas min_length au niveau Pydantic (content="" accepté à 200).
+          Si voulu strict, ajouter Field(..., min_length=1) sur JournalIn.content L11531.
+
+        CLEANUP : grossesse maman remise à date_debut=2025-12-01, premium réactivé 30j,
+        tracking/journal/contractions/enfant de test supprimés. Idempotent pour futures exécutions.

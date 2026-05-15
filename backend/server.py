@@ -11203,6 +11203,65 @@ PREGNANCY_WEEKLY = {
 }
 
 
+# ----------------------------------------------------------------------
+# Helpers premium et résolution de la grossesse active
+# ----------------------------------------------------------------------
+def _require_premium_maman(user: dict):
+    """Garde-fou Premium pour le module Grossesse +."""
+    if user.get("role") != "maman":
+        raise HTTPException(403, "Réservé aux mamans")
+    if not is_premium_active(user):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "premium_required",
+                "message": "Le module Grossesse + est réservé aux abonnées Premium (5 000 FCFA/mois).",
+                "upgrade_url": "/premium",
+            },
+        )
+
+
+async def _get_active_grossesse(user_id: str):
+    """Retourne la grossesse active de la maman ou None."""
+    g = await db.grossesses.find_one(
+        {"user_id": user_id, "active": True}, {"_id": 0}
+    )
+    return g
+
+
+def _compute_dpa(date_debut_iso: str, date_terme_iso: Optional[str]) -> datetime:
+    """DPA = soit DPA explicite, soit DDR + 280 jours. Toujours retourne un datetime tz-aware UTC."""
+    if date_terme_iso:
+        try:
+            d = datetime.fromisoformat(date_terme_iso.replace("Z", "+00:00"))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            return d
+        except Exception:
+            pass
+    ddr = datetime.fromisoformat(date_debut_iso.replace("Z", "+00:00"))
+    if ddr.tzinfo is None:
+        ddr = ddr.replace(tzinfo=timezone.utc)
+    return ddr + timedelta(days=280)
+
+
+def _compute_pregnancy_age(date_debut_iso: str) -> tuple[int, int, int]:
+    """Retourne (semaines, jours, trimestre) à partir de la DDR."""
+    ddr = datetime.fromisoformat(date_debut_iso.replace("Z", "+00:00"))
+    # Tolérer naive dates : forcer UTC
+    if ddr.tzinfo is None:
+        ddr = ddr.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    days_total = max(0, (now - ddr).days)
+    weeks = days_total // 7
+    days = days_total % 7
+    trimester = 1 if weeks <= 13 else (2 if weeks <= 27 else 3)
+    return weeks, days, trimester
+
+
+# ----------------------------------------------------------------------
+# Grossesse + — fiches hebdomadaires (lecture publique pour preview)
+# ----------------------------------------------------------------------
 @api.get("/grossesse-plus/week/{week}")
 async def grossesse_week(week: int):
     """Retourne la fiche éducative pour une semaine donnée (4-41)."""
@@ -11212,59 +11271,614 @@ async def grossesse_week(week: int):
     if not data:
         raise HTTPException(404, "Fiche introuvable")
     trimester = 1 if week <= 13 else (2 if week <= 27 else 3)
-    return {
-        "week": week,
-        "trimester": trimester,
-        **data,
-    }
-
-
-@api.get("/grossesse-plus/dashboard")
-async def grossesse_dashboard(user=Depends(require_roles("maman"))):
-    """Tableau de bord : âge grossesse + DPA + fiche semaine actuelle."""
-    g = await db.grossesse.find_one({"user_id": user["id"]}, {"_id": 0})
-    if not g:
-        raise HTTPException(404, "Aucune grossesse active. Renseignez votre date de dernières règles dans votre profil.")
-    ddr = g.get("ddr")
-    if not ddr:
-        raise HTTPException(400, "Date de dernières règles manquante.")
-    try:
-        ddr_dt = datetime.fromisoformat(ddr.replace("Z", "+00:00"))
-    except Exception:
-        raise HTTPException(400, "Format DDR invalide")
-    now = datetime.now(timezone.utc)
-    delta = now - ddr_dt
-    days_total = delta.days
-    weeks = days_total // 7
-    days = days_total % 7
-    # DPA = DDR + 280 jours
-    dpa = ddr_dt + timedelta(days=280)
-    days_to_dpa = (dpa - now).days
-    week_for_content = max(4, min(41, weeks))
-    fiche = PREGNANCY_WEEKLY.get(week_for_content) or {}
-    trimester = 1 if week_for_content <= 13 else (2 if week_for_content <= 27 else 3)
-    return {
-        "weeks": weeks,
-        "days": days,
-        "label": f"{weeks} semaines et {days} jour{'s' if days > 1 else ''}",
-        "trimester": trimester,
-        "dpa": dpa.isoformat(),
-        "days_to_dpa": days_to_dpa,
-        "current_week_content": {"week": week_for_content, "trimester": trimester, **fiche},
-        "total_weeks_available": list(range(4, 42)),
-    }
+    return {"week": week, "trimester": trimester, **data}
 
 
 @api.get("/grossesse-plus/weeks")
 async def list_all_weeks():
-    """Liste des 38 semaines avec leurs miniatures."""
+    """Liste des 38 fiches hebdomadaires (miniatures)."""
     out = []
     for w in range(4, 42):
         d = PREGNANCY_WEEKLY.get(w)
         if d:
-            out.append({"week": w, "trimester": 1 if w <= 13 else (2 if w <= 27 else 3), "fruit": d["fruit"], "emoji": d["emoji"], "size_cm": d["size_cm"], "weight_g": d["weight_g"]})
+            out.append({
+                "week": w,
+                "trimester": 1 if w <= 13 else (2 if w <= 27 else 3),
+                "fruit": d["fruit"],
+                "emoji": d["emoji"],
+                "size_cm": d["size_cm"],
+                "weight_g": d["weight_g"],
+            })
     return out
 
+
+# ----------------------------------------------------------------------
+# Dashboard Grossesse + (Premium uniquement)
+# ----------------------------------------------------------------------
+@api.get("/grossesse-plus/dashboard")
+async def grossesse_plus_dashboard(user=Depends(require_roles("maman"))):
+    """Tableau de bord premium : âge grossesse + DPA + fiche semaine actuelle."""
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        raise HTTPException(
+            404,
+            "Aucune grossesse active. Configurez d'abord votre grossesse dans l'onglet Grossesse.",
+        )
+    date_debut = g.get("date_debut")
+    if not date_debut:
+        raise HTTPException(400, "Date de début (DDR) manquante.")
+    try:
+        weeks, days, trimester = _compute_pregnancy_age(date_debut)
+        dpa = _compute_dpa(date_debut, g.get("date_terme"))
+    except Exception:
+        raise HTTPException(400, "Format de date invalide")
+    now = datetime.now(timezone.utc)
+    days_to_dpa = (dpa - now).days
+    progression = min(100, round((min(weeks, 40) / 40) * 100))
+    week_for_content = max(4, min(41, weeks))
+    fiche = PREGNANCY_WEEKLY.get(week_for_content) or {}
+
+    # Dernière mesure de poids
+    last_weight = await db.grossesse_tracking.find_one(
+        {"user_id": user["id"], "poids_kg": {"$ne": None}},
+        sort=[("created_at", -1)],
+        projection={"_id": 0},
+    )
+
+    # Nombre de notes/journal
+    journal_count = await db.grossesse_journal.count_documents({"user_id": user["id"]})
+
+    return {
+        "grossesse_id": g.get("id"),
+        "weeks": weeks,
+        "days": days,
+        "label": f"{weeks} semaine{'s' if weeks > 1 else ''} et {days} jour{'s' if days > 1 else ''}",
+        "trimester": trimester,
+        "date_debut": date_debut,
+        "dpa": dpa.isoformat(),
+        "days_to_dpa": days_to_dpa,
+        "progression_pct": progression,
+        "current_week_content": {"week": week_for_content, "trimester": trimester, **fiche},
+        "last_weight": last_weight,
+        "journal_count": journal_count,
+        "consent_partage_pro": bool(g.get("consent_partage_pro", False)),
+    }
+
+
+# ----------------------------------------------------------------------
+# Setup grossesse premium (DDR ou DPA)
+# ----------------------------------------------------------------------
+class GrossessePlusSetupIn(BaseModel):
+    source: Literal["ddr", "dpa", "echographie"] = "ddr"
+    date_debut: Optional[str] = None   # ISO date (DDR)
+    date_terme: Optional[str] = None   # ISO date (DPA si saisie pro)
+    parite: Optional[int] = None       # nb grossesses précédentes
+    groupe_sanguin: Optional[str] = None
+    rhesus: Optional[Literal["+", "-"]] = None
+    consent_partage_pro: Optional[bool] = False
+
+
+@api.post("/grossesse-plus/setup")
+async def grossesse_plus_setup(payload: GrossessePlusSetupIn, user=Depends(require_roles("maman"))):
+    """Configure ou met à jour la grossesse active (DDR ou DPA).
+    - Si source = 'dpa' et date_terme fournie → calcule la DDR rétroactivement (DPA - 280j).
+    - Si source = 'ddr' et date_debut fournie → enregistre la DDR.
+    """
+    _require_premium_maman(user)
+    date_debut = payload.date_debut
+    date_terme = payload.date_terme
+    if payload.source in ("dpa", "echographie"):
+        if not date_terme:
+            raise HTTPException(400, "Date prévue d'accouchement requise pour cette source.")
+        try:
+            dpa_dt = datetime.fromisoformat(date_terme.replace("Z", "+00:00"))
+            ddr_dt = dpa_dt - timedelta(days=280)
+            date_debut = ddr_dt.isoformat()
+        except Exception:
+            raise HTTPException(400, "Format DPA invalide")
+    else:  # ddr
+        if not date_debut:
+            raise HTTPException(400, "Date de dernières règles requise.")
+
+    # Désactive les grossesses précédentes
+    await db.grossesses.update_many(
+        {"user_id": user["id"], "active": True}, {"$set": {"active": False}}
+    )
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "date_debut": date_debut,
+        "date_terme": date_terme,
+        "source": payload.source,
+        "parite": payload.parite,
+        "groupe_sanguin": payload.groupe_sanguin,
+        "rhesus": payload.rhesus,
+        "symptomes": [],
+        "notes": None,
+        "consent_partage_pro": bool(payload.consent_partage_pro or False),
+        "trousseau": [],
+        "active": True,
+        "premium_module": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.grossesses.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+# ----------------------------------------------------------------------
+# Suivi médical hebdomadaire (poids, tension, hauteur utérine, glycémie...)
+# ----------------------------------------------------------------------
+class GrossesseTrackingIn(BaseModel):
+    week: Optional[int] = None  # semaine de saisie (auto-calculée si vide)
+    poids_kg: Optional[float] = None
+    tension_sys: Optional[int] = None
+    tension_dia: Optional[int] = None
+    hauteur_uterine_cm: Optional[float] = None
+    glycemie: Optional[float] = None
+    temperature: Optional[float] = None
+    symptomes: List[str] = []
+    mouvements_bb: Optional[int] = None
+    notes: Optional[str] = None
+
+
+def _evaluate_tracking_alerts(p: GrossesseTrackingIn, week: int, last_weight: Optional[float]) -> list[dict]:
+    """Génère des alertes médicales contextuelles."""
+    alerts = []
+    # Hypertension
+    if p.tension_sys is not None and p.tension_dia is not None:
+        if p.tension_sys >= 160 or p.tension_dia >= 110:
+            alerts.append({"level": "critical", "title": "Tension très élevée", "message": f"{p.tension_sys}/{p.tension_dia} mmHg. Consultez en urgence — risque de pré-éclampsie."})
+        elif p.tension_sys >= 140 or p.tension_dia >= 90:
+            alerts.append({"level": "warning", "title": "Tension élevée", "message": f"{p.tension_sys}/{p.tension_dia} mmHg. À surveiller — contactez votre sage-femme."})
+    # Glycémie
+    if p.glycemie is not None:
+        if p.glycemie >= 1.40:
+            alerts.append({"level": "critical", "title": "Glycémie très élevée", "message": f"{p.glycemie} g/L à jeun. Risque de diabète gestationnel."})
+        elif p.glycemie >= 0.92:
+            alerts.append({"level": "warning", "title": "Glycémie limite", "message": f"{p.glycemie} g/L. À discuter avec votre médecin (test HGPO recommandé entre 24-28 SA)."})
+    # Prise de poids hebdomadaire excessive
+    if last_weight is not None and p.poids_kg is not None:
+        diff = p.poids_kg - last_weight
+        if week >= 14 and diff >= 1.5:
+            alerts.append({"level": "warning", "title": "Prise de poids rapide", "message": f"+{round(diff,1)} kg depuis la dernière mesure. Surveillez sel et œdèmes."})
+    # Hauteur utérine
+    if p.hauteur_uterine_cm is not None and 18 <= week <= 36:
+        expected = week - 4  # règle approchée : HU(cm) ≈ SA - 4
+        if abs(p.hauteur_uterine_cm - expected) >= 4:
+            alerts.append({"level": "warning", "title": "Hauteur utérine inhabituelle", "message": f"{p.hauteur_uterine_cm} cm (attendu ≈ {expected} cm). Vérification recommandée."})
+    # Mouvements du bébé
+    if p.mouvements_bb is not None and week >= 28 and p.mouvements_bb < 10:
+        alerts.append({"level": "warning", "title": "Mouvements diminués", "message": f"Seulement {p.mouvements_bb} mouvements / 2h. Comptez 10 mouvements en 2h. Si toujours bas, consultez."})
+    # Température
+    if p.temperature is not None and p.temperature >= 38.5:
+        alerts.append({"level": "critical", "title": "Fièvre", "message": f"{p.temperature}°C. Consultez rapidement — risque de paludisme ou infection."})
+    return alerts
+
+
+@api.post("/grossesse-plus/tracking")
+async def add_grossesse_plus_tracking(payload: GrossesseTrackingIn, user=Depends(require_roles("maman"))):
+    """Enregistre une mesure de suivi médical hebdomadaire."""
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        raise HTTPException(404, "Aucune grossesse active.")
+    weeks, _, _ = _compute_pregnancy_age(g["date_debut"])
+    week = payload.week or weeks
+    # Dernier poids pour comparaison
+    last_w_doc = await db.grossesse_tracking.find_one(
+        {"user_id": user["id"], "poids_kg": {"$ne": None}},
+        sort=[("created_at", -1)],
+        projection={"_id": 0, "poids_kg": 1},
+    )
+    last_w = last_w_doc.get("poids_kg") if last_w_doc else None
+    alerts = _evaluate_tracking_alerts(payload, week, last_w)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "grossesse_id": g["id"],
+        "week": week,
+        "poids_kg": payload.poids_kg,
+        "tension_sys": payload.tension_sys,
+        "tension_dia": payload.tension_dia,
+        "hauteur_uterine_cm": payload.hauteur_uterine_cm,
+        "glycemie": payload.glycemie,
+        "temperature": payload.temperature,
+        "symptomes": payload.symptomes,
+        "mouvements_bb": payload.mouvements_bb,
+        "notes": payload.notes,
+        "alerts": alerts,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.grossesse_tracking.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/grossesse-plus/tracking")
+async def list_tracking(user=Depends(require_roles("maman"))):
+    """Historique complet des mesures (asc par date)."""
+    _require_premium_maman(user)
+    items = await db.grossesse_tracking.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+    # Stats agrégées (courbes)
+    weight_series = [{"week": x.get("week"), "value": x.get("poids_kg"), "date": x.get("created_at")} for x in items if x.get("poids_kg") is not None]
+    tension_series = [{"week": x.get("week"), "sys": x.get("tension_sys"), "dia": x.get("tension_dia"), "date": x.get("created_at")} for x in items if x.get("tension_sys") is not None]
+    return {
+        "items": items,
+        "weight_series": weight_series,
+        "tension_series": tension_series,
+        "count": len(items),
+    }
+
+
+@api.delete("/grossesse-plus/tracking/{tid}")
+async def delete_grossesse_plus_tracking(tid: str, user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    r = await db.grossesse_tracking.delete_one({"id": tid, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Mesure introuvable")
+    return {"deleted": True}
+
+
+# ----------------------------------------------------------------------
+# Journal de grossesse (notes + photos échographies)
+# ----------------------------------------------------------------------
+class JournalIn(BaseModel):
+    title: Optional[str] = None
+    content: str
+    type: Literal["note", "echographie", "souvenir", "ressenti"] = "note"
+    photo_base64: Optional[str] = None
+    mood: Optional[Literal["heureuse", "fatiguee", "anxieuse", "emotive", "sereine"]] = None
+
+
+@api.post("/grossesse-plus/journal")
+async def add_journal(payload: JournalIn, user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        raise HTTPException(404, "Aucune grossesse active.")
+    weeks, _, _ = _compute_pregnancy_age(g["date_debut"])
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "grossesse_id": g["id"],
+        "title": payload.title,
+        "content": payload.content,
+        "type": payload.type,
+        "photo_base64": payload.photo_base64,
+        "mood": payload.mood,
+        "week": weeks,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.grossesse_journal.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/grossesse-plus/journal")
+async def list_journal(user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    items = await db.grossesse_journal.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    return items
+
+
+@api.delete("/grossesse-plus/journal/{jid}")
+async def delete_journal(jid: str, user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    r = await db.grossesse_journal.delete_one({"id": jid, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Entrée introuvable")
+    return {"deleted": True}
+
+
+# ----------------------------------------------------------------------
+# Compteur de contractions (sessions)
+# ----------------------------------------------------------------------
+class ContractionIn(BaseModel):
+    started_at: str  # ISO
+    ended_at: Optional[str] = None
+    intensity: Literal["faible", "moyenne", "forte"] = "moyenne"
+    session_id: Optional[str] = None
+
+
+@api.post("/grossesse-plus/contractions")
+async def add_contraction(payload: ContractionIn, user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        raise HTTPException(404, "Aucune grossesse active.")
+    duration_sec = None
+    if payload.ended_at:
+        try:
+            t1 = datetime.fromisoformat(payload.started_at.replace("Z", "+00:00"))
+            t2 = datetime.fromisoformat(payload.ended_at.replace("Z", "+00:00"))
+            duration_sec = max(0, int((t2 - t1).total_seconds()))
+        except Exception:
+            duration_sec = None
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "grossesse_id": g["id"],
+        "session_id": payload.session_id or str(uuid.uuid4())[:8],
+        "started_at": payload.started_at,
+        "ended_at": payload.ended_at,
+        "duration_sec": duration_sec,
+        "intensity": payload.intensity,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.grossesse_contractions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/grossesse-plus/contractions")
+async def list_contractions(limit: int = 50, user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    items = await db.grossesse_contractions.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("started_at", -1).to_list(limit)
+    # Analyse : si > 5 contractions ces 60 minutes avec intervalle < 5 min → conseil aller à la maternité
+    advice = None
+    if items:
+        recent = []
+        threshold = datetime.now(timezone.utc) - timedelta(hours=2)
+        for it in items:
+            try:
+                t = datetime.fromisoformat(it["started_at"].replace("Z", "+00:00"))
+                if t > threshold:
+                    recent.append(t)
+            except Exception:
+                pass
+        recent.sort()
+        if len(recent) >= 5:
+            intervals = [(recent[i+1] - recent[i]).total_seconds() / 60 for i in range(len(recent)-1)]
+            avg_min = sum(intervals) / len(intervals)
+            if avg_min < 5:
+                advice = {"level": "critical", "message": "Contractions très rapprochées (< 5 min). Rendez-vous à la maternité maintenant."}
+            elif avg_min < 10:
+                advice = {"level": "warning", "message": f"Contractions toutes les ~{round(avg_min,1)} min. Préparez-vous, contactez la maternité."}
+            else:
+                advice = {"level": "info", "message": f"Contractions toutes les ~{round(avg_min,1)} min. Vrai travail probablement non commencé."}
+    return {"items": items, "advice": advice}
+
+
+@api.delete("/grossesse-plus/contractions/{cid}")
+async def delete_contraction(cid: str, user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    r = await db.grossesse_contractions.delete_one({"id": cid, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Contraction introuvable")
+    return {"deleted": True}
+
+
+# ----------------------------------------------------------------------
+# Trousseau / Checklist préparation à la naissance
+# ----------------------------------------------------------------------
+DEFAULT_TROUSSEAU = [
+    {"cat": "Pour maman", "label": "Carte d'identité + carnet de santé", "done": False},
+    {"cat": "Pour maman", "label": "Numéro CMU + justificatifs"},
+    {"cat": "Pour maman", "label": "Chemises de nuit (2-3) faciles à ouvrir"},
+    {"cat": "Pour maman", "label": "Soutien-gorge d'allaitement (2)"},
+    {"cat": "Pour maman", "label": "Serviettes hygiéniques spéciales post-accouchement"},
+    {"cat": "Pour maman", "label": "Trousse de toilette (savon, dentifrice, brosse)"},
+    {"cat": "Pour maman", "label": "Pagnes ou peignoir confortable"},
+    {"cat": "Pour bébé", "label": "Body coton (5-6)"},
+    {"cat": "Pour bébé", "label": "Pyjamas naissance (4)"},
+    {"cat": "Pour bébé", "label": "Bonnet + chaussettes coton"},
+    {"cat": "Pour bébé", "label": "Couches taille naissance (paquet)"},
+    {"cat": "Pour bébé", "label": "Couverture légère + drap"},
+    {"cat": "Pour bébé", "label": "Lingettes douces / coton + sérum physiologique"},
+    {"cat": "Pour bébé", "label": "Vêtements de sortie (pagne + body)"},
+    {"cat": "Administratif", "label": "Acte de mariage / livret de famille (si marié)"},
+    {"cat": "Administratif", "label": "Pièce d'identité du papa pour déclaration"},
+    {"cat": "Administratif", "label": "Numéros utiles (maternité, sage-femme, taxi)"},
+]
+
+
+@api.get("/grossesse-plus/trousseau")
+async def get_trousseau(user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        raise HTTPException(404, "Aucune grossesse active.")
+    items = g.get("trousseau") or []
+    if not items:
+        items = [{**i, "id": str(uuid.uuid4()), "done": False} for i in DEFAULT_TROUSSEAU]
+        await db.grossesses.update_one(
+            {"id": g["id"]}, {"$set": {"trousseau": items}}
+        )
+    return {"items": items}
+
+
+class TrousseauItemPatch(BaseModel):
+    items: List[dict]
+
+
+@api.patch("/grossesse-plus/trousseau")
+async def patch_trousseau(payload: TrousseauItemPatch, user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        raise HTTPException(404, "Aucune grossesse active.")
+    await db.grossesses.update_one(
+        {"id": g["id"]}, {"$set": {"trousseau": payload.items}}
+    )
+    return {"items": payload.items}
+
+
+# ----------------------------------------------------------------------
+# Consentement granulaire (partage avec pros)
+# ----------------------------------------------------------------------
+class ConsentIn(BaseModel):
+    partage_pro: Optional[bool] = None
+    partage_centre: Optional[bool] = None
+    partage_famille: Optional[bool] = None
+
+
+@api.post("/grossesse-plus/consent")
+async def update_consent(payload: ConsentIn, user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        raise HTTPException(404, "Aucune grossesse active.")
+    upd = {}
+    if payload.partage_pro is not None:
+        upd["consent_partage_pro"] = bool(payload.partage_pro)
+    if payload.partage_centre is not None:
+        upd["consent_partage_centre"] = bool(payload.partage_centre)
+    if payload.partage_famille is not None:
+        upd["consent_partage_famille"] = bool(payload.partage_famille)
+    if upd:
+        upd["consent_updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.grossesses.update_one({"id": g["id"]}, {"$set": upd})
+    g2 = await db.grossesses.find_one({"id": g["id"]}, {"_id": 0})
+    return {
+        "consent_partage_pro": bool(g2.get("consent_partage_pro", False)),
+        "consent_partage_centre": bool(g2.get("consent_partage_centre", False)),
+        "consent_partage_famille": bool(g2.get("consent_partage_famille", False)),
+    }
+
+
+# ----------------------------------------------------------------------
+# Exercices de respiration (préparation mentale)
+# ----------------------------------------------------------------------
+BREATHING_EXERCISES = [
+    {
+        "id": "carre",
+        "title": "Respiration carrée (4-4-4-4)",
+        "description": "Apaise le stress et prépare au travail. À pratiquer 5 min par jour.",
+        "duration_min": 5,
+        "icon": "⬜",
+        "steps": [
+            {"phase": "Inspirez", "seconds": 4},
+            {"phase": "Retenez", "seconds": 4},
+            {"phase": "Expirez", "seconds": 4},
+            {"phase": "Pause", "seconds": 4},
+        ],
+    },
+    {
+        "id": "vague",
+        "title": "Respiration en vague (6-2-6)",
+        "description": "Diminue les contractions de Braxton-Hicks et la tension.",
+        "duration_min": 7,
+        "icon": "🌊",
+        "steps": [
+            {"phase": "Inspirez profondément", "seconds": 6},
+            {"phase": "Retenez", "seconds": 2},
+            {"phase": "Expirez par la bouche", "seconds": 6},
+        ],
+    },
+    {
+        "id": "cohérence",
+        "title": "Cohérence cardiaque (5-5)",
+        "description": "Régule la fréquence cardiaque et apaise. 6 cycles/minute pendant 5 min.",
+        "duration_min": 5,
+        "icon": "❤️",
+        "steps": [
+            {"phase": "Inspirez doucement", "seconds": 5},
+            {"phase": "Expirez doucement", "seconds": 5},
+        ],
+    },
+    {
+        "id": "accouchement",
+        "title": "Respiration d'accouchement (haletant)",
+        "description": "À utiliser pendant le travail pour gérer la douleur des contractions.",
+        "duration_min": 3,
+        "icon": "💨",
+        "steps": [
+            {"phase": "Inspirez court", "seconds": 1},
+            {"phase": "Expirez en soufflant", "seconds": 2},
+        ],
+    },
+]
+
+
+@api.get("/grossesse-plus/breathing")
+async def list_breathing(user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    return BREATHING_EXERCISES
+
+
+# ----------------------------------------------------------------------
+# Consultations prénatales (CPN) — rappels intelligents par semaine
+# ----------------------------------------------------------------------
+CPN_SCHEDULE = [
+    {"week": 8, "title": "1ère consultation prénatale (CPN1)", "important": True, "advice": "Bilan complet, examens sanguins, dépistage VIH."},
+    {"week": 12, "title": "Échographie de datation", "important": True, "advice": "Première écho + dépistage T21 (clarté nucale)."},
+    {"week": 16, "title": "CPN2", "important": False, "advice": "Suivi tension + poids + écoute du cœur du bébé."},
+    {"week": 22, "title": "Échographie morphologique", "important": True, "advice": "Vérification de tous les organes du bébé."},
+    {"week": 24, "title": "Test HGPO (diabète gestationnel)", "important": True, "advice": "À faire entre 24 et 28 SA."},
+    {"week": 26, "title": "CPN3", "important": False, "advice": "Vaccin coqueluche recommandé."},
+    {"week": 32, "title": "Échographie de croissance", "important": True, "advice": "Vérifie la position du bébé et sa croissance."},
+    {"week": 36, "title": "CPN4 + Préparation accouchement", "important": True, "advice": "Visite hebdomadaire à partir de maintenant."},
+    {"week": 38, "title": "CPN5 - À terme bientôt", "important": False, "advice": "Sac maternité prêt."},
+    {"week": 40, "title": "Terme officiel - Surveillance", "important": True, "advice": "Surveillance accrue si dépassement."},
+]
+
+
+@api.get("/grossesse-plus/cpn")
+async def get_cpn_schedule(user=Depends(require_roles("maman"))):
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        return {"current_week": 0, "schedule": CPN_SCHEDULE, "next": None}
+    weeks, _, _ = _compute_pregnancy_age(g["date_debut"])
+    upcoming = [c for c in CPN_SCHEDULE if c["week"] > weeks]
+    past = [c for c in CPN_SCHEDULE if c["week"] <= weeks]
+    return {
+        "current_week": weeks,
+        "schedule": CPN_SCHEDULE,
+        "past": past,
+        "upcoming": upcoming,
+        "next": upcoming[0] if upcoming else None,
+    }
+
+
+# ----------------------------------------------------------------------
+# Transition Grossesse → Carnet de l'enfant (post-naissance)
+# ----------------------------------------------------------------------
+class GrossesseToEnfantIn(BaseModel):
+    nom: str
+    date_naissance: str
+    sexe: Literal["F", "M"]
+    poids_kg: Optional[float] = None
+    taille_cm: Optional[float] = None
+
+
+@api.post("/grossesse-plus/declarer-naissance")
+async def declarer_naissance(payload: GrossesseToEnfantIn, user=Depends(require_roles("maman"))):
+    """Clôture la grossesse active + crée automatiquement le carnet de l'enfant."""
+    _require_premium_maman(user)
+    g = await _get_active_grossesse(user["id"])
+    if not g:
+        raise HTTPException(404, "Aucune grossesse active.")
+    # Crée l'enfant
+    enfant = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "nom": payload.nom,
+        "date_naissance": payload.date_naissance,
+        "sexe": payload.sexe,
+        "poids_kg": payload.poids_kg,
+        "taille_cm": payload.taille_cm,
+        "mesures": [],
+        "vaccins": [],
+        "from_grossesse_id": g["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.enfants.insert_one(enfant)
+    # Clôture la grossesse
+    await db.grossesses.update_one(
+        {"id": g["id"]},
+        {"$set": {"active": False, "status": "terminee", "enfant_id": enfant["id"], "ended_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    enfant.pop("_id", None)
+    return {"success": True, "enfant": enfant, "message": "Bienvenue à votre bébé ! 🍼 Votre suivi continue dans le Carnet de l'enfant."}
 
 
 # 🔄 Re-include final : enregistre toutes les routes ajoutées après les précédents include_router
