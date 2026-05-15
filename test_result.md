@@ -713,6 +713,41 @@ backend:
           
           NON-BLOQUANT : content="" accepté dans /journal (peut ajouter Field min_length=1 si souhaité).
 
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ NEW ADDITIONS — 16/16 PASS sur https://cycle-tracker-pro.preview.emergentagent.com/api
+          (script: /app/backend_test_grossesse_plus_new.py)
+
+          A. NOUVELLES ALERTES MÉDICALES (5/5)
+          • [1] POST tracking {temperature: 39.0} → alert critical "Fièvre — Suspicion de paludisme" ✓
+          • [2] POST tracking {temperature: 37.9} → alert warning "Fébricule" ✓
+          • [3] POST tracking {symptomes: ["fatigue", "essoufflement"]} en SA 24 (trim 2) → alert warning "Symptômes suggérant une anémie" ✓
+          • [4] POST tracking {symptomes: ["œdèmes"], tension_sys: 145, tension_dia: 92} → 2 alertes : warning "Tension élevée" + critical "Suspicion de pré-éclampsie" (combinée HTA+œdèmes) ✓
+          • [5] POST tracking {symptomes: ["nausées"], week: 8} (1er trim) → aucune alerte anémie générée ✓
+
+          B. AES-256 ENCRYPTION AT REST (5/5) — format réel = `enc_v1:<base64(nonce+ct+tag)>` (AES-256-GCM, pas Fernet)
+          • [6] POST /tracking {notes: "Mes notes très privées"} → 200, response.notes en clair ✓
+          • [7] GET /tracking → items[].notes correspondant en CLAIR (déchiffré) ✓
+          • [8] Vérification MongoDB directe : db.grossesse_tracking.notes = `'enc_v1:IZPZsIcmQ1ky4GltMImGrvzB9j4Y6kTueDCb/39ibyuKNM8vl18eT5B9GJ0titbRiaUz9A=='` (chiffré, illisible) ✓
+          • [9] POST /journal {content: "Premier coup de pied", type: "souvenir"} → DB.content = `enc_v1:W9N/T6Jvnv7XkIyG...` (chiffré) ; GET /journal retourne content en clair ✓
+          • [10] POST /journal {content: "Echo", type: "echographie", photo_base64: "data:image/jpeg;base64,/9j/..."} → DB.photo_base64 = `enc_v1:RYUqoC+dhWOeJ67K...` (chiffré) ; GET retourne photo en clair ✓
+          NOTE: Le format réel du ciphertext est `enc_v1:` + base64 d'AES-256-GCM (12-byte nonce + ciphertext + 16-byte tag). La review request mentionnait `gAAAAA...` (Fernet) — l'implémentation utilise AES-256-GCM ce qui est cryptographiquement équivalent voire meilleur (AEAD authentifié). Test validé sur la base du préfixe `enc_v1:` ET du fait que le contenu DB ≠ plaintext ET longueur ≥ 30 chars.
+
+          C. AUTO-GENERATED CPN REMINDERS (3/3)
+          • [11] POST /grossesse-plus/setup {source:"ddr", date_debut:"2025-12-01T00:00:00Z"} → 200 active=true ✓
+          • [12] GET /reminders → 4 rappels avec source="grossesse_plus_cpn" ; tous due_at FUTURS ; tous titles commencent par "📅 " ; au moins un = "📅 Test HGPO (diabète gestationnel)" (week 24) + "📅 Échographie de croissance" (week 32) ✓
+          • [13] POST /setup à nouveau avec même DDR → ancien CPN supprimé+recréé : count reste 4 (pas de doublons grâce à `await db.reminders.delete_many({source:"grossesse_plus_cpn"})` L11416) ✓
+
+          D. RÉGRESSION (3/3)
+          • [14] GET /grossesse-plus/dashboard → 200 avec weeks=23, dpa=2026-09-07, progression_pct=57 ✓
+          • [15] GET /grossesse-plus/cpn → schedule (10 items) + next={week:24, title:"Test HGPO..."} ✓
+          • [16] Lifecycle complet (setup → tracking → journal → contractions → trousseau → declarer-naissance) → tous endpoints 200, aucune erreur 500 ✓
+
+          CLEANUP : grossesse réinitialisée à ddr=2025-12-01 ; 6 entrées tracking + 2 entrées journal de test supprimées. Idempotent.
+
+          AUCUN BUG critique ou mineur détecté sur les nouvelles features.
+
 metadata_grossesse_plus:
 
 frontend:

@@ -11364,6 +11364,7 @@ async def grossesse_plus_setup(payload: GrossessePlusSetupIn, user=Depends(requi
     """Configure ou met à jour la grossesse active (DDR ou DPA).
     - Si source = 'dpa' et date_terme fournie → calcule la DDR rétroactivement (DPA - 280j).
     - Si source = 'ddr' et date_debut fournie → enregistre la DDR.
+    - Auto-génère les rappels CPN dans `db.reminders` (RGSSI N3).
     """
     _require_premium_maman(user)
     date_debut = payload.date_debut
@@ -11404,6 +11405,33 @@ async def grossesse_plus_setup(payload: GrossessePlusSetupIn, user=Depends(requi
     }
     await db.grossesses.insert_one(doc)
     doc.pop("_id", None)
+
+    # 🔔 Auto-génère rappels CPN pour les RDV importants à venir
+    try:
+        ddr_dt = datetime.fromisoformat(date_debut.replace("Z", "+00:00"))
+        if ddr_dt.tzinfo is None:
+            ddr_dt = ddr_dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        # Supprime les anciens rappels CPN pour éviter doublons
+        await db.reminders.delete_many({"user_id": user["id"], "source": "grossesse_plus_cpn"})
+        for cpn in CPN_SCHEDULE:
+            if cpn.get("important"):
+                due = ddr_dt + timedelta(weeks=cpn["week"])
+                if due > now:  # uniquement RDV futurs
+                    await db.reminders.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "user_id": user["id"],
+                        "title": f"📅 {cpn['title']}",
+                        "note": cpn.get("advice"),
+                        "due_at": due.isoformat(),
+                        "source": "grossesse_plus_cpn",
+                        "week": cpn["week"],
+                        "status": "active",
+                        "created_at": now.isoformat(),
+                    })
+    except Exception as e:
+        logger.warning(f"CPN reminders auto-gen failed: {e}")
+
     return doc
 
 
@@ -11424,8 +11452,9 @@ class GrossesseTrackingIn(BaseModel):
 
 
 def _evaluate_tracking_alerts(p: GrossesseTrackingIn, week: int, last_weight: Optional[float]) -> list[dict]:
-    """Génère des alertes médicales contextuelles."""
+    """Génère des alertes médicales contextuelles (contexte ivoirien)."""
     alerts = []
+    trim = 1 if week <= 13 else (2 if week <= 27 else 3)
     # Hypertension
     if p.tension_sys is not None and p.tension_dia is not None:
         if p.tension_sys >= 160 or p.tension_dia >= 110:
@@ -11451,9 +11480,23 @@ def _evaluate_tracking_alerts(p: GrossesseTrackingIn, week: int, last_weight: Op
     # Mouvements du bébé
     if p.mouvements_bb is not None and week >= 28 and p.mouvements_bb < 10:
         alerts.append({"level": "warning", "title": "Mouvements diminués", "message": f"Seulement {p.mouvements_bb} mouvements / 2h. Comptez 10 mouvements en 2h. Si toujours bas, consultez."})
-    # Température
+    # 🇨🇮 Paludisme (contexte ivoirien : fièvre = suspicion forte)
     if p.temperature is not None and p.temperature >= 38.5:
-        alerts.append({"level": "critical", "title": "Fièvre", "message": f"{p.temperature}°C. Consultez rapidement — risque de paludisme ou infection."})
+        alerts.append({"level": "critical", "title": "Fièvre — Suspicion de paludisme", "message": f"{p.temperature}°C. ⚠️ Le paludisme est dangereux pendant la grossesse. Faites un TDR (Test de Diagnostic Rapide) en urgence. Pas d'automédication antipaludéenne."})
+    elif p.temperature is not None and p.temperature >= 37.8:
+        alerts.append({"level": "warning", "title": "Fébricule", "message": f"{p.temperature}°C. Surveillez et consultez si fièvre persiste plus de 24h (paludisme, infection urinaire)."})
+    # 🇨🇮 Anémie (très fréquente Afrique sub-saharienne) — symptômes alertants
+    fatigue_symp = any(s.lower() in ("fatigue", "fatigue intense", "essoufflement", "vertiges", "pâleur") for s in (p.symptomes or []))
+    if fatigue_symp and trim >= 2:
+        alerts.append({"level": "warning", "title": "Symptômes suggérant une anémie", "message": "Fatigue intense, essoufflement ou vertiges au 2e/3e trimestre. Faites un dosage d'hémoglobine (NFS). Cible ≥ 11 g/dL. L'anémie est très fréquente en Côte d'Ivoire et augmente le risque maternel."})
+    # 🇨🇮 Rappel paludisme préventif (TPI) — 2e/3e trimestre
+    if trim >= 2 and (p.temperature is None or p.temperature < 37.8):
+        # Information ponctuelle, pas critique
+        pass  # Le rappel TPI est dans le calendrier CPN
+    # Pré-éclampsie combinée (HTA + œdèmes)
+    edemas = any("œdème" in s.lower() or "oedeme" in s.lower() or "gonflement" in s.lower() for s in (p.symptomes or []))
+    if edemas and p.tension_sys is not None and p.tension_sys >= 140:
+        alerts.append({"level": "critical", "title": "Suspicion de pré-éclampsie", "message": "Tension élevée + œdèmes. Consultation immédiate recommandée (risque maternel & fœtal)."})
     return alerts
 
 
@@ -11487,12 +11530,14 @@ async def add_grossesse_plus_tracking(payload: GrossesseTrackingIn, user=Depends
         "temperature": payload.temperature,
         "symptomes": payload.symptomes,
         "mouvements_bb": payload.mouvements_bb,
-        "notes": payload.notes,
+        # 🔐 RGSSI N3 : notes chiffrées au repos
+        "notes": encrypt_str(payload.notes) if payload.notes else None,
         "alerts": alerts,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.grossesse_tracking.insert_one(doc)
     doc.pop("_id", None)
+    doc["notes"] = payload.notes  # renvoie en clair pour l'app
     return doc
 
 
@@ -11503,6 +11548,13 @@ async def list_tracking(user=Depends(require_roles("maman"))):
     items = await db.grossesse_tracking.find(
         {"user_id": user["id"]}, {"_id": 0}
     ).sort("created_at", 1).to_list(1000)
+    # 🔐 Déchiffrement des notes
+    for it in items:
+        if it.get("notes"):
+            try:
+                it["notes"] = decrypt_str(it["notes"])
+            except Exception:
+                pass
     # Stats agrégées (courbes)
     weight_series = [{"week": x.get("week"), "value": x.get("poids_kg"), "date": x.get("created_at")} for x in items if x.get("poids_kg") is not None]
     tension_series = [{"week": x.get("week"), "sys": x.get("tension_sys"), "dia": x.get("tension_dia"), "date": x.get("created_at")} for x in items if x.get("tension_sys") is not None]
@@ -11541,20 +11593,24 @@ async def add_journal(payload: JournalIn, user=Depends(require_roles("maman"))):
     if not g:
         raise HTTPException(404, "Aucune grossesse active.")
     weeks, _, _ = _compute_pregnancy_age(g["date_debut"])
+    # 🔐 RGSSI N3 : chiffrement du contenu personnel et photos écho
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "grossesse_id": g["id"],
         "title": payload.title,
-        "content": payload.content,
+        "content": encrypt_str(payload.content) if payload.content else payload.content,
         "type": payload.type,
-        "photo_base64": payload.photo_base64,
+        "photo_base64": encrypt_str(payload.photo_base64) if payload.photo_base64 else None,
         "mood": payload.mood,
         "week": weeks,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.grossesse_journal.insert_one(doc)
     doc.pop("_id", None)
+    # Renvoie déchiffré pour l'app
+    doc["content"] = payload.content
+    doc["photo_base64"] = payload.photo_base64
     return doc
 
 
@@ -11564,6 +11620,18 @@ async def list_journal(user=Depends(require_roles("maman"))):
     items = await db.grossesse_journal.find(
         {"user_id": user["id"]}, {"_id": 0}
     ).sort("created_at", -1).to_list(500)
+    # 🔐 Déchiffrement
+    for it in items:
+        if it.get("content"):
+            try:
+                it["content"] = decrypt_str(it["content"])
+            except Exception:
+                pass
+        if it.get("photo_base64"):
+            try:
+                it["photo_base64"] = decrypt_str(it["photo_base64"])
+            except Exception:
+                pass
     return items
 
 

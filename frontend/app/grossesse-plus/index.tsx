@@ -1,11 +1,13 @@
 import { useState, useCallback } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Image,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as Speech from "expo-speech";
 import { api, formatError } from "../../lib/api";
+import { cachedGet } from "../../lib/offline";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 const TRIM_BG = ["#FCE7F3", "#EDE9FE", "#DBEAFE"];
@@ -17,11 +19,12 @@ export default function GrossessePlusHome() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<{ code?: number; msg: string } | null>(null);
+  const [reading, setReading] = useState(false);
 
   const load = async () => {
     try {
       setErr(null);
-      const r = await api.get("/grossesse-plus/dashboard");
+      const r = await cachedGet("/grossesse-plus/dashboard");
       setData(r.data);
     } catch (e: any) {
       const code = e?.response?.status;
@@ -31,17 +34,25 @@ export default function GrossessePlusHome() {
       setLoading(false);
     }
   };
-  useFocusEffect(useCallback(() => { setLoading(true); load(); }, []));
+  useFocusEffect(useCallback(() => { setLoading(true); load(); return () => { Speech.stop(); }; }, []));
+
+  const readContent = () => {
+    if (!data?.current_week_content) return;
+    const c = data.current_week_content;
+    const txt = `Semaine ${c.week}. Taille du bébé: ${c.size_cm} centimètres. Poids: ${c.weight_g} grammes. Développement: ${c.dev}. Changements: ${c.changes}. Conseil: ${c.tip}.`;
+    if (reading) {
+      Speech.stop();
+      setReading(false);
+    } else {
+      setReading(true);
+      Speech.speak(txt, { language: "fr-FR", rate: 0.95, onDone: () => setReading(false), onStopped: () => setReading(false), onError: () => setReading(false) });
+    }
+  };
 
   if (loading) {
-    return (
-      <SafeAreaView style={styles.loader}>
-        <ActivityIndicator color={COLORS.primary} size="large" />
-      </SafeAreaView>
-    );
+    return <SafeAreaView style={styles.loader}><ActivityIndicator color={COLORS.primary} size="large" /></SafeAreaView>;
   }
 
-  // Non-premium
   if (err?.code === 402) {
     return (
       <SafeAreaView style={styles.container}>
@@ -53,12 +64,13 @@ export default function GrossessePlusHome() {
             <View style={styles.featList}>
               {[
                 { i: "calendar", t: "Suivi semaine par semaine (4 à 41 SA)" },
-                { i: "pulse", t: "Suivi médical : poids, tension, glycémie" },
-                { i: "warning", t: "Alertes intelligentes (pré-éclampsie, paludisme)" },
-                { i: "book", t: "Journal de grossesse + photos d'échographies" },
+                { i: "pulse", t: "Suivi médical avec courbes de poids" },
+                { i: "warning", t: "Alertes paludisme, anémie, pré-éclampsie" },
+                { i: "book", t: "Journal sécurisé chiffré AES-256" },
+                { i: "volume-high", t: "Mode vocal (lecture des contenus)" },
                 { i: "timer", t: "Compteur de contractions intelligent" },
-                { i: "bag", t: "Trousseau maternité personnalisé" },
-                { i: "heart", t: "Exercices de respiration et préparation mentale" },
+                { i: "videocam", t: "Téléconsultation directe en 1 clic" },
+                { i: "heart", t: "Exercices de respiration animés" },
               ].map((f, i) => (
                 <View key={i} style={styles.featRow}>
                   <Ionicons name={f.i as any} size={18} color={COLORS.primary} />
@@ -77,7 +89,6 @@ export default function GrossessePlusHome() {
     );
   }
 
-  // Aucune grossesse active
   if (err?.code === 404) {
     return (
       <SafeAreaView style={styles.container}>
@@ -99,8 +110,8 @@ export default function GrossessePlusHome() {
   if (err) {
     return (
       <SafeAreaView style={styles.loader}>
-        <Text style={{ color: COLORS.textSecondary }}>{err.msg}</Text>
-        <TouchableOpacity style={[styles.cta, { marginTop: 20 }]} onPress={load}>
+        <Text style={{ color: COLORS.textSecondary, padding: 20, textAlign: "center" }}>{err.msg}</Text>
+        <TouchableOpacity style={styles.cta} onPress={load}>
           <Text style={styles.ctaText}>Réessayer</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -128,7 +139,6 @@ export default function GrossessePlusHome() {
   return (
     <SafeAreaView style={styles.container} edges={["bottom"]}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        {/* HERO */}
         <View style={[styles.hero, { backgroundColor: trimColor }]}>
           <View style={styles.heroTop}>
             <View style={{ flex: 1 }}>
@@ -156,25 +166,31 @@ export default function GrossessePlusHome() {
           </View>
         </View>
 
-        {/* Cette semaine */}
+        {/* Cette semaine + mode vocal */}
         {fiche.fruit && (
-          <TouchableOpacity style={styles.weekCard} onPress={() => router.push(`/grossesse-plus/semaine/${fiche.week}` as any)}>
-            <View style={[styles.weekIcon, { backgroundColor: trimBg }]}>
-              <Text style={{ fontSize: 38 }}>{fiche.emoji}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.weekLbl}>CETTE SEMAINE • SA {fiche.week}</Text>
-              <Text style={styles.weekFruit}>Taille d'un{fiche.fruit?.startsWith("a")||fiche.fruit?.startsWith("e")||fiche.fruit?.startsWith("é") ? "" : "e"} {fiche.fruit}</Text>
-              <View style={styles.weekStats}>
-                <Text style={styles.weekStat}>📏 {fiche.size_cm} cm</Text>
-                <Text style={styles.weekStat}>⚖️ {fiche.weight_g >= 1000 ? `${(fiche.weight_g/1000).toFixed(2)} kg` : `${fiche.weight_g} g`}</Text>
+          <View style={styles.weekCardWrap}>
+            <TouchableOpacity style={styles.weekCard} onPress={() => router.push(`/grossesse-plus/semaine/${fiche.week}` as any)}>
+              <View style={[styles.weekIcon, { backgroundColor: trimBg }]}>
+                <Text style={{ fontSize: 38 }}>{fiche.emoji}</Text>
               </View>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
-          </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.weekLbl}>CETTE SEMAINE • SA {fiche.week}</Text>
+                <Text style={styles.weekFruit}>Taille d'un{["a","e","i","o","u","é"].some(v=>fiche.fruit?.toLowerCase().startsWith(v)) ? "" : "e"} {fiche.fruit}</Text>
+                <View style={styles.weekStats}>
+                  <Text style={styles.weekStat}>📏 {fiche.size_cm} cm</Text>
+                  <Text style={styles.weekStat}>⚖️ {fiche.weight_g >= 1000 ? `${(fiche.weight_g/1000).toFixed(2)} kg` : `${fiche.weight_g} g`}</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.voiceBtn, reading && { backgroundColor: COLORS.error }]} onPress={readContent}>
+              <Ionicons name={reading ? "stop-circle" : "volume-high"} size={18} color="#fff" />
+              <Text style={styles.voiceTxt}>{reading ? "Arrêter la lecture" : "Écouter cette semaine"}</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
-        {/* CTA Suivi rapide */}
+        {/* Actions rapides */}
         <View style={styles.row}>
           <TouchableOpacity style={[styles.quickAction, { backgroundColor: "#FCE7F3" }]} onPress={() => router.push("/grossesse-plus/suivi")}>
             <Ionicons name="add-circle" size={24} color="#EC4899" />
@@ -190,7 +206,35 @@ export default function GrossessePlusHome() {
           </TouchableOpacity>
         </View>
 
-        {/* Outils */}
+        {/* CTAs télémédecine + DMP */}
+        <Text style={styles.sectionTitle}>Accès rapide aux soins</Text>
+        <View style={styles.medRow}>
+          <TouchableOpacity style={[styles.medCard, { backgroundColor: "#EFF6FF" }]} onPress={() => router.push({ pathname: "/rdv-nouveau", params: { mode: "teleconsultation" } } as any)}>
+            <Ionicons name="videocam" size={26} color="#2563EB" />
+            <Text style={[styles.medTxt, { color: "#1E40AF" }]}>Téléconsultation</Text>
+            <Text style={styles.medSub}>Parlez à un pro</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.medCard, { backgroundColor: "#F0FDF4" }]} onPress={() => router.push({ pathname: "/rdv-nouveau", params: { mode: "domicile" } } as any)}>
+            <Ionicons name="home" size={26} color="#16A34A" />
+            <Text style={[styles.medTxt, { color: "#166534" }]}>À domicile</Text>
+            <Text style={styles.medSub}>Sage-femme chez vous</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.medCard, { backgroundColor: "#FEF2F2" }]} onPress={() => router.push("/home-request/new" as any)}>
+            <Ionicons name="alert-circle" size={26} color="#DC2626" />
+            <Text style={[styles.medTxt, { color: "#991B1B" }]}>Urgence</Text>
+            <Text style={styles.medSub}>Sans RDV</Text>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity style={styles.dmpLink} onPress={() => router.push("/dmp" as any)}>
+          <Ionicons name="shield-checkmark" size={18} color={COLORS.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.dmpTxt}>Dossier Médical Partagé (DMP)</Text>
+            <Text style={styles.dmpSub}>Partagez sécurisément avec vos pros • AES-256</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+        </TouchableOpacity>
+
         <Text style={styles.sectionTitle}>Mes outils</Text>
         <View style={styles.grid}>
           {tools.map((tt) => (
@@ -203,10 +247,9 @@ export default function GrossessePlusHome() {
           ))}
         </View>
 
-        {/* Avertissement médical */}
         <View style={styles.disclaimerBox}>
           <Ionicons name="information-circle" size={18} color={COLORS.textMuted} />
-          <Text style={styles.disclaimerTxt}>Ces informations sont à but éducatif et ne remplacent pas une consultation médicale.</Text>
+          <Text style={styles.disclaimerTxt}>Ces informations sont éducatives et ne remplacent pas une consultation médicale. Vos données sont chiffrées AES-256 (RGSSI N3).</Text>
         </View>
 
         <TouchableOpacity style={styles.editLink} onPress={() => router.push("/grossesse-plus/setup")}>
@@ -249,16 +292,26 @@ const styles = StyleSheet.create({
   heroBottom: { flexDirection: "row", justifyContent: "space-between" },
   heroLabel: { color: "rgba(255,255,255,0.85)", fontSize: 10, fontWeight: "800", letterSpacing: 1 },
   heroVal: { color: "#fff", fontWeight: "800", fontSize: 14, marginTop: 2 },
-  weekCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, marginBottom: 14 },
+  weekCardWrap: { marginBottom: 14 },
+  weekCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border },
   weekIcon: { width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center" },
   weekLbl: { fontSize: 10, color: COLORS.textMuted, fontWeight: "800", letterSpacing: 1 },
   weekFruit: { fontSize: 16, color: COLORS.textPrimary, fontWeight: "700", marginTop: 2 },
   weekStats: { flexDirection: "row", gap: 12, marginTop: 4 },
   weekStat: { fontSize: 13, color: COLORS.textSecondary },
+  voiceBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 10, backgroundColor: "#8B5CF6", borderRadius: RADIUS.md, marginTop: 8 },
+  voiceTxt: { color: "#fff", fontWeight: "700", fontSize: 13 },
   row: { flexDirection: "row", gap: 10, marginBottom: 16 },
   quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, borderRadius: RADIUS.md, gap: 4 },
   quickTxt: { fontSize: 11, fontWeight: "800" },
   sectionTitle: { fontSize: 16, fontWeight: "800", color: COLORS.textPrimary, marginBottom: 12 },
+  medRow: { flexDirection: "row", gap: 8, marginBottom: 14 },
+  medCard: { flex: 1, padding: 12, borderRadius: RADIUS.md, alignItems: "center", gap: 4 },
+  medTxt: { fontSize: 12, fontWeight: "800", marginTop: 4 },
+  medSub: { fontSize: 10, color: COLORS.textMuted },
+  dmpLink: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, backgroundColor: COLORS.primaryLight, borderRadius: RADIUS.md, marginBottom: 16 },
+  dmpTxt: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 13 },
+  dmpSub: { color: COLORS.textSecondary, fontSize: 11, marginTop: 2 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   gridItem: { width: "30%", flexGrow: 1, alignItems: "center", padding: 12, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border },
   gridIcon: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", marginBottom: 6 },

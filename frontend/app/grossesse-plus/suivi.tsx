@@ -1,12 +1,16 @@
 import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Dimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import Svg, { Polyline, Circle, Line, Text as SvgText } from "react-native-svg";
 import { api, formatError } from "../../lib/api";
+import { cachedGet, smartPost } from "../../lib/offline";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
-const SYMPTOMES = ["nausées", "vomissements", "fatigue", "insomnie", "œdèmes", "crampes", "contractions Braxton-Hicks", "brûlures d'estomac", "constipation", "maux de dos", "vertiges"];
+const SYMPTOMES = ["nausées", "vomissements", "fatigue", "insomnie", "œdèmes", "crampes", "contractions Braxton-Hicks", "brûlures d'estomac", "constipation", "maux de dos", "vertiges", "essoufflement"];
+const CHART_W = Dimensions.get("window").width - 80;
+const CHART_H = 160;
 
 export default function SuiviMedical() {
   const [busy, setBusy] = useState(false);
@@ -28,7 +32,7 @@ export default function SuiviMedical() {
 
   const load = async () => {
     try {
-      const r = await api.get("/grossesse-plus/tracking");
+      const r = await cachedGet("/grossesse-plus/tracking");
       setItems(r.data.items || []);
       setWeightSeries(r.data.weight_series || []);
       setTensionSeries(r.data.tension_series || []);
@@ -51,11 +55,12 @@ export default function SuiviMedical() {
     if (Object.keys(payload).length <= 1 && !selSymp.length) return Alert.alert("Saisie vide", "Saisissez au moins une mesure ou un symptôme.");
     try {
       setBusy(true);
-      const r = await api.post("/grossesse-plus/tracking", payload);
-      setLastAlerts(r.data.alerts || []);
+      const r = await smartPost("/grossesse-plus/tracking", payload);
+      setLastAlerts(r.data?.alerts || []);
       setPoids(""); setSys(""); setDia(""); setHu(""); setGly(""); setTemp(""); setMouv(""); setNotes(""); setSelSymp([]);
       await load();
-      if ((r.data.alerts || []).length === 0) Alert.alert("✅ Enregistré", "Mesure ajoutée à votre suivi.");
+      if (r.queued) Alert.alert("📡 Hors-ligne", "Votre mesure sera envoyée à la reconnexion.");
+      else if ((r.data?.alerts || []).length === 0) Alert.alert("✅ Enregistré", "Mesure ajoutée à votre suivi.");
     } catch (e) { Alert.alert("Erreur", formatError(e)); } finally { setBusy(false); }
   };
 
@@ -84,6 +89,37 @@ export default function SuiviMedical() {
               <Text style={s.statLabel}>Total pris</Text>
             </View>
           </View>
+
+          {/* 📈 Courbe poids SVG */}
+          {weightSeries.length >= 2 && (() => {
+            const vals = weightSeries.map((x: any) => x.value).filter((v: any) => typeof v === "number");
+            const minV = Math.floor(Math.min(...vals) - 2);
+            const maxV = Math.ceil(Math.max(...vals) + 2);
+            const range = Math.max(1, maxV - minV);
+            const pts = weightSeries.map((x: any, i: number) => {
+              const px = (i / Math.max(1, weightSeries.length - 1)) * CHART_W;
+              const py = CHART_H - ((x.value - minV) / range) * CHART_H;
+              return { px, py, v: x.value, w: x.week };
+            });
+            const polyline = pts.map(p => `${p.px},${p.py}`).join(" ");
+            return (
+              <View style={s.chartCard}>
+                <Text style={s.chartTitle}>📈 Courbe de poids</Text>
+                <Svg width={CHART_W} height={CHART_H + 20}>
+                  {[0, 0.25, 0.5, 0.75, 1].map((p, i) => (
+                    <Line key={i} x1={0} y1={CHART_H * p} x2={CHART_W} y2={CHART_H * p} stroke={COLORS.border} strokeWidth={1} strokeDasharray={i === 0 || i === 4 ? "" : "3 3"} />
+                  ))}
+                  <Polyline points={polyline} fill="none" stroke={COLORS.primary} strokeWidth={3} />
+                  {pts.map((p, i) => (
+                    <Circle key={i} cx={p.px} cy={p.py} r={4} fill={COLORS.primary} />
+                  ))}
+                  <SvgText x={4} y={12} fontSize={10} fill={COLORS.textMuted}>{maxV} kg</SvgText>
+                  <SvgText x={4} y={CHART_H} fontSize={10} fill={COLORS.textMuted}>{minV} kg</SvgText>
+                </Svg>
+                <Text style={s.chartSub}>{weightSeries.length} mesures · de SA {weightSeries[0].week} à SA {weightSeries[weightSeries.length-1].week}</Text>
+              </View>
+            );
+          })()}
 
           {/* Alertes dernière mesure */}
           {lastAlerts.map((a, i) => (
@@ -218,4 +254,7 @@ const s = StyleSheet.create({
   histSymp: { color: COLORS.textSecondary, fontSize: 12, fontStyle: "italic", marginTop: 4 },
   miniAlert: { marginTop: 6, padding: 6, borderRadius: 6, backgroundColor: "#FEF3C7" },
   miniAlertTxt: { fontSize: 11, color: "#92400E", fontWeight: "700" },
+  chartCard: { padding: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, marginBottom: 16 },
+  chartTitle: { fontWeight: "800", color: COLORS.textPrimary, marginBottom: 10, fontSize: 14 },
+  chartSub: { color: COLORS.textMuted, fontSize: 11, textAlign: "center", marginTop: 6 },
 });

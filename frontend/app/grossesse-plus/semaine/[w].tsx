@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as Speech from "expo-speech";
 import { api } from "../../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../../constants/theme";
 
@@ -14,10 +15,24 @@ export default function SemaineDetail() {
   const week = parseInt(String(w || "0"));
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [reading, setReading] = useState(false);
 
   useEffect(() => {
     api.get(`/grossesse-plus/week/${week}`).then(r => setData(r.data)).catch(() => setData(null)).finally(() => setLoading(false));
+    return () => { Speech.stop(); };
   }, [week]);
+
+  const speak = () => {
+    if (!data) return;
+    if (reading) {
+      Speech.stop();
+      setReading(false);
+      return;
+    }
+    const txt = `Semaine ${data.week}. Votre bébé a la taille d'un ${data.fruit}. Il mesure environ ${data.size_cm} centimètres et pèse environ ${data.weight_g} grammes. ${data.dev}. Chez la maman: ${data.changes}. Conseil de la semaine: ${data.tip}.`;
+    setReading(true);
+    Speech.speak(txt, { language: "fr-FR", rate: 0.95, onDone: () => setReading(false), onStopped: () => setReading(false), onError: () => setReading(false) });
+  };
 
   if (loading) return <SafeAreaView style={s.loader}><ActivityIndicator color={COLORS.primary} /></SafeAreaView>;
   if (!data) return <SafeAreaView style={s.loader}><Text>Semaine introuvable</Text></SafeAreaView>;
@@ -43,6 +58,10 @@ export default function SemaineDetail() {
               <Text style={s.statLbl}>Poids</Text>
             </View>
           </View>
+          <TouchableOpacity style={s.voiceBtn} onPress={speak}>
+            <Ionicons name={reading ? "stop-circle" : "volume-high"} size={18} color="#fff" />
+            <Text style={s.voiceTxt}>{reading ? "Arrêter" : "Écouter (français)"}</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={s.section}>
@@ -108,4 +127,6 @@ const s = StyleSheet.create({
   navTxt: { fontWeight: "800", color: COLORS.textPrimary },
   disabled: { opacity: 0.4 },
   disclaimer: { textAlign: "center", color: COLORS.textMuted, fontSize: 11, marginTop: 16, fontStyle: "italic" },
+  voiceBtn: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 14, paddingVertical: 8, paddingHorizontal: 14, backgroundColor: "rgba(255,255,255,0.25)", borderRadius: RADIUS.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.4)" },
+  voiceTxt: { color: "#fff", fontWeight: "700", fontSize: 13 },
 });
