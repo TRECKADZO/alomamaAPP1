@@ -11154,6 +11154,348 @@ async def get_tnd_screening(screening_id: str, user=Depends(get_current_user)):
 
 
 # ============================================================================
+# 🧠 M-CHAT-R/F — Follow-up Interview (entretien détaillé complet)
+# ============================================================================
+# L'entretien M-CHAT-R/F est passé UNIQUEMENT pour les items "à risque" du M-CHAT-R initial.
+# Pour chaque item échoué, on pose 2-4 questions de confirmation. Si la maman répond OUI à au moins
+# UNE question prouvant que le comportement EST PRÉSENT → l'item devient PASS (vrai négatif).
+# Sinon → l'item reste FAIL.
+# Score final :
+#   0-1 = LOW RISK (pas d'orientation)
+#   2+  = HIGH RISK → consultation spécialisée
+# Référence : Robins, Fein, & Barton (2009), https://mchatscreen.com
+
+# Pour chaque item, on définit une liste de questions de confirmation.
+# Si une seule réponse "OUI" → comportement présent → item PASS (retiré du score final).
+MCHAT_R_F_FOLLOWUP: Dict[int, Dict[str, Any]] = {
+    1: {
+        "behaviour": "Suivre du regard un objet que vous pointez",
+        "questions": [
+            "Avez-vous déjà essayé de pointer du doigt un objet pour le lui montrer ?",
+            "Quand vous pointez du doigt, votre enfant tourne-t-il la tête vers l'objet ?",
+            "Le fait-il au moins une fois par semaine ?",
+        ],
+        # confirmation: si OUI aux Q2 ET Q3, comportement présent
+        "pass_logic": "needs_q2_and_q3",
+    },
+    2: {
+        "behaviour": "Suspicion d'audition (souci de surdité)",
+        "questions": [
+            "Avez-vous déjà eu fait un test auditif chez le médecin ?",
+            "Quand un bruit fort survient, votre enfant tourne-t-il la tête ou réagit-il ?",
+            "Quand vous l'appelez d'une autre pièce, vient-il vers vous ?",
+        ],
+        # Critique inversé : si OUI à Q2 ou Q3 → l'audition est normale → item PASS
+        "pass_logic": "q2_or_q3",
+    },
+    3: {
+        "behaviour": "Jeu de faire-semblant",
+        "questions": [
+            "Donne-t-il à manger/à boire à sa poupée ou son nounours ?",
+            "Fait-il semblant de parler au téléphone (avec une banane ou un vrai téléphone) ?",
+            "Fait-il semblant de cuisiner, de conduire ou d'imiter une activité d'adulte ?",
+        ],
+        "pass_logic": "any_yes",
+    },
+    4: {
+        "behaviour": "Grimper",
+        "questions": [
+            "Peut-il monter les escaliers tout seul (en tenant la rampe ou non) ?",
+            "Grimpe-t-il sur le canapé, sur une chaise, ou sur un lit ?",
+            "Essaie-t-il d'attraper des objets en hauteur en grimpant ?",
+        ],
+        "pass_logic": "any_yes",
+    },
+    5: {
+        "behaviour": "Mouvements répétitifs étranges",
+        "questions": [
+            "Bat-il des mains de manière inhabituelle quand il est excité ?",
+            "Tourne-t-il sur lui-même longtemps sans étourdissement ?",
+            "Fixe-t-il ses doigts ou des objets très près de ses yeux pendant longtemps ?",
+        ],
+        # Critique : si AUCUN comportement étrange (que des "non") → item PASS
+        "pass_logic": "all_no",
+    },
+    6: {
+        "behaviour": "Pointer pour demander",
+        "questions": [
+            "Quand il veut un biscuit hors de portée, comment vous le fait-il comprendre — il pointe ?",
+            "Pointe-t-il du doigt pour demander de l'aide ?",
+            "Vous prend-il par la main jusqu'à l'objet plutôt que de pointer ?",
+        ],
+        # PASS si Q1 ou Q2 = OUI (pointe vraiment). Q3 = OUI = signe d'évitement.
+        "pass_logic": "q1_or_q2",
+    },
+    7: {
+        "behaviour": "Pointer pour partager l'intérêt",
+        "questions": [
+            "Quand il voit un avion, un chien, un animal, vous pointe-t-il pour vous montrer ?",
+            "Vous regarde-t-il pour vérifier que vous regardez aussi ?",
+            "Le fait-il au moins une fois par semaine ?",
+        ],
+        "pass_logic": "needs_q1_and_q2",
+    },
+    8: {
+        "behaviour": "Intérêt pour les autres enfants",
+        "questions": [
+            "Au marché ou en visite, regarde-t-il d'autres enfants avec curiosité ?",
+            "Essaie-t-il de jouer ou interagir avec eux ?",
+            "Sourit-il quand un enfant lui sourit ?",
+        ],
+        "pass_logic": "any_yes",
+    },
+    9: {
+        "behaviour": "Montrer des objets",
+        "questions": [
+            "Vous apporte-t-il un jouet pour vous le montrer (pas pour vous demander de l'aide) ?",
+            "Soulève-t-il un objet en l'air pour que vous le voyiez ?",
+            "Vous tend-il une image ou un dessin pour le partager ?",
+        ],
+        "pass_logic": "any_yes",
+    },
+    10: {
+        "behaviour": "Réponse au prénom",
+        "questions": [
+            "Quand vous l'appelez par son prénom, tourne-t-il la tête vers vous ?",
+            "Le fait-il même quand il joue ou regarde la télé ?",
+            "Le fait-il presque à chaque fois (>50%) ?",
+        ],
+        "pass_logic": "needs_q1_and_q3",
+    },
+    11: {
+        "behaviour": "Sourire-réponse",
+        "questions": [
+            "Quand vous lui souriez chaleureusement, vous répond-il par un sourire ?",
+            "Cela se produit-il plusieurs fois par jour ?",
+            "Est-ce qu'il vous sourit même sans que vous ayez fait quelque chose de spécial ?",
+        ],
+        "pass_logic": "needs_q1_and_q2",
+    },
+    12: {
+        "behaviour": "Sensibilité au bruit (critique)",
+        "questions": [
+            "Met-il ses mains sur ses oreilles quand il entend l'aspirateur, le mixeur ou un bruit fort ?",
+            "Pleure-t-il, hurle-t-il ou s'enfuit-il quand il y a du bruit ?",
+            "Se calme-t-il rapidement après ?",
+        ],
+        # PASS si Q1=NON ET Q2=NON (pas de sensibilité anormale)
+        "pass_logic": "q1_and_q2_no",
+    },
+    13: {
+        "behaviour": "Marche",
+        "questions": [
+            "Marche-t-il sans tenir un meuble ou votre main ?",
+            "Marche-t-il depuis plus d'un mois ?",
+        ],
+        "pass_logic": "needs_q1_and_q2",
+    },
+    14: {
+        "behaviour": "Contact visuel",
+        "questions": [
+            "Quand vous parlez avec lui, vous regarde-t-il dans les yeux ?",
+            "Le fait-il pendant les soins (bain, change, repas) ?",
+            "Le fait-il plusieurs fois par jour ?",
+        ],
+        "pass_logic": "needs_q1_and_q3",
+    },
+    15: {
+        "behaviour": "Imitation",
+        "questions": [
+            "Quand vous battez des mains, essaie-t-il de battre des mains aussi ?",
+            "Imite-t-il les sons (animaux, voitures) que vous faites ?",
+            "Imite-t-il un geste comme dire au revoir de la main ?",
+        ],
+        "pass_logic": "any_yes",
+    },
+    16: {
+        "behaviour": "Suivre le regard",
+        "questions": [
+            "Si vous regardez vers un objet, regarde-t-il dans la même direction ?",
+            "Le fait-il sans que vous pointiez du doigt ?",
+            "Suit-il votre regard plusieurs fois par jour ?",
+        ],
+        "pass_logic": "needs_q1_and_q2",
+    },
+    17: {
+        "behaviour": "Attirer l'attention",
+        "questions": [
+            "Fait-il des choses pour vous faire rire ou applaudir ?",
+            "Vous appelle-t-il en disant 'maman' ou 'papa' pour montrer quelque chose ?",
+            "Vous cherche-t-il du regard pour vérifier votre réaction ?",
+        ],
+        "pass_logic": "any_yes",
+    },
+    18: {
+        "behaviour": "Compréhension d'instructions",
+        "questions": [
+            "Si vous dites 'donne-moi la balle', vous la donne-t-il ?",
+            "Comprend-il 'viens ici' sans geste accompagnant ?",
+            "Suit-il une consigne en 2 étapes (ex: 'prends ton bol et amène-le') ?",
+        ],
+        "pass_logic": "needs_q1_or_q2",
+    },
+    19: {
+        "behaviour": "Référencement social",
+        "questions": [
+            "Devant un événement nouveau (bruit, personne inconnue), vous regarde-t-il pour voir votre réaction ?",
+            "Adapte-t-il son comportement à la vôtre (rassuré si vous souriez, alerté si vous froncez les sourcils) ?",
+            "Le fait-il plusieurs fois par jour ?",
+        ],
+        "pass_logic": "needs_q1_and_q2",
+    },
+    20: {
+        "behaviour": "Plaisir du mouvement",
+        "questions": [
+            "Rit-il ou sourit-il quand vous le balancez, le faites sauter, le faites tourner ?",
+            "Demande-t-il à ce que vous recommenciez (gestes, sons) ?",
+            "Est-ce qu'il déteste plutôt être touché ou bougé brusquement ?",
+        ],
+        # PASS si Q1=OUI ET Q3=NON (aime le mouvement, n'a pas peur du contact)
+        "pass_logic": "q1_yes_q3_no",
+    },
+}
+
+
+def _evaluate_followup_pass(item_id: int, fu_answers: List[str]) -> bool:
+    """Décide si un item devient PASS après follow-up. fu_answers = liste de 'yes'/'no'/'skip'."""
+    rule = MCHAT_R_F_FOLLOWUP.get(item_id, {}).get("pass_logic", "any_yes")
+    yes = [a == "yes" for a in fu_answers]
+    no = [a == "no" for a in fu_answers]
+    n = len(fu_answers)
+    if rule == "any_yes":
+        return any(yes)
+    if rule == "all_no":
+        return all(no[:n]) and n > 0
+    if rule == "q2_or_q3" and n >= 3:
+        return yes[1] or yes[2]
+    if rule == "q1_or_q2" and n >= 2:
+        return yes[0] or yes[1]
+    if rule == "needs_q1_and_q2" and n >= 2:
+        return yes[0] and yes[1]
+    if rule == "needs_q1_and_q3" and n >= 3:
+        return yes[0] and yes[2]
+    if rule == "needs_q1_or_q2" and n >= 2:
+        return yes[0] or yes[1]
+    if rule == "needs_q2_and_q3" and n >= 3:
+        return yes[1] and yes[2]
+    if rule == "q1_and_q2_no" and n >= 2:
+        return no[0] and no[1]
+    if rule == "q1_yes_q3_no" and n >= 3:
+        return yes[0] and no[2]
+    return any(yes)
+
+
+@api.get("/tnd/followup/{screening_id}")
+async def tnd_followup_questions(screening_id: str, user=Depends(get_current_user)):
+    """Retourne les items à confirmer + leurs questions de follow-up."""
+    doc = await db.tnd_screenings.find_one({"id": screening_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Dépistage introuvable")
+    if user["role"] == "maman" and doc.get("maman_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    # Items "à risque" du dépistage initial = ceux dont la réponse correspond à critical_answer
+    failed_items: List[Dict[str, Any]] = []
+    for q in MCHAT_R_QUESTIONS:
+        qid = str(q["id"])
+        ans = (doc.get("answers", {}).get(qid) or "").lower()
+        if ans == q["critical_answer"]:
+            fu = MCHAT_R_F_FOLLOWUP.get(q["id"]) or {}
+            failed_items.append({
+                "item_id": q["id"],
+                "original_question": q["fr"],
+                "behaviour": fu.get("behaviour", q["fr"]),
+                "weighted": q.get("weighted", False),
+                "questions": fu.get("questions", []),
+            })
+    return {
+        "screening_id": screening_id,
+        "enfant_id": doc.get("enfant_id"),
+        "level_initial": doc.get("level"),
+        "score_initial": doc.get("score"),
+        "items_to_confirm": failed_items,
+        "total_to_confirm": len(failed_items),
+        "version": "M-CHAT-R/F v1.0 FR",
+    }
+
+
+class TndFollowupIn(BaseModel):
+    # answers : { "item_id": ["yes"|"no"|"skip", ...] }
+    answers: Dict[str, List[str]]
+    notes: Optional[str] = ""
+
+
+@api.post("/tnd/followup/{screening_id}")
+async def submit_tnd_followup(screening_id: str, payload: TndFollowupIn, user=Depends(require_roles("maman", "professionnel"))):
+    """Soumet les réponses du follow-up et recalcule le score final."""
+    doc = await db.tnd_screenings.find_one({"id": screening_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Dépistage introuvable")
+    if user["role"] == "maman" and doc.get("maman_id") != user["id"]:
+        raise HTTPException(403, "Accès refusé")
+    if doc.get("followup"):
+        raise HTTPException(400, "Un follow-up a déjà été enregistré pour ce dépistage.")
+    # Recalcul item par item
+    item_results: List[Dict[str, Any]] = []
+    final_score = 0
+    critical_final: List[int] = []
+    for q in MCHAT_R_QUESTIONS:
+        qid_str = str(q["id"])
+        original = (doc.get("answers", {}).get(qid_str) or "").lower()
+        if original != q["critical_answer"]:
+            continue  # déjà PASS au screening initial
+        fu_ans = payload.answers.get(qid_str) or []
+        if not fu_ans:
+            # Pas de follow-up rendu → on garde le FAIL initial
+            item_results.append({"item_id": q["id"], "status": "fail", "reason": "no_followup_provided"})
+            final_score += 1
+            if q.get("weighted"):
+                critical_final.append(q["id"])
+            continue
+        passed = _evaluate_followup_pass(q["id"], fu_ans)
+        item_results.append({
+            "item_id": q["id"],
+            "status": "pass" if passed else "fail",
+            "followup_answers": fu_ans,
+        })
+        if not passed:
+            final_score += 1
+            if q.get("weighted"):
+                critical_final.append(q["id"])
+
+    # Niveau final M-CHAT-R/F
+    if final_score <= 1:
+        level_final = "faible"
+    elif final_score >= 2 and final_score <= 7:
+        level_final = "modere"
+    else:
+        level_final = "eleve"
+    reco_final = _tnd_recommandations(level_final, critical_final)
+
+    followup_doc = {
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "submitted_by": user["id"],
+        "submitted_by_role": user["role"],
+        "answers": payload.answers,
+        "item_results": item_results,
+        "score_final": final_score,
+        "level_final": level_final,
+        "critical_final": critical_final,
+        "recommandations_final": reco_final,
+        "notes": (payload.notes or "").strip()[:500],
+        "version": "M-CHAT-R/F v1.0 FR",
+    }
+    await db.tnd_screenings.update_one(
+        {"id": screening_id},
+        {"$set": {"followup": followup_doc, "level_final": level_final, "score_final": final_score}},
+    )
+    try:
+        await _audit_log(user=user, action="tnd_followup_submit", resource_type="TndScreening", resource_id=screening_id, details={"level_initial": doc.get("level"), "level_final": level_final, "score_initial": doc.get("score"), "score_final": final_score})
+    except Exception:
+        pass
+    return {"screening_id": screening_id, **followup_doc}
+
+
+# ============================================================================
 # 🤰 GROSSESSE + — Module premium d'accompagnement semaine par semaine
 # ============================================================================
 # Inspiré de Pregnancy+ (Philips), adapté au contexte ivoirien.

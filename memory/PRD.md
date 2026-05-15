@@ -55,6 +55,15 @@ Voir `/app/memory/test_credentials.md`
 - **Revenus transactionnels** : 10% sur chaque RDV payant
 - **Revenus B2B futurs** : API FHIR pour cliniques/hôpitaux partenaires
 
+## Phase 7 — M-CHAT-R/F Follow-up Interview complet (Feb 2026)
+Extension du module TND avec l'**entretien détaillé M-CHAT-R/F** officiel pour confirmer/écarter les signaux du dépistage initial.
+- 20 items du M-CHAT-R mappés à 2-3 questions de confirmation chacun (60 questions de follow-up au total) avec règles `pass_logic` officielles.
+- Backend : `GET /api/tnd/followup/{screening_id}` (retourne uniquement les items échoués + leurs questions) + `POST /api/tnd/followup/{screening_id}` (recalcule score final 0-1=faible / 2-7=modere / 8+=eleve).
+- Frontend : nouveau wizard `/enfants/[id]/tnd/[screeningId]/followup` avec barre de progression globale, pastilles par item, navigation Précédent/Suivant, intégration complète VoiceQA (TTS + STT vocal "oui"/"non").
+- CTA "Entretien détaillé M-CHAT-R/F" affiché sur le rapport pour les niveaux modéré/élevé, masqué après réalisation.
+- Bloc "APRÈS ENTRETIEN DÉTAILLÉ" affiché dans le rapport avec score raffiné.
+- Mode offline : `cachedGet` + `smartPost` (file d'attente locale en cas de réseau coupé).
+
 ## Phase 6 — Accessibilité vocale + Offline DMP/TND (Feb 2026)
 Mode vocal complet et mode hors-ligne pour les modules de dépistage médical, optimisés pour mamans peu lettrées en zone rurale.
 - **Composant VoiceQA** réutilisable (`/components/VoiceQA.tsx`) : TTS lecture des questions en français (expo-speech) + STT capture vocale "oui"/"non" tolérante (expo-speech-recognition, fonctionne sur iOS/Android/Web).
