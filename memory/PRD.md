@@ -55,6 +55,14 @@ Voir `/app/memory/test_credentials.md`
 - **Revenus transactionnels** : 10% sur chaque RDV payant
 - **Revenus B2B futurs** : API FHIR pour cliniques/hôpitaux partenaires
 
+## Phase 8 — VoiceQA sur Suivi médical Grossesse + (Feb 2026)
+Extension du mode vocal au tracking médical premium pour saisie hands-free des symptômes (utile en fin de grossesse / avec bébé dans les bras).
+- Bouton "🎤 Mode vocal — répondre oui/non à chaque symptôme" au-dessus de la grille des 12 symptômes (nausées, vomissements, fatigue, insomnie, œdèmes, crampes, Braxton-Hicks, brûlures d'estomac, constipation, maux de dos, vertiges, essoufflement).
+- Modal séquentiel avec barre de progression : pour chaque symptôme une question contextualisée (ex: « Vous essoufflez-vous facilement, même au repos ? ») + VoiceQA (TTS auto-lecture + STT capture oui/non).
+- Boutons tactiles OUI/NON gros (44×44+) en fallback du vocal.
+- Avance automatique au symptôme suivant après chaque réponse.
+- Symptômes cochés sont propagés au formulaire de saisie habituel et envoyés via `smartPost` (offline-safe).
+
 ## Phase 7 — M-CHAT-R/F Follow-up Interview complet (Feb 2026)
 Extension du module TND avec l'**entretien détaillé M-CHAT-R/F** officiel pour confirmer/écarter les signaux du dépistage initial.
 - 20 items du M-CHAT-R mappés à 2-3 questions de confirmation chacun (60 questions de follow-up au total) avec règles `pass_logic` officielles.

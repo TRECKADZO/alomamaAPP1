@@ -1,14 +1,30 @@
 import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Dimensions } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Dimensions, Modal } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import Svg, { Polyline, Circle, Line, Text as SvgText } from "react-native-svg";
 import { api, formatError } from "../../lib/api";
 import { cachedGet, smartPost } from "../../lib/offline";
+import VoiceQA from "../../components/VoiceQA";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 const SYMPTOMES = ["nausées", "vomissements", "fatigue", "insomnie", "œdèmes", "crampes", "contractions Braxton-Hicks", "brûlures d'estomac", "constipation", "maux de dos", "vertiges", "essoufflement"];
+// Question vocale dédiée à chaque symptôme (plus naturelle qu'un mot-clé seul)
+const SYMPTOME_QUESTIONS: Record<string, string> = {
+  "nausées": "Avez-vous des nausées en ce moment ?",
+  "vomissements": "Avez-vous eu des vomissements ces derniers jours ?",
+  "fatigue": "Vous sentez-vous très fatiguée ?",
+  "insomnie": "Avez-vous du mal à dormir la nuit ?",
+  "œdèmes": "Avez-vous les chevilles, mains ou visage gonflés ?",
+  "crampes": "Avez-vous des crampes dans les jambes ?",
+  "contractions Braxton-Hicks": "Avez-vous des contractions courtes et irrégulières (Braxton-Hicks) ?",
+  "brûlures d'estomac": "Avez-vous des brûlures à l'estomac ou des remontées acides ?",
+  "constipation": "Avez-vous des difficultés à aller à la selle ?",
+  "maux de dos": "Avez-vous mal au dos ?",
+  "vertiges": "Avez-vous des vertiges ou la tête qui tourne ?",
+  "essoufflement": "Vous essoufflez-vous facilement, même au repos ?",
+};
 const CHART_W = Dimensions.get("window").width - 80;
 const CHART_H = 160;
 
@@ -29,6 +45,9 @@ export default function SuiviMedical() {
   const [notes, setNotes] = useState("");
   const [selSymp, setSelSymp] = useState<string[]>([]);
   const [lastAlerts, setLastAlerts] = useState<any[]>([]);
+  // Mode vocal symptômes
+  const [voiceModal, setVoiceModal] = useState(false);
+  const [voiceIdx, setVoiceIdx] = useState(0);
 
   const load = async () => {
     try {
@@ -41,6 +60,25 @@ export default function SuiviMedical() {
   useFocusEffect(useCallback(() => { setLoading(true); load(); }, []));
 
   const toggleSymp = (s: string) => setSelSymp(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s]);
+
+  // Mode vocal : capture oui/non pour chaque symptôme
+  const voiceAnswer = (val: "yes" | "no") => {
+    const symp = SYMPTOMES[voiceIdx];
+    setSelSymp(prev => {
+      const has = prev.includes(symp);
+      if (val === "yes" && !has) return [...prev, symp];
+      if (val === "no" && has) return prev.filter(x => x !== symp);
+      return prev;
+    });
+    setTimeout(() => {
+      if (voiceIdx < SYMPTOMES.length - 1) {
+        setVoiceIdx(voiceIdx + 1);
+      } else {
+        setVoiceModal(false);
+        setVoiceIdx(0);
+      }
+    }, 300);
+  };
 
   const submit = async () => {
     const payload: any = { symptomes: selSymp };
@@ -169,6 +207,10 @@ export default function SuiviMedical() {
             <TextInput style={s.input} value={mouv} onChangeText={setMouv} keyboardType="number-pad" placeholder="15" placeholderTextColor={COLORS.textMuted} />
 
             <Text style={[s.label, { marginTop: 16 }]}>Symptômes ressentis</Text>
+            <TouchableOpacity style={s.voiceModeBtn} onPress={() => { setVoiceIdx(0); setVoiceModal(true); }}>
+              <Ionicons name="mic" size={16} color="#fff" />
+              <Text style={s.voiceModeTxt}>Mode vocal — répondre oui/non à chaque symptôme</Text>
+            </TouchableOpacity>
             <View style={s.chipsWrap}>
               {SYMPTOMES.map(symp => (
                 <TouchableOpacity key={symp} style={[s.chip, selSymp.includes(symp) && s.chipOn]} onPress={() => toggleSymp(symp)}>
@@ -216,6 +258,53 @@ export default function SuiviMedical() {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Modal mode vocal symptômes */}
+      <Modal visible={voiceModal} animationType="slide" transparent onRequestClose={() => setVoiceModal(false)}>
+        <View style={s.modalWrap}>
+          <View style={s.modalCard}>
+            <View style={s.modalHead}>
+              <Text style={s.modalTitle}>Mode vocal — Symptômes</Text>
+              <TouchableOpacity onPress={() => { setVoiceModal(false); setVoiceIdx(0); }}>
+                <Ionicons name="close" size={26} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <View style={s.voiceProgress}>
+              <View style={[s.voiceProgressFill, { width: `${((voiceIdx + 1) / SYMPTOMES.length) * 100}%` }]} />
+            </View>
+            <Text style={s.voiceCount}>Symptôme {voiceIdx + 1} / {SYMPTOMES.length}</Text>
+            <Text style={s.voiceSymp}>{SYMPTOMES[voiceIdx]}</Text>
+            <Text style={s.voiceQuestion}>{SYMPTOME_QUESTIONS[SYMPTOMES[voiceIdx]] || `Avez-vous ce symptôme : ${SYMPTOMES[voiceIdx]} ?`}</Text>
+
+            <View style={{ alignItems: "center", marginVertical: 14 }}>
+              <VoiceQA
+                key={`vs-${voiceIdx}`}
+                question={SYMPTOME_QUESTIONS[SYMPTOMES[voiceIdx]] || `Avez-vous ${SYMPTOMES[voiceIdx]} ?`}
+                prefix={`Symptôme ${voiceIdx + 1} sur ${SYMPTOMES.length}`}
+                autoRead
+                onYes={() => voiceAnswer("yes")}
+                onNo={() => voiceAnswer("no")}
+                color={COLORS.primary}
+              />
+            </View>
+
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TouchableOpacity style={[s.voiceBtn, { backgroundColor: "#FEE2E2", borderColor: "#DC2626" }]} onPress={() => voiceAnswer("no")}>
+                <Ionicons name="close-circle" size={24} color="#DC2626" />
+                <Text style={[s.voiceBtnTxt, { color: "#DC2626" }]}>NON</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.voiceBtn, { backgroundColor: "#D1FAE5", borderColor: "#16A34A" }]} onPress={() => voiceAnswer("yes")}>
+                <Ionicons name="checkmark-circle" size={24} color="#16A34A" />
+                <Text style={[s.voiceBtnTxt, { color: "#16A34A" }]}>OUI</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={s.voiceHint}>
+              {selSymp.length > 0 ? `✓ ${selSymp.length} symptôme${selSymp.length > 1 ? "s" : ""} coché${selSymp.length > 1 ? "s" : ""}` : "Aucun symptôme coché"}
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -257,4 +346,18 @@ const s = StyleSheet.create({
   chartCard: { padding: SPACING.lg, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, marginBottom: 16 },
   chartTitle: { fontWeight: "800", color: COLORS.textPrimary, marginBottom: 10, fontSize: 14 },
   chartSub: { color: COLORS.textMuted, fontSize: 11, textAlign: "center", marginTop: 6 },
+  voiceModeBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 10, paddingHorizontal: 12, backgroundColor: COLORS.primary, borderRadius: RADIUS.pill, marginBottom: 10 },
+  voiceModeTxt: { color: "#fff", fontWeight: "700", fontSize: 12 },
+  modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 20 },
+  modalCard: { backgroundColor: COLORS.bgPrimary, borderRadius: RADIUS.lg, padding: SPACING.lg },
+  modalHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  modalTitle: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 16 },
+  voiceProgress: { height: 4, backgroundColor: COLORS.border, borderRadius: 2, overflow: "hidden", marginBottom: 8 },
+  voiceProgressFill: { height: "100%", backgroundColor: COLORS.primary },
+  voiceCount: { fontSize: 11, color: COLORS.textMuted, fontWeight: "700", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 6 },
+  voiceSymp: { fontSize: 20, fontWeight: "800", color: COLORS.primary, marginBottom: 6 },
+  voiceQuestion: { fontSize: 14, color: COLORS.textPrimary, lineHeight: 19 },
+  voiceBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: RADIUS.md, borderWidth: 2 },
+  voiceBtnTxt: { fontWeight: "800", fontSize: 15 },
+  voiceHint: { textAlign: "center", color: COLORS.textMuted, fontSize: 12, marginTop: 12, fontStyle: "italic" },
 });
