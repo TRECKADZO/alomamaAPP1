@@ -694,6 +694,25 @@ backend:
           8. /grossesse-plus/cpn : current_week dynamique
           9. /grossesse-plus/declarer-naissance : vérif création enfant + clôture grossesse + active=False
 
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ 42/42 TESTS RÉUSSIS (script /app/backend_test_grossesse_plus.py).
+          - Public weekly /week/{w} & /weeks : bornes 4-41 OK, 38 fiches OK
+          - Dashboard : 200 premium / 401 no auth / 403 pro / 402 non-premium (premium_required)
+          - Setup : DDR direct OK + DPA rétroactif (DPA-280j) OK + 400 si manquant
+          - Tracking : alertes warning/critical pour tension, glycémie, fièvre, gain poids OK
+          - Journal : CRUD complet (note/écho/souvenir + photo_base64 + mood)
+          - Contractions : duration_sec exact, advice critical si <5min réguliers OK
+          - Trousseau : 17 items default + persistance done OK
+          - Consent : granulaire pro/centre/famille OK
+          - Breathing : 4 exercices OK
+          - CPN : current_week dynamique + next = HGPO sem.24
+          - Déclarer-naissance : enfant créé + grossesse fermée (active=False) + dashboard→404
+          - ACL : pro=403, non-premium=402 premium_required
+          
+          NON-BLOQUANT : content="" accepté dans /journal (peut ajouter Field min_length=1 si souhaité).
+
 metadata_grossesse_plus:
 
 frontend:
