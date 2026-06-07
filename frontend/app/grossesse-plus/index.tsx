@@ -139,6 +139,19 @@ export default function GrossessePlusHome() {
   return (
     <SafeAreaView style={styles.container} edges={["bottom"]}>
       <ScrollView contentContainerStyle={styles.scroll}>
+        {/* 🎤 Bandeau mode vocal accessibilité (visible toujours pour les premium) */}
+        <View style={styles.voiceHelp}>
+          <View style={styles.voiceHelpIcon}>
+            <Ionicons name="volume-high" size={22} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.voiceHelpTitle}>Mode vocal disponible</Text>
+            <Text style={styles.voiceHelpSub}>
+              Écoutez les contenus 🔊 et répondez à la voix 🎤 dans le suivi médical et la lecture des semaines.
+            </Text>
+          </View>
+        </View>
+
         <View style={[styles.hero, { backgroundColor: trimColor }]}>
           <View style={styles.heroTop}>
             <View style={{ flex: 1 }}>
@@ -320,4 +333,8 @@ const styles = StyleSheet.create({
   disclaimerTxt: { flex: 1, color: COLORS.textMuted, fontSize: 11, lineHeight: 16 },
   editLink: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 12, marginTop: 10 },
   editLinkTxt: { color: COLORS.textSecondary, fontSize: 13 },
+  voiceHelp: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, backgroundColor: "#8B5CF6", borderRadius: RADIUS.md, marginBottom: 14 },
+  voiceHelpIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+  voiceHelpTitle: { color: "#fff", fontWeight: "800", fontSize: 14 },
+  voiceHelpSub: { color: "rgba(255,255,255,0.9)", fontSize: 11, marginTop: 2, lineHeight: 15 },
 });

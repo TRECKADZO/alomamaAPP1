@@ -87,10 +87,13 @@
         {
           "microphonePermission": "Pour répondre à la voix aux questionnaires DMP et TND",
           "speechRecognitionPermission": "Pour reconnaître votre réponse oui/non",
-          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
         }
       ],
-      "./plugins/with-remove-permissions.js"
+      "./plugins/with-remove-permissions.js",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

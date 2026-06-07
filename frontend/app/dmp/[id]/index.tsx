@@ -12,6 +12,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { api } from "../../../lib/api";
 import { cachedGet, smartPost, smartDelete } from "../../../lib/offline";
+import VoiceQA from "../../../components/VoiceQA";
 import { COLORS, RADIUS, SPACING, SHADOW } from "../../../constants/theme";
 
 type Domain = { key: string; label: string; emoji: string; color: string; score: number | null; acquis: number; non_acquis?: number; total_attendus: number; total_milestones: number; alertes: number };
@@ -142,6 +143,14 @@ export default function DmpEnfant() {
           <Ionicons name="chevron-forward" size={22} color="#fff" />
         </TouchableOpacity>
 
+        {/* Info mode vocal */}
+        <View style={styles.voiceHelp}>
+          <Ionicons name="information-circle" size={18} color="#8B5CF6" />
+          <Text style={styles.voiceHelpTxt}>
+            🎤 <Text style={{ fontWeight: "800" }}>Mode vocal disponible</Text> sur chaque jalon. Appuyez sur <Text style={{ fontWeight: "800" }}>Écouter</Text> pour entendre la question, ou <Text style={{ fontWeight: "800" }}>Parler</Text> pour répondre à la voix (oui/non).
+          </Text>
+        </View>
+
         {/* Scores par domaine */}
         <Text style={styles.sectionTitle}>Scores par domaine</Text>
         <View style={styles.domainGrid}>
@@ -241,6 +250,18 @@ export default function DmpEnfant() {
                       <Text style={styles.itemAge}>≈ {it.age_typique}m (alerte {it.age_alerte}m+)</Text>
                     </View>
                   </View>
+                </View>
+
+                {/* Mode vocal compact + Boutons Oui / Non */}
+                <View style={styles.voiceRow}>
+                  <VoiceQA
+                    key={`vqa-jalon-${it.id}`}
+                    question={`${it.titre}. ${it.description}. Votre enfant le fait-il ?`}
+                    onYes={() => setResponse(it, "oui")}
+                    onNo={() => setResponse(it, "non")}
+                    color={domain?.color || "#3B82F6"}
+                    compact
+                  />
                 </View>
 
                 {/* Boutons Oui / Non — segmentés inline */}
@@ -353,6 +374,9 @@ const styles = StyleSheet.create({
   itemAge: { fontSize: 9, color: COLORS.textMuted },
 
   segRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+  voiceRow: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#F3F4F6", flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  voiceHelp: { flexDirection: "row", gap: 10, padding: 12, marginBottom: 14, backgroundColor: "#EDE9FE", borderRadius: RADIUS.md, borderWidth: 1, borderColor: "#C4B5FD" },
+  voiceHelpTxt: { flex: 1, color: "#4C1D95", fontSize: 12, lineHeight: 17 },
   segBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 10, borderWidth: 1.5, backgroundColor: "#fff" },
   segOui: { borderColor: "#10B981" },
   segOuiActive: { backgroundColor: "#10B981", borderColor: "#10B981" },
