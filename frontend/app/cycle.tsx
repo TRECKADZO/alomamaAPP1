@@ -18,7 +18,12 @@ type DayType = "regles" | "fertile" | "ovulation" | "predit" | "fertile_predit" 
 
 function addDays(d: Date, n: number) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 function sameDay(a: Date, b: Date) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
-function daysBetween(a: Date, b: Date) { return Math.floor((b.getTime() - a.getTime()) / 86400000); }
+// Nombre de jours calendaires entre a et b (normalisé à minuit local pour éviter les écarts liés à l'heure)
+function daysBetween(a: Date, b: Date) {
+  const a0 = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
+  const b0 = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime();
+  return Math.round((b0 - a0) / 86400000);
+}
 
 export default function Cycle() {
   const router = useRouter();
