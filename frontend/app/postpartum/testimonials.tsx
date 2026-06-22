@@ -128,9 +128,11 @@ export default function Testimonials() {
               placeholder="Écrivez ici. Tout est permis : votre histoire, vos doutes, ce qui vous a aidée…"
               placeholderTextColor={COLORS.textMuted}
             />
-            <Text style={s.charCount}>{newContent.length} / 2000</Text>
+            <Text style={[s.charCount, newContent.length < 30 && { color: "#DC2626" }]}>
+              {newContent.length} / 2000 {newContent.length < 30 ? `· ${30 - newContent.length} caractères minimum` : "✓"}
+            </Text>
 
-            <TouchableOpacity style={[s.submitBtn, busy && { opacity: 0.5 }]} onPress={submit} disabled={busy}>
+            <TouchableOpacity style={[s.submitBtn, (busy || newContent.trim().length < 30) && { opacity: 0.5 }]} onPress={submit} disabled={busy || newContent.trim().length < 30}>
               <Ionicons name="send" size={18} color="#fff" />
               <Text style={s.submitTxt}>{busy ? "Envoi..." : "Publier (modéré en 24h)"}</Text>
             </TouchableOpacity>

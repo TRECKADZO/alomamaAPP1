@@ -12466,7 +12466,7 @@ async def postpartum_dashboard(user=Depends(require_roles("maman"))):
 # Check-in hebdomadaire "Et toi, comment tu vas ?"
 # ----------------------------------------------------------------------
 class PostpartumCheckinIn(BaseModel):
-    mood: int = 3  # 1 (très mal) à 5 (très bien)
+    mood: int = Field(default=3, ge=1, le=5)  # 1 (très mal) à 5 (très bien)
     physical_symptoms: List[str] = []
     mental_symptoms: List[str] = []
     free_text: Optional[str] = ""           # réponse libre (texte ou transcript voix)
