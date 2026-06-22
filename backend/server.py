@@ -18,6 +18,7 @@ import uuid
 import logging
 import bcrypt
 import jwt
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Dict, Any
 
@@ -12289,6 +12290,381 @@ async def declarer_naissance(payload: GrossesseToEnfantIn, user=Depends(require_
     )
     enfant.pop("_id", None)
     return {"success": True, "enfant": enfant, "message": "Bienvenue à votre bébé ! 🍼 Votre suivi continue dans le Carnet de l'enfant."}
+
+
+# 🔄 Re-include final : enregistre toutes les routes ajoutées après les précédents include_router
+
+# ============================================================================
+# 🌸 MODULE "APRÈS L'ACCOUCHEMENT" / "MOI AUSSI" — Post-partum bienveillant
+# ============================================================================
+# Accompagne les mamans pendant les 6-12 premiers mois après la naissance.
+# - Suivi hebdomadaire (S1-S26) puis mensuel (M7-M12)
+# - Détection des signes physiques + mentaux (EPDS-inspired)
+# - Témoignages anonymes "Elles en parlent"
+# - Implication conjoint
+# - 🔐 Données très sensibles : chiffrement AES-256-GCM des notes/voix
+# ============================================================================
+
+# Contenus éducatifs par semaine post-partum (extraits adaptés au contexte ivoirien)
+POSTPARTUM_WEEKLY: Dict[int, Dict[str, str]] = {
+    1: {"title": "Bienvenue à la maison 🏡", "tip": "Reposez-vous dès que bébé dort. Hydratez-vous (eau, bouillon, jus naturels). Le baby-blues touche 80% des mamans — c'est passager."},
+    2: {"title": "Vos saignements (lochies)", "tip": "Lochies normales pendant 4 à 6 semaines. Si saignement abondant > 1 serviette/h ou caillots gros — consultez."},
+    3: {"title": "L'allaitement, jamais évident", "tip": "Douleurs au sein, crevasses, montée de lait : c'est fréquent. Une sage-femme peut vous accompagner. Pas de honte à demander."},
+    4: {"title": "Le moral, on en parle ?", "tip": "Si après 2 semaines vous pleurez encore tous les jours, vous vous sentez vide ou coupable — ce n'est PAS normal et c'est PAS de votre faute. Parlons-en."},
+    5: {"title": "Votre périnée", "tip": "Tirements, inconfort, fuites urinaires ? La rééducation périnéale (10 séances) est essentielle dès la 6e semaine. C'est remboursé CMU."},
+    6: {"title": "Visite post-natale", "tip": "À faire entre la 6e et 8e semaine. Bilan complet : périnée, contraception, état général, dépistage dépression."},
+    8: {"title": "Reprendre le sport en douceur", "tip": "Marche, étirements doux. Évitez abdos classiques avant la rééducation. Pas de course avant 3 mois minimum."},
+    10: {"title": "Sexualité après bébé", "tip": "Reprise quand VOUS êtes prête. Sécheresse fréquente — un lubrifiant à base d'eau aide. La libido revient à son rythme."},
+    12: {"title": "Chute de cheveux (3 mois)", "tip": "Très fréquente entre 3 et 6 mois. Liée aux hormones. Rentre dans l'ordre seul. Fer + B12 peuvent aider."},
+    16: {"title": "Vous êtes une bonne mère", "tip": "La culpabilité, la peur de mal faire : toutes les mamans la ressentent. Vous faites de votre mieux. Ce n'est jamais parfait, c'est suffisant."},
+    20: {"title": "Reprise du travail", "tip": "Préparez le sevrage progressif si allaitement. Faites un point sur votre énergie. La crèche/nounou nécessite du temps d'adaptation."},
+    24: {"title": "6 mois post-partum 💚", "tip": "Si vous vous sentez toujours triste ou épuisée, faites un bilan avec votre médecin. Une dépression post-partum peut survenir tardivement."},
+    36: {"title": "9 mois — la moitié du chemin", "tip": "Vous avez passé autant de temps avec votre bébé hors de votre ventre que dedans. Bravo."},
+    48: {"title": "1 an post-partum 🎉", "tip": "Bilan complet recommandé. Si le mal-être persiste, ne laissez pas faire. Un suivi psychologique peut tout changer."},
+}
+
+# Symptômes physiques courants (cochables)
+POSTPARTUM_PHYSICAL = [
+    "fatigue intense", "mal de dos", "douleurs périnéales", "douleurs cicatrice césarienne",
+    "saignements abondants", "fièvre", "chute de cheveux", "sécheresse intime",
+    "incontinence urinaire", "constipation", "hémorroïdes", "engorgement seins",
+    "crevasses allaitement", "vergetures démangeant", "perte de poids rapide", "prise de poids",
+]
+
+# Symptômes mentaux (alerte si plusieurs)
+POSTPARTUM_MENTAL = [
+    "tristesse persistante", "pleurs sans raison", "irritabilité", "anxiété forte",
+    "insomnie", "pensées sombres", "sentiment de vide", "culpabilité excessive",
+    "perte d'intérêt pour bébé", "baisse de libido", "isolement social", "honte de soi",
+]
+
+
+def _evaluate_postpartum_alerts(physical: List[str], mental: List[str], free_text: str, week_pp: int, mood: int) -> List[Dict[str, Any]]:
+    """Génère des alertes bienveillantes selon EPDS + symptômes locaux."""
+    alerts: List[Dict[str, Any]] = []
+    txt = (free_text or "").lower()
+    # 🚨 PHYSIQUE URGENT
+    if "saignements abondants" in physical:
+        alerts.append({"level": "critical", "title": "Saignements abondants", "message": "Plus d'1 serviette par heure ou caillots gros = consultation rapide. Une hémorragie peut survenir jusqu'à 12 semaines après l'accouchement."})
+    if "fièvre" in physical:
+        alerts.append({"level": "critical", "title": "Fièvre post-partum", "message": "Une fièvre > 38°C après l'accouchement peut signaler une infection (utérine, périnée, sein). Consultez aujourd'hui."})
+    # ⚠️ PHYSIQUE WARNING
+    if "douleurs cicatrice césarienne" in physical and week_pp >= 4:
+        alerts.append({"level": "warning", "title": "Cicatrice qui fait mal", "message": "Au-delà de 3-4 semaines, la cicatrice ne devrait plus être douloureuse. Vérifiez avec votre sage-femme."})
+    if "incontinence urinaire" in physical and week_pp >= 6:
+        alerts.append({"level": "info", "title": "Rééducation périnéale", "message": "C'est très fréquent mais ça se traite ! La rééducation périnéale (10 séances) est très efficace. Demandez-la dès maintenant."})
+
+    # 🧠 MENTAL — Inspiré EPDS (Edinburgh Postnatal Depression Scale)
+    high_mental = ["pensées sombres", "sentiment de vide", "perte d'intérêt pour bébé"]
+    has_high = any(s in mental for s in high_mental)
+    if has_high or mood <= 2:
+        alerts.append({
+            "level": "critical",
+            "title": "Vos émotions méritent un soutien dès maintenant",
+            "message": "Ce que vous ressentez n'est PAS de votre faute. La dépression post-partum touche 1 maman sur 7. Un psychologue ou votre sage-femme peuvent vraiment vous aider. Vous n'êtes pas seule.",
+        })
+    elif len(mental) >= 3 and week_pp >= 2:
+        alerts.append({
+            "level": "warning",
+            "title": "Le baby-blues s'installe",
+            "message": f"Vous avez coché {len(mental)} signes mentaux. Au-delà de 2 semaines, ce n'est plus du baby-blues mais peut-être une dépression. Parlons-en ensemble.",
+        })
+
+    # 🔍 ANALYSE TEXTE LIBRE (mots-clés sensibles)
+    danger_words = ["plus envie", "envie de mourir", "en finir", "abandonner", "fuir", "fenêtre", "disparaître", "tuer", "haïr"]
+    if any(w in txt for w in danger_words):
+        alerts.append({
+            "level": "critical",
+            "title": "🚨 Aide immédiate disponible",
+            "message": "Vos mots m'inquiètent. Vous méritez de l'aide MAINTENANT. SAMU Côte d'Ivoire : 185. Ou parlez à une sage-femme via l'app. Vous n'êtes JAMAIS un fardeau.",
+            "samu_call": "185",
+        })
+    return alerts
+
+
+def _postpartum_week(accouchement_date: str) -> tuple[int, str]:
+    """Retourne (semaine_pp, période)."""
+    try:
+        d = datetime.fromisoformat(accouchement_date.replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        diff_days = (datetime.now(timezone.utc) - d).days
+        week = max(0, diff_days // 7)
+        if week <= 26:
+            period = "hebdomadaire"
+        elif week <= 52:
+            period = "mensuel"
+        else:
+            period = "annuel"
+        return week, period
+    except Exception:
+        return 0, "hebdomadaire"
+
+
+# ----------------------------------------------------------------------
+# Setup post-partum (auto depuis naissance ou manuel)
+# ----------------------------------------------------------------------
+class PostpartumSetupIn(BaseModel):
+    accouchement_date: str  # ISO
+    voie_accouchement: Literal["voie_basse", "voie_basse_episio", "cesarienne", "instrumentale"] = "voie_basse"
+    enfant_id: Optional[str] = None
+    allaitement: Optional[Literal["maternel", "mixte", "biberon"]] = None
+
+
+@api.post("/postpartum/setup")
+async def postpartum_setup(payload: PostpartumSetupIn, user=Depends(require_roles("maman"))):
+    await db.postpartum.update_many({"user_id": user["id"], "active": True}, {"$set": {"active": False}})
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "enfant_id": payload.enfant_id,
+        "accouchement_date": payload.accouchement_date,
+        "voie_accouchement": payload.voie_accouchement,
+        "allaitement": payload.allaitement,
+        "active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.postpartum.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/postpartum/dashboard")
+async def postpartum_dashboard(user=Depends(require_roles("maman"))):
+    pp = await db.postpartum.find_one({"user_id": user["id"], "active": True}, {"_id": 0})
+    if not pp:
+        raise HTTPException(404, "Aucun suivi post-partum actif. Configurez-le d'abord.")
+    week, period = _postpartum_week(pp["accouchement_date"])
+    # Trouver la fiche éducative la plus proche
+    available_weeks = sorted(POSTPARTUM_WEEKLY.keys())
+    fiche_week = next((w for w in available_weeks if w >= week), available_weeks[-1])
+    fiche = POSTPARTUM_WEEKLY.get(fiche_week, {})
+    # Dernier check-in
+    last = await db.postpartum_checkins.find_one(
+        {"user_id": user["id"]}, sort=[("created_at", -1)], projection={"_id": 0, "free_text_enc": 0, "voice_url_enc": 0}
+    )
+    # Nombre check-ins
+    count = await db.postpartum_checkins.count_documents({"user_id": user["id"]})
+    # Période 4-26 = soutien renforcé
+    return {
+        "postpartum_id": pp["id"],
+        "week_pp": week,
+        "period": period,
+        "label": f"Semaine {week} après accouchement" if period == "hebdomadaire" else f"{week//4} mois après accouchement",
+        "accouchement_date": pp["accouchement_date"],
+        "voie": pp.get("voie_accouchement"),
+        "allaitement": pp.get("allaitement"),
+        "current_fiche": {"week": fiche_week, **fiche},
+        "last_checkin": last,
+        "checkins_count": count,
+        "next_checkin_due": period == "hebdomadaire" or (last and (datetime.now(timezone.utc) - datetime.fromisoformat(last["created_at"].replace("Z", "+00:00").replace("Z", ""))).days >= 30),
+        "phone_samu": "185",
+    }
+
+
+# ----------------------------------------------------------------------
+# Check-in hebdomadaire "Et toi, comment tu vas ?"
+# ----------------------------------------------------------------------
+class PostpartumCheckinIn(BaseModel):
+    mood: int = 3  # 1 (très mal) à 5 (très bien)
+    physical_symptoms: List[str] = []
+    mental_symptoms: List[str] = []
+    free_text: Optional[str] = ""           # réponse libre (texte ou transcript voix)
+    voice_url: Optional[str] = None          # base64 audio si voulu (optionnel, chiffré)
+    consent_partage_pro: bool = False        # partager avec sage-femme/médecin
+
+
+@api.post("/postpartum/checkin")
+async def postpartum_checkin(payload: PostpartumCheckinIn, user=Depends(require_roles("maman"))):
+    pp = await db.postpartum.find_one({"user_id": user["id"], "active": True}, {"_id": 0})
+    if not pp:
+        raise HTTPException(404, "Aucun suivi post-partum actif.")
+    week, _ = _postpartum_week(pp["accouchement_date"])
+    alerts = _evaluate_postpartum_alerts(
+        payload.physical_symptoms, payload.mental_symptoms, payload.free_text or "", week, payload.mood
+    )
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "postpartum_id": pp["id"],
+        "week_pp": week,
+        "mood": int(max(1, min(5, payload.mood))),
+        "physical_symptoms": payload.physical_symptoms,
+        "mental_symptoms": payload.mental_symptoms,
+        # 🔐 RGSSI N3 — chiffrement des données sensibles santé mentale
+        "free_text_enc": encrypt_str(payload.free_text) if payload.free_text else None,
+        "voice_url_enc": encrypt_str(payload.voice_url) if payload.voice_url else None,
+        "alerts": alerts,
+        "consent_partage_pro": bool(payload.consent_partage_pro),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.postpartum_checkins.insert_one(doc)
+    doc.pop("_id", None)
+    # On renvoie les alertes + le texte en clair
+    return {
+        "id": doc["id"], "week_pp": week, "mood": doc["mood"],
+        "physical_symptoms": doc["physical_symptoms"],
+        "mental_symptoms": doc["mental_symptoms"],
+        "free_text": payload.free_text,
+        "alerts": alerts,
+        "created_at": doc["created_at"],
+    }
+
+
+@api.get("/postpartum/checkins")
+async def postpartum_checkins_list(user=Depends(require_roles("maman"))):
+    items = await db.postpartum_checkins.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    for it in items:
+        if it.get("free_text_enc"):
+            try:
+                it["free_text"] = decrypt_str(it["free_text_enc"])
+            except Exception:
+                it["free_text"] = ""
+        it.pop("free_text_enc", None)
+        it.pop("voice_url_enc", None)  # on n'expose pas l'audio en liste
+    # série mood pour courbe
+    mood_series = [{"week": x.get("week_pp"), "mood": x.get("mood"), "date": x.get("created_at")} for x in items][::-1]
+    return {"items": items, "mood_series": mood_series, "count": len(items)}
+
+
+@api.delete("/postpartum/checkin/{cid}")
+async def postpartum_delete_checkin(cid: str, user=Depends(require_roles("maman"))):
+    r = await db.postpartum_checkins.delete_one({"id": cid, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Check-in introuvable")
+    return {"deleted": True}
+
+
+# ----------------------------------------------------------------------
+# Contenu éducatif par semaine
+# ----------------------------------------------------------------------
+@api.get("/postpartum/fiche/{week}")
+async def postpartum_fiche(week: int):
+    available = sorted(POSTPARTUM_WEEKLY.keys())
+    nearest = next((w for w in available if w >= week), available[-1])
+    return {"week": nearest, **POSTPARTUM_WEEKLY[nearest]}
+
+
+@api.get("/postpartum/fiches")
+async def postpartum_all_fiches():
+    return [{"week": w, **POSTPARTUM_WEEKLY[w]} for w in sorted(POSTPARTUM_WEEKLY.keys())]
+
+
+# ----------------------------------------------------------------------
+# Témoignages anonymes "Elles en parlent"
+# ----------------------------------------------------------------------
+class TestimonialIn(BaseModel):
+    content: str
+    week_pp: Optional[int] = None
+    topic: Optional[Literal["baby_blues", "depression", "allaitement", "couple", "perinee", "fatigue", "general"]] = "general"
+
+
+@api.post("/postpartum/testimonials")
+async def submit_testimonial(payload: TestimonialIn, user=Depends(require_roles("maman"))):
+    if len(payload.content or "") < 30:
+        raise HTTPException(400, "Témoignage trop court (minimum 30 caractères).")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id_hash": hashlib.sha256(user["id"].encode()).hexdigest()[:12],  # anonymisé
+        "content": (payload.content or "").strip()[:2000],
+        "week_pp": payload.week_pp,
+        "topic": payload.topic or "general",
+        "approved": False,  # nécessite modération admin
+        "likes": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.postpartum_testimonials.insert_one(doc)
+    doc.pop("_id", None)
+    return {"id": doc["id"], "status": "pending_moderation", "message": "Merci pour votre courage. Votre témoignage sera publié après modération (24h max)."}
+
+
+@api.get("/postpartum/testimonials")
+async def list_testimonials(topic: Optional[str] = None, user=Depends(get_current_user)):
+    q: Dict[str, Any] = {"approved": True}
+    if topic and topic != "all":
+        q["topic"] = topic
+    items = await db.postpartum_testimonials.find(q, {"_id": 0, "user_id_hash": 0}).sort("created_at", -1).to_list(100)
+    return items
+
+
+@api.post("/postpartum/testimonials/{tid}/like")
+async def like_testimonial(tid: str, user=Depends(require_roles("maman"))):
+    r = await db.postpartum_testimonials.update_one(
+        {"id": tid, "approved": True}, {"$inc": {"likes": 1}}
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Témoignage introuvable")
+    return {"liked": True}
+
+
+# Admin moderation
+@api.get("/admin/postpartum/testimonials/pending")
+async def admin_pending_testimonials(user=Depends(require_roles("admin", "super_admin"))):
+    items = await db.postpartum_testimonials.find({"approved": False}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api.post("/admin/postpartum/testimonials/{tid}/approve")
+async def admin_approve_testimonial(tid: str, user=Depends(require_roles("admin", "super_admin"))):
+    r = await db.postpartum_testimonials.update_one({"id": tid}, {"$set": {"approved": True, "approved_by": user["id"], "approved_at": datetime.now(timezone.utc).isoformat()}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Témoignage introuvable")
+    return {"approved": True}
+
+
+@api.post("/admin/postpartum/testimonials/{tid}/reject")
+async def admin_reject_testimonial(tid: str, user=Depends(require_roles("admin", "super_admin"))):
+    await db.postpartum_testimonials.delete_one({"id": tid})
+    return {"rejected": True}
+
+
+# ----------------------------------------------------------------------
+# Implication conjoint — Checklist + message hebdomadaire
+# ----------------------------------------------------------------------
+CONJOINT_CHECKLIST = [
+    {"id": "demander", "label": "Lui demander 'Et toi, comment tu vas ?' au moins 1 fois par semaine"},
+    {"id": "ecouter", "label": "L'écouter sans donner de conseils — juste écouter"},
+    {"id": "repos", "label": "Lui permettre une grasse matinée par semaine (s'occuper du bébé)"},
+    {"id": "menage", "label": "Prendre en charge le ménage / les courses cette semaine"},
+    {"id": "repas", "label": "Préparer un repas qu'elle aime (sans qu'elle demande)"},
+    {"id": "valoriser", "label": "Lui dire 'Tu es une bonne mère' et 'Merci pour tout'"},
+    {"id": "sortie", "label": "Lui proposer de sortir seule (avec sa sœur, amies) 1h"},
+    {"id": "rdv", "label": "L'accompagner à sa visite post-natale (entre 6-8 semaines)"},
+    {"id": "signaux", "label": "Surveiller : pleurs fréquents, vide, désintérêt → en parler avec elle"},
+]
+
+CONJOINT_WEEKLY_MESSAGES = [
+    {"week": 1, "message": "Votre femme rentre tout juste à la maison. Reposez-la, faites les courses, et demandez-lui : « Et toi, comment tu vas ? » C'est ce qu'elle entendra de plus précieux."},
+    {"week": 2, "message": "Le baby-blues touche 8 mamans sur 10 entre J3 et J10. Si elle pleure beaucoup, ce n'est pas de votre faute, ni de la sienne. Écoutez-la simplement."},
+    {"week": 4, "message": "1 mois ! Si elle pleure encore tous les jours ou se sent vide, c'est peut-être une dépression post-partum. Proposez-lui ensemble de voir un médecin."},
+    {"week": 6, "message": "Sa visite post-natale arrive. Accompagnez-la si possible : c'est un moment important (périnée, contraception, moral)."},
+    {"week": 8, "message": "Elle peut être épuisée — les nuits hachées s'accumulent. Une nuit complète (vous gérez les biberons) lui sauvera la vie."},
+    {"week": 12, "message": "3 mois — elle perd peut-être ses cheveux par poignées. C'est normal et passager. Dites-lui qu'elle est belle quand même."},
+    {"week": 16, "message": "Le moral peut s'effondrer maintenant que tout le monde est rentré chez soi. Restez attentif. Demandez régulièrement comment elle va."},
+    {"week": 24, "message": "6 mois ! C'est souvent là que la dépression post-partum se déclare. Surveillez : tristesse, fatigue extrême, désintérêt. Encouragez-la à consulter sans culpabiliser."},
+]
+
+
+@api.get("/postpartum/conjoint/checklist")
+async def conjoint_checklist(user=Depends(require_roles("maman", "famille"))):
+    return {"items": CONJOINT_CHECKLIST}
+
+
+@api.get("/postpartum/conjoint/messages")
+async def conjoint_messages(user=Depends(require_roles("maman", "famille"))):
+    return {"messages": CONJOINT_WEEKLY_MESSAGES}
+
+
+@api.get("/postpartum/conjoint/current-message")
+async def conjoint_current_message(user=Depends(require_roles("maman"))):
+    pp = await db.postpartum.find_one({"user_id": user["id"], "active": True}, {"_id": 0})
+    if not pp:
+        raise HTTPException(404, "Aucun suivi actif")
+    week, _ = _postpartum_week(pp["accouchement_date"])
+    # Trouve le message le plus proche
+    msgs = sorted(CONJOINT_WEEKLY_MESSAGES, key=lambda m: m["week"])
+    current = next((m for m in reversed(msgs) if m["week"] <= week), msgs[0])
+    return {"week_pp": week, "message_to_partner": current["message"], "message_week": current["week"]}
 
 
 # 🔄 Re-include final : enregistre toutes les routes ajoutées après les précédents include_router

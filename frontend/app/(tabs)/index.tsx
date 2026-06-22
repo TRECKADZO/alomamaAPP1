@@ -226,6 +226,7 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
     dossier: { icon: "document-text", label: "Mon dossier", route: "/dossier-medical", color: "#14B8A6", key: "dossier" },
     cmu: { icon: "shield", label: "CMU", route: "/cmu", color: "#16A34A", key: "cmu" },
     naissance: { icon: "balloon", label: "Déclarer naissance", route: "/naissance", color: "#14B8A6", key: "naissance" },
+    postpartum: { icon: "rose", label: "Moi Aussi 🌸", route: "/postpartum", color: "#EC4899", key: "postpartum" },
   };
 
   // Choix contextuel des 6 favoris

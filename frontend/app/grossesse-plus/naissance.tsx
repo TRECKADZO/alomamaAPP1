@@ -29,7 +29,18 @@ export default function DeclarerNaissance() {
             poids_kg: poids ? parseFloat(poids) : undefined,
             taille_cm: taille ? parseFloat(taille) : undefined,
           });
-          Alert.alert("🎉 Félicitations !", r.data.message, [{ text: "Voir le carnet", onPress: () => router.replace("/(tabs)/enfants" as any) }]);
+          // 🌸 Auto-création du suivi post-partum
+          try {
+            await api.post("/postpartum/setup", {
+              accouchement_date: date,
+              voie_accouchement: "voie_basse",
+              enfant_id: r.data?.enfant?.id,
+            });
+          } catch {}
+          Alert.alert("🎉 Félicitations !", `${r.data.message}\n\n🌸 Le module "Moi Aussi" (post-partum) est aussi disponible pour vous accompagner.`, [
+            { text: "Voir Moi Aussi 🌸", onPress: () => router.replace("/postpartum" as any) },
+            { text: "Voir le carnet bébé", onPress: () => router.replace("/(tabs)/enfants" as any) },
+          ]);
         } catch (e) { Alert.alert("Erreur", formatError(e)); } finally { setBusy(false); }
       } },
     ]);

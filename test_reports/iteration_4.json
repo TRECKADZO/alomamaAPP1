@@ -1,0 +1,66 @@
+{
+  "summary": "Postpartum 'Moi Aussi' module fully validated end-to-end. Backend: 21/21 pytest pass (setup, dashboard, checkin EPDS alerts, list+mood_series, delete, fiches, testimonials CRUD+moderation, conjoint, role guards, AES-256-GCM encryption-at-rest of free_text_enc verified directly in Mongo). Frontend: /postpartum dashboard renders week label + fiche + Et toi comment tu vas CTA; check-in wizard navigates all 4 steps; mood=1 + fièvre + saignements abondants + pensées sombres correctly produced 3 critical alerts (Saignements abondants, Fièvre post-partum, Vos émotions méritent un soutien); historique screen renders mood SVG (1 svg) + list of 2 check-ins with critical badges + plaintext recovered free_text (encryption decrypted back transparently); testimonials list shows approved items with topic filters + hearts; conjoint shows weekly message (S8) + 9-item checklist. Zero console errors during the postpartum flow run. The 401 on first /postpartum/dashboard noted in the request is a real race condition on cold load: it triggers because cachedGet/api is called before the AsyncStorage auth_token is fully hydrated on web — but a focus retry (useFocusEffect) recovers it.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/postpartum/dashboard", "issue": "next_checkin_due computes datetime.fromisoformat with .replace('Z','+00:00').replace('Z','') — the second .replace('Z','') is a no-op redundancy; harmless but smells. Reference: server.py:12460"},
+      {"endpoint": "POST /api/postpartum/testimonials", "issue": "Min length validated server-side (30 chars) but not max (truncated silently to 2000 chars). Frontend should mirror the 30-char min to avoid a roundtrip 400."},
+      {"endpoint": "POST /api/postpartum/checkin", "issue": "Mood is silently clamped to [1..5] (max(1, min(5, mood))) without 400 — acceptable but Pydantic Field(ge=1, le=5) would be cleaner."},
+      {"endpoint": "POST /api/postpartum/setup", "issue": "No validation that accouchement_date is in the past (a future date returns week_pp=0 silently). Consider rejecting future dates."},
+      {"endpoint": "GET /api/postpartum/fiche/{week}", "issue": "Not protected by auth (no Depends) — educational content, probably intentional, but inconsistent with other endpoints in the module."},
+      {"endpoint": "encryption.py", "issue": "encrypt_str() silently returns plaintext on failure (except branch) — could leak plaintext to DB if AES key is misconfigured. Consider raising instead."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "postpartum/index.tsx", "issue": "No testID on key CTAs (Et toi comment tu vas, Démarrer mon suivi, navigation tiles). Hampers stable Playwright/e2e selectors; we had to fall back to text() locators.", "testID": "missing", "priority": "LOW"},
+      {"component": "postpartum/checkin.tsx", "issue": "Wizard navigation buttons (Suivant/Retour/Valider) and mood/chip buttons have no testID. Same as above.", "testID": "missing", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "First-load auth race", "issue": "/postpartum/dashboard initial call returns 401 on cold start before AsyncStorage hydrates the auth_token (visible in backend logs). useFocusEffect retry recovers correctly so UX is fine, but a once-only retry on 401 in lib/api request interceptor would eliminate the spurious console error.", "affected_testIDs": []}
+    ],
+    "design_issues": [
+      {"screen": "/postpartum (hero)", "issues": ["Hero label 'Semaine N après accouchement' uses white text on a saturated #EC4899 pink — readability OK on phones but borderline contrast with the 'BIENVENUE' eyebrow label at 11px (rgba 0.85)."]}
+    ],
+    "react_native_issues": [
+      {"component": "Global (pre-existing)", "issue": "shadow* style props deprecated warnings persist across the app — main agent already flagged in earlier iterations."},
+      {"component": "Global (pre-existing)", "issue": "props.pointerEvents deprecated, should use style.pointerEvents — RNW warning."},
+      {"component": "expo-notifications (pre-existing)", "issue": "Listening to push token changes not supported on web — informational; no action required for postpartum module."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_postpartum_api.py",
+    "/app/test_reports/pytest/pytest_postpartum_results.xml"
+  ],
+  "action_items": [
+    "(nice) Add testID to postpartum CTAs and wizard buttons (mood-1..5, chip-{symptom}, step-next, step-prev, submit-checkin) to harden e2e selectors.",
+    "(nice) Add response interceptor in lib/api.ts that, on 401 + token present in AsyncStorage, retries the request once after a 200ms hydration delay — eliminates the cold-load console error on /postpartum.",
+    "(nice) Replace silent mood clamping with Pydantic Field(ge=1, le=5) on PostpartumCheckinIn.",
+    "(nice) Reject accouchement_date in the future in /postpartum/setup with a 400.",
+    "(nice) Mirror the 30-character min length client-side on /postpartum/testimonials form.",
+    "(carry-over) server.py is now 12,680 lines — modular split into routers/* is severely overdue.",
+    "(carry-over) Pin CORS origins; align expo package versions; replace shadow* props."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew from 1,300 lines (iter_3) to 12,680 lines (iter_4) — major scale issue. The postpartum routes (lines 12,340-12,670) should live in /app/backend/routers/postpartum.py.",
+    "All postpartum endpoints correctly exclude _id via projection {'_id': 0} ✅.",
+    "AES-256-GCM via encryption.py is correctly applied to free_text_enc and voice_url_enc; decryption transparent on list endpoint ✅.",
+    "Role guards use require_roles('maman') consistently. Admin can't setup (correct).",
+    "Testimonial user_id_hash is sha256(user_id)[:12] then stripped on public list — good anonymization.",
+    "Critical alerts (mood<=2 OR 'pensées sombres' OR fièvre OR 'saignements abondants' OR danger words) all generate properly with SAMU 185 phone fallback.",
+    "ENCRYPTION_KEY is checked into backend/.env in plaintext — acceptable for preview env, but production should pull from a KMS/secrets manager.",
+    "encrypt_str() falls back to plaintext on exception (line 64 of encryption.py) — silent failure mode could persist plaintext on DB if the key is unreadable. Prefer fail-loud."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_postpartum_api.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 postpartum tests passing)",
+    "frontend": "~95% — all 5 postpartum screens render, wizard completes, alerts surface, SVG mood chart draws, testimonials/conjoint OK. Minor: missing testIDs and one cold-start 401."
+  },
+  "seed_data_creation": "Created via pytest: 1 new TEST_pp_* maman with active postpartum (accouchement 2025-11-01), 3+ check-ins (1 critical mood=1, 1 normal mood=4, 1 delete), 1 approved 'TEST_pp_testimonial' (topic=baby_blues). Existing maman.test@alomaman.dev got 1 additional check-in via UI (TEST_pp UI je me sens epuise et triste, mood=1).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "BASE: https://cycle-tracker-pro.preview.emergentagent.com. Postpartum module is fully green. New collections: db.postpartum, db.postpartum_checkins, db.postpartum_testimonials. AES-256 encryption verified directly in Mongo (enc_v1: prefix on free_text_enc). The /postpartum/dashboard cold-load 401 is a known race (auth_token not yet hydrated from AsyncStorage); useFocusEffect recovers. If main agent wants to eliminate the console error, add a single 401-retry in lib/api interceptor. maman.test has postpartum at week 11 with 3+ check-ins now. To re-test setup screen, use a fresh maman account (helper in test_postpartum_api.py:stranger_maman_headers).",
+  "rca_of_issue": "No bugs blocking. The 'spurious 401' mentioned in the request is reproduced and isolated: lib/api ships the Bearer token from AsyncStorage; on first /postpartum render, the dashboard request fires before getItem('auth_token') resolves. useFocusEffect's setLoading(true) + load() retry on focus succeeds. Root cause = no auth interceptor retry. Fix = either await token hydration before first call OR retry once on 401 with refreshed token. Not blocking for module validation."
+}
