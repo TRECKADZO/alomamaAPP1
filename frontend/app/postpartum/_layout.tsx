@@ -17,6 +17,7 @@ export default function PostpartumLayout() {
       <Stack.Screen name="historique" options={{ title: "Mon historique" }} />
       <Stack.Screen name="testimonials" options={{ title: "Elles en parlent" }} />
       <Stack.Screen name="conjoint" options={{ title: "Pour mon conjoint" }} />
+      <Stack.Screen name="fiches" options={{ title: "Conseils semaine par semaine" }} />
     </Stack>
   );
 }

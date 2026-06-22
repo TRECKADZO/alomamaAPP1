@@ -12658,13 +12658,15 @@ async def conjoint_messages(user=Depends(require_roles("maman", "famille"))):
 @api.get("/postpartum/conjoint/current-message")
 async def conjoint_current_message(user=Depends(require_roles("maman"))):
     pp = await db.postpartum.find_one({"user_id": user["id"], "active": True}, {"_id": 0})
+    msgs = sorted(CONJOINT_WEEKLY_MESSAGES, key=lambda m: m["week"])
     if not pp:
-        raise HTTPException(404, "Aucun suivi actif")
+        # Pas encore de suivi actif : on retourne le 1er message (semaine 1) en mode "découverte"
+        first = msgs[0]
+        return {"week_pp": None, "message_to_partner": first["message"], "message_week": first["week"], "discovery_mode": True}
     week, _ = _postpartum_week(pp["accouchement_date"])
     # Trouve le message le plus proche
-    msgs = sorted(CONJOINT_WEEKLY_MESSAGES, key=lambda m: m["week"])
     current = next((m for m in reversed(msgs) if m["week"] <= week), msgs[0])
-    return {"week_pp": week, "message_to_partner": current["message"], "message_week": current["week"]}
+    return {"week_pp": week, "message_to_partner": current["message"], "message_week": current["week"], "discovery_mode": False}
 
 
 # 🔄 Re-include final : enregistre toutes les routes ajoutées après les précédents include_router

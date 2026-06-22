@@ -41,8 +41,14 @@ export default function Conjoint() {
       <ScrollView contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 60 }}>
         {current && (
           <View style={s.msgCard}>
-            <Text style={s.msgLabel}>MESSAGE DE LA SEMAINE</Text>
-            <Text style={s.msgWeek}>Semaine {current.message_week} après accouchement</Text>
+            <Text style={s.msgLabel}>
+              {current.discovery_mode ? "DÉCOUVERTE · MESSAGE D'ACCUEIL" : "MESSAGE DE LA SEMAINE"}
+            </Text>
+            <Text style={s.msgWeek}>
+              {current.discovery_mode
+                ? "Premier message du parcours"
+                : `Semaine ${current.message_week} après accouchement`}
+            </Text>
             <Text style={s.msgTxt}>{current.message_to_partner}</Text>
             <TouchableOpacity style={s.shareBtn} onPress={share}>
               <Ionicons name="share-social" size={18} color="#fff" />

@@ -29,33 +29,82 @@ export default function PostpartumHome() {
   if (loading) return <SafeAreaView style={s.loader}><ActivityIndicator color="#EC4899" size="large" /></SafeAreaView>;
 
   if (err === 404) {
+    // Mode découverte — pas encore de setup. Tout est accessible sauf check-in/historique.
     return (
       <SafeAreaView style={s.container}>
         <ScrollView contentContainerStyle={s.scroll}>
-          <View style={s.emptyCard}>
+          <View style={s.discoveryHero}>
             <Text style={s.emptyEmoji}>🌸</Text>
-            <Text style={s.emptyTitle}>Moi Aussi — Après l'accouchement</Text>
+            <Text style={s.emptyTitle}>Moi Aussi — Après l&apos;accouchement</Text>
             <Text style={s.emptyTxt}>
-              Un espace bienveillant pour vous accompagner pendant les 12 premiers mois après la naissance.{"\n\n"}
-              Vous n'êtes pas seule. Tout ce que vous ressentez est valable.
+              Un espace bienveillant pour les 12 premiers mois après la naissance.{"\n"}
+              Vous n&apos;êtes pas seule. Tout ce que vous ressentez est valable.
             </Text>
-            <View style={s.featList}>
-              {[
-                { i: "heart", t: "Suivi hebdomadaire bienveillant" },
-                { i: "mic", t: "Mode vocal : « Et toi, comment tu vas ? »" },
-                { i: "people", t: "Témoignages anonymes d'autres mamans" },
-                { i: "shield-checkmark", t: "Chiffrement AES-256 (RGSSI N3)" },
-              ].map((f, i) => (
-                <View key={i} style={s.featRow}>
-                  <Ionicons name={f.i as any} size={18} color="#EC4899" />
-                  <Text style={s.featTxt}>{f.t}</Text>
-                </View>
-              ))}
+          </View>
+
+          {/* CTA principal : démarrer suivi */}
+          <TouchableOpacity style={s.discoveryCta} onPress={() => router.push("/postpartum/setup" as any)}>
+            <View style={s.discoveryCtaIcon}><Ionicons name="heart" size={22} color="#fff" /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.discoveryCtaTitle}>Démarrer mon suivi personnalisé</Text>
+              <Text style={s.discoveryCtaSub}>Check-in hebdomadaire, alertes EPDS, chiffré AES-256</Text>
             </View>
-            <TouchableOpacity style={s.cta} onPress={() => router.push("/postpartum/setup")}>
-              <Ionicons name="add" size={18} color="#fff" />
-              <Text style={s.ctaTxt}>Démarrer mon suivi</Text>
+            <Ionicons name="chevron-forward" size={20} color="#fff" />
+          </TouchableOpacity>
+
+          <Text style={s.sectionTitle}>Explorer librement (sans inscription)</Text>
+          <View style={s.discoveryGrid}>
+            <TouchableOpacity style={s.discoveryItem} onPress={() => router.push("/postpartum/fiches" as any)}>
+              <View style={[s.discoveryItemIcon, { backgroundColor: "#FCE7F3" }]}>
+                <Ionicons name="book" size={24} color="#EC4899" />
+              </View>
+              <Text style={s.discoveryItemLabel}>Conseils semaine par semaine</Text>
+              <Text style={s.discoveryItemSub}>52 fiches éducatives</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={s.discoveryItem} onPress={() => router.push("/postpartum/testimonials" as any)}>
+              <View style={[s.discoveryItemIcon, { backgroundColor: "#F3E8FF" }]}>
+                <Ionicons name="chatbubbles" size={24} color="#8B5CF6" />
+              </View>
+              <Text style={s.discoveryItemLabel}>Elles en parlent</Text>
+              <Text style={s.discoveryItemSub}>Témoignages anonymes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.discoveryItem} onPress={() => router.push("/postpartum/conjoint" as any)}>
+              <View style={[s.discoveryItemIcon, { backgroundColor: "#CFFAFE" }]}>
+                <Ionicons name="people" size={24} color="#06B6D4" />
+              </View>
+              <Text style={s.discoveryItemLabel}>Pour mon conjoint</Text>
+              <Text style={s.discoveryItemSub}>Checklist + messages</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.discoveryItem} onPress={() => Linking.openURL("tel:185")}>
+              <View style={[s.discoveryItemIcon, { backgroundColor: "#FEE2E2" }]}>
+                <Ionicons name="call" size={24} color="#DC2626" />
+              </View>
+              <Text style={s.discoveryItemLabel}>SAMU 185</Text>
+              <Text style={s.discoveryItemSub}>Urgence</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={s.featList}>
+            <Text style={s.featHead}>Ce que vous obtenez avec le suivi personnalisé :</Text>
+            {[
+              { i: "heart", t: "Check-in hebdomadaire — « Et toi, comment tu vas ? »" },
+              { i: "mic", t: "Mode vocal complet (français)" },
+              { i: "trending-up", t: "Courbe d'humeur et historique sécurisé" },
+              { i: "warning", t: "Alertes EPDS (dépression post-partum)" },
+              { i: "shield-checkmark", t: "Chiffrement AES-256 (RGSSI N3)" },
+            ].map((f, i) => (
+              <View key={i} style={s.featRow}>
+                <Ionicons name={f.i as any} size={16} color="#EC4899" />
+                <Text style={s.featTxt}>{f.t}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={s.gentle}>
+            <Ionicons name="information-circle" size={18} color="#EC4899" />
+            <Text style={s.gentleTxt}>
+              💗 1 maman sur 7 vit une dépression post-partum. C&apos;est traitable et ce n&apos;est PAS de votre faute.
+            </Text>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -138,6 +187,7 @@ export default function PostpartumHome() {
           {[
             { id: "historique", label: "Mon historique", icon: "calendar", color: "#EC4899", nav: "/postpartum/historique" },
             { id: "testimonials", label: "Elles en parlent", icon: "chatbubbles", color: "#8B5CF6", nav: "/postpartum/testimonials" },
+            { id: "fiches", label: "Conseils S1-S52", icon: "book", color: "#F97316", nav: "/postpartum/fiches" },
             { id: "conjoint", label: "Mon conjoint", icon: "people", color: "#06B6D4", nav: "/postpartum/conjoint" },
           ].map((tt) => (
             <TouchableOpacity key={tt.id} style={s.gridItem} onPress={() => router.push(tt.nav as any)}>
@@ -166,11 +216,22 @@ const s = StyleSheet.create({
   scroll: { padding: SPACING.lg, paddingBottom: 60 },
   emptyCard: { padding: SPACING.xl, backgroundColor: "#fff", borderRadius: RADIUS.lg, alignItems: "center" },
   emptyEmoji: { fontSize: 60, marginBottom: 14 },
-  emptyTitle: { fontSize: 22, fontWeight: "800", color: COLORS.textPrimary, marginBottom: 10 },
+  emptyTitle: { fontSize: 22, fontWeight: "800", color: COLORS.textPrimary, marginBottom: 10, textAlign: "center" },
   emptyTxt: { color: COLORS.textSecondary, textAlign: "center", lineHeight: 20, marginBottom: 18 },
-  featList: { width: "100%", gap: 10, marginBottom: 20 },
+  discoveryHero: { padding: SPACING.lg, alignItems: "center", marginBottom: 16 },
+  discoveryCta: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, backgroundColor: "#EC4899", borderRadius: RADIUS.lg, marginBottom: 18 },
+  discoveryCtaIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
+  discoveryCtaTitle: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  discoveryCtaSub: { color: "rgba(255,255,255,0.92)", fontSize: 12, marginTop: 2 },
+  discoveryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 22 },
+  discoveryItem: { width: "47.5%", padding: 14, backgroundColor: "#fff", borderRadius: RADIUS.md, alignItems: "flex-start" },
+  discoveryItemIcon: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", marginBottom: 8 },
+  discoveryItemLabel: { fontWeight: "800", color: COLORS.textPrimary, fontSize: 13 },
+  discoveryItemSub: { color: COLORS.textMuted, fontSize: 11, marginTop: 2 },
+  featList: { gap: 10, padding: SPACING.lg, backgroundColor: "#FCE7F3", borderRadius: RADIUS.lg, marginBottom: 14 },
+  featHead: { fontWeight: "800", color: "#831843", fontSize: 13, marginBottom: 4 },
   featRow: { flexDirection: "row", gap: 10, alignItems: "center" },
-  featTxt: { color: COLORS.textPrimary, flex: 1, fontSize: 13 },
+  featTxt: { color: "#831843", flex: 1, fontSize: 12, lineHeight: 17 },
   cta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#EC4899", paddingVertical: 14, paddingHorizontal: 24, borderRadius: RADIUS.pill, width: "100%" },
   ctaTxt: { color: "#fff", fontWeight: "800", fontSize: 15 },
   hero: { padding: SPACING.lg, backgroundColor: "#EC4899", borderRadius: RADIUS.lg, marginBottom: 14 },

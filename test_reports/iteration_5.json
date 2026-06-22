@@ -1,0 +1,56 @@
+{
+  "summary": "Postpartum 'Moi Aussi' discovery-mode access validated end-to-end. Backend: 29/29 tests pass (21 original test_postpartum_api.py regression + 8 new test_postpartum_discovery.py). Core change verified: GET /api/postpartum/conjoint/current-message now returns 200 with discovery_mode=true + S1 message when no active postpartum (instead of 404), and returns discovery_mode=false with correct week_pp message when postpartum is active (maman.test at week_pp=11 → message_week=8). Universal sections (/postpartum/fiches, /postpartum/testimonials, /postpartum/conjoint/checklist & /messages) accessible without setup. Personal endpoints still properly guarded: /postpartum/dashboard → 404 without setup, /postpartum/checkin → 400/404 without setup. /api/postpartum/fiches returns exactly 14 fiches (weeks 1-48). Frontend: discovery hub at /postpartum (err===404 branch) renders CTA 'Démarrer mon suivi' + 4 cards (Conseils semaine par semaine 52 fiches, Elles en parlent, Pour mon conjoint, SAMU 185) + features list (AES-256). /postpartum/fiches lists 14 fiches grouped under 4 accordion sections (Premier mois 4 fiches, Mois 2-3 5 fiches, Mois 4-6 3 fiches, Mois 7-12 2 fiches) with S1..S48 week badges. /postpartum/conjoint (no setup) displays 'DÉCOUVERTE · MESSAGE D'ACCUEIL' badge instead of 'MESSAGE DE LA SEMAINE', S1 welcome message, and 9-item checklist. Home tab Outils essentiels section displays 'Moi Aussi 🌸' button and clicking it navigates to /postpartum. Active dashboard (maman.test week 11) shows 'Mes outils' grid with 'Conseils S1-S52' tile that navigates to /postpartum/fiches as designed. Zero regression on existing module: dashboard, check-in flow, EPDS alerts, historique, testimonials all green.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/postpartum/conjoint/current-message", "issue": "When active postpartum exists but week_pp < 1 (e.g. day 0-6), code falls back to msgs[0] (week=1) — works, but the comment says 'semaine 1 en mode découverte' which is misleading: in active mode week_pp could be 0 and we serve week=1 message. Cosmetic."},
+      {"endpoint": "GET /api/postpartum/fiches", "issue": "Public (no auth) — fine for discovery, but inconsistent with other postpartum endpoints. Confirmed by spec ('Backend: GET /api/postpartum/fiches (public, sans auth)' in request). No action."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "postpartum/fiches.tsx", "issue": "No testID on any element (accordion cards, week badges, intro). e2e tests fall back to text matching.", "testID": "missing", "priority": "LOW"},
+      {"component": "postpartum/index.tsx discovery hub", "issue": "No testID on CTA 'Démarrer mon suivi' nor on the 4 discovery tiles (fiches/testimonials/conjoint/SAMU). Lowers e2e robustness.", "testID": "missing", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/postpartum/fiches", "issues": ["The empty group fallback uses a defensive `g.weeks.length > 0 &&` — currently always true for the 14 fiches, but periods with 0 fiches simply disappear (e.g. if week filter ever returns empty). Fine for now."]}
+    ],
+    "react_native_issues": [
+      {"component": "Global (pre-existing)", "issue": "shadow* style props deprecated warnings; props.pointerEvents deprecated. Already flagged in earlier iterations — no new regression."},
+      {"component": "expo-notifications (pre-existing)", "issue": "Listening to push token changes not supported on web. Informational."},
+      {"component": "Animated useNativeDriver", "issue": "useNativeDriver: true used somewhere; not supported on web — falls back to JS animation. Pre-existing."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_postpartum_api.py",
+    "/app/backend/tests/test_postpartum_discovery.py",
+    "/app/test_reports/pytest/pytest_postpartum_iter5.xml",
+    "/app/test_reports/pytest/pytest_postpartum_discovery_iter5.xml"
+  ],
+  "action_items": [
+    "(nice) Add testID to CTA 'Démarrer mon suivi' and the 4 discovery tiles in /postpartum/index.tsx (discovery branch) and to /postpartum/fiches accordion cards (testID='fiche-card-week-{N}').",
+    "(nice) Consider a tiny inline tooltip/badge on the home-tab 'Moi Aussi 🌸' button to surface 'Accessible librement' so users not in postpartum know they can browse.",
+    "(carry-over) server.py 12,680 lines — postpartum routes (lines 12,340-12,670) should move to /app/backend/routers/postpartum.py.",
+    "(carry-over) Replace deprecated shadow* / props.pointerEvents across the codebase."
+  ],
+  "critical_code_review_comments": [
+    "Backend change in /postpartum/conjoint/current-message is clean: msgs[0] fallback with discovery_mode=true is the right pattern. CONJOINT_WEEKLY_MESSAGES is sorted defensively before use. ✅",
+    "Frontend /postpartum/index.tsx discovery branch correctly checks err===404 and renders without requiring data. Direct api.get('/postpartum/dashboard') (bypassing cachedGet) is used so the 404 surfaces correctly. ✅",
+    "/postpartum/fiches uses a clean grouping by week ranges with accordion state via open===f.week — no perf issue at 14 items. ✅",
+    "(tabs)/index.tsx ALL_TOOLS.postpartum entry + inclusion of 'postpartum' in favoritesKeys for all 3 maman cases (enceinte trimestres 1/2/3, avec enfants, onboarding) is correct. ✅",
+    "Postpartum layout adds the fiches route correctly. ✅"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_postpartum_discovery.py (new — 8 tests for discovery mode)"
+  ],
+  "success_rate": {
+    "backend": "100% (29/29 = 21 regression + 8 new discovery tests passing)",
+    "frontend": "100% — all flows validated: discovery hub, fiches accordion, conjoint discovery badge, home tab favorites, active dashboard tile, navigation."
+  },
+  "seed_data_creation": "Created 2 ephemeral TEST_disc_* and TEST_disc_pages_* maman accounts via /auth/register (no postpartum setup) for discovery-mode validation. No DB pollution beyond auth + 1 test postpartum_checkin per pre-existing fixture (TEST_pp_*).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "BASE: https://cycle-tracker-pro.preview.emergentagent.com. The 'Moi Aussi' discovery flow is fully green. Discovery hub displays at /postpartum when err===404 (no setup). Universal endpoints accessible without setup: /postpartum/fiches (14 fiches, public), /postpartum/testimonials, /postpartum/conjoint/checklist, /postpartum/conjoint/messages, /postpartum/conjoint/current-message (returns discovery_mode flag). Personal endpoints still 404/400 without setup: /postpartum/dashboard, /postpartum/checkin. Home tab 'Outils essentiels' includes 'Moi Aussi 🌸' for all maman states. For web UI tests of authenticated screens, set BOTH localStorage keys: auth_token + auth_user (JSON.stringify(user)), then navigate. To exercise the discovery branch, register a fresh maman that has no postpartum setup.",
+  "rca_of_issue": "No bugs. The discovery-mode feature works exactly as specified."
+}

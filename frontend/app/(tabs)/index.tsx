@@ -233,15 +233,15 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
   let favoritesKeys: string[];
   if (g) {
     // Enceinte
-    if (trimestre === 1) favoritesKeys = ["urgence_dom", "assistant", "rdv", "domicile", "dossier", "medecins"];
-    else if (trimestre === 2) favoritesKeys = ["urgence_dom", "rdv", "echo", "domicile", "assistant", "dossier"];
-    else favoritesKeys = ["urgence_dom", "rdv", "plan_naissance", "naissance", "domicile", "assistant"];
+    if (trimestre === 1) favoritesKeys = ["urgence_dom", "assistant", "rdv", "domicile", "postpartum", "medecins"];
+    else if (trimestre === 2) favoritesKeys = ["urgence_dom", "rdv", "echo", "domicile", "postpartum", "assistant"];
+    else favoritesKeys = ["urgence_dom", "rdv", "plan_naissance", "naissance", "postpartum", "assistant"];
   } else if (enfants.length > 0) {
-    // Maman avec enfants
-    favoritesKeys = ["urgence_dom", "enfants", "dmp", "rdv", "domicile", "assistant"];
+    // Maman avec enfants — Moi Aussi en évidence (post-partum jusqu'à 12 mois)
+    favoritesKeys = ["urgence_dom", "postpartum", "enfants", "dmp", "rdv", "assistant"];
   } else {
-    // Onboarding — ni grossesse ni enfants
-    favoritesKeys = ["urgence_dom", "assistant", "cycle", "medecins", "domicile", "teleconsult"];
+    // Onboarding — ni grossesse ni enfants — Moi Aussi accessible en mode découverte
+    favoritesKeys = ["urgence_dom", "assistant", "cycle", "postpartum", "medecins", "teleconsult"];
   }
   const favorites = favoritesKeys.map((k) => ALL_TOOLS[k]).filter(Boolean);
 
