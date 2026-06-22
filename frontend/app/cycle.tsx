@@ -78,14 +78,24 @@ export default function Cycle() {
     ? (() => {
         const start = new Date(dernier.date_debut_regles);
         const cycleLen = dernier.duree_cycle || stats?.moyenne || 28;
-        const ovulation = addDays(start, cycleLen - 14);
+        const today = new Date();
+        // 🔁 Rolling : avancer la projection cycle par cycle tant que "next" est dépassé.
+        // Ainsi quand on est en juin et que le dernier cycle enregistré était en avril/mai,
+        // les prévisions reflètent toujours le cycle COURANT (mois en cours).
+        let next = addDays(start, cycleLen);
+        let k = 1;
+        while (next < today && k < 24) {  // garde-fou 2 ans max
+          k += 1;
+          next = addDays(start, cycleLen * k);
+        }
+        // Ovulation = 14 j avant les prochaines règles. Fenêtre fertile : J-5 → J+1.
+        const ovulation = addDays(next, -14);
         const fertileStart = addDays(ovulation, -5);
         const fertileEnd = addDays(ovulation, 1);
-        const next = addDays(start, cycleLen);
-        const today = new Date();
         return {
           start, cycleLen, dureeRegles: dernier.duree_regles || 5,
           ovulation, fertileStart, fertileEnd, next,
+          cycleNumber: k,                                   // 1 = cycle réel, 2+ = projection roulée
           isInFertileWindow: today >= fertileStart && today <= fertileEnd,
           daysUntilOvulation: daysBetween(today, ovulation),
           daysUntilPeriod: daysBetween(today, next),

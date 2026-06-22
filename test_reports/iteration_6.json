@@ -1,0 +1,33 @@
+{
+  "summary": "Bug fix VALIDATED — Cycle menstruel /cycle PRÉVISIONS card now correctly rolls forward when last recorded cycle is in the past. Tested via fresh maman account + API-seeded cycles, then verified UI rendering on mobile viewport (390x844). Primary scenario (cycle 2026-05-01, 28d, today=22/06/2026) displays correctly: Prochaines règles 26/06/2026, Ovulation prévue 12/06/2026, Fenêtre fertile 07 juin → 13 juin. No-regression scenario (future cycle 2026-07-01) still shows 29/07/2026 with positive 'dans 36 jour(s)' — no undesired rolling. Calendar 6 mois and Historique render correctly. Note: an Expo restart was required for the new bundle to be served (Metro was caching the old version).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/setup_cycle_test.py",
+    "/tmp/cycle_screen.png (before expo restart — bug still showing due to Metro cache)",
+    "/tmp/cycle_after_restart.png (FIX VALIDATED: 26/06/2026, 12/06/2026, 07 juin → 13 juin)",
+    "/tmp/cycle_future.png (no-regression: future cycle 2026-07-01 → 29/07/2026 dans 36 j)"
+  ],
+  "action_items": [
+    "OPTIONAL polish: daysBetween() uses Math.floor on (next - new Date())/86400000 which subtracts current time-of-day, so the display reads 'dans 3 jour(s)' instead of the naive 'dans 4 jour(s)' (today 22/06 17:15 UTC vs midnight 26/06). To match calendar-day expectation, normalize both dates to local midnight before diffing. Not blocking — the rolling logic itself is correct."
+  ],
+  "critical_code_review_comments": [
+    "cycle.tsx L77-104: the rolling while-loop (k<24 guard) is correct and behaves as intended.",
+    "cycle.tsx L21 daysBetween uses raw Date.getTime() diff floored — this includes time-of-day; consider zeroing hours/min/sec for calendar-day arithmetic to match user expectation.",
+    "fertile.ovulation uses the rolled `next` (next - 14j), but fertile.start (line 79) is still the original `dernier.date_debut_regles`. The returned object exposes `start` (original) and `next` (rolled). This is intentional — start represents the historical entry, next represents the upcoming projection. OK.",
+    "Metro bundler can serve stale code after edits (especially with EXPO_USE_FAST_RESOLVER and METRO_CACHE_ROOT set). Main agent should `supervisorctl restart expo` after editing /app/frontend/app/cycle.tsx (and similar) when the change isn't reflected.",
+    "register endpoint requires accepte_cgu/accepte_politique_confidentialite/accepte_donnees_sante (not accept_cgu) — see /app/backend/server.py L531-536. Documentation drift between Python field names and the README sample."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend bug only)", "frontend": "100% (9/9 assertions for primary + 7/7 for no-regression)"},
+  "seed_data_creation": "Created maman account cycle.test.{ts}@alomaman.dev / Test1234! and POSTed two /api/cycle entries (2026-05-01 28d, 2026-07-01 28d). Credentials cached at /tmp/cycle_creds.json.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "If validating /cycle again: (1) create a fresh maman account with accepte_cgu/accepte_politique_confidentialite/accepte_donnees_sante=true, (2) POST /api/cycle with a past date_debut_regles, (3) inject token into localStorage.auth_token + auth_user, (4) navigate to /cycle and assert PRÉVISIONS shows future dates. After ANY edit to cycle.tsx, run `sudo supervisorctl restart expo` and wait ~12s before re-testing — Metro CI mode caches aggressively.",
+  "rca_of_issue": "Original bug: cycle.tsx fertile block computed next = dernier.start + cycleLen once (no rolling), so when the last logged cycle was more than one cycle in the past, daysUntilPeriod went negative and Math.max(0, ...) displayed 'dans 0 jour(s)' with stale May dates. Fix applied (L85-90): while (next < today && k < 24) advance next by cycleLen until next >= today, derive ovulation = next-14 and fertile window = [ovu-5, ovu+1]. Validated: with last cycle 01/05/2026 28d and today 22/06/2026, the loop iterates twice (k=1→29/05, k=2→26/06≥today) producing the expected projections."
+}
