@@ -205,6 +205,24 @@ export default function AdminHub() {
           onPress={() => router.push("/admin/annuaire")}
         />
 
+        <Text style={styles.sectionTitle}>🔌 Interopérabilité santé publique</Text>
+        <SectionCard
+          icon="stats-chart"
+          color="#EC4899"
+          title="Export DHIS2"
+          desc="Indicateurs mensuels/trimestriels — DXF2 JSON, CSV, push direct vers DHIS2 CI"
+          target="OMS · Ministère de la Santé"
+          onPress={() => router.push("/admin/dhis2")}
+        />
+        <SectionCard
+          icon="git-network"
+          color="#0891B2"
+          title="Hub d'intégrations"
+          desc="SIH · DPI · Santé CIV · OpenELIS · mSupply · PACS — configuration + test + audit"
+          target="Systèmes tiers"
+          onPress={() => router.push("/admin/interop")}
+        />
+
         {/* Export */}
         <View style={styles.exportBox}>
           <Ionicons name="download" size={22} color={COLORS.primary} />

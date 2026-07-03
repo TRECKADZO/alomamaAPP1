@@ -1,0 +1,47 @@
+{
+  "summary": "Backend socle interopérabilité (SNOMED CT + DHIS2 + Hub Interop 6 systèmes) testé de bout en bout via pytest — 23/24 tests PASS (95.8%). Un seul écart : le dataset /app/backend/data/snomed_maternal.json ne contient que 137 concepts alors que la revue demande 240 (et meta.concept_count interne=240 aussi, incohérent avec la liste réelle). Tous les autres endpoints fonctionnent correctement : SNOMED search/concept/attach, DHIS2 indicators/preview/export DXF2+CSV/config/history avec chiffrement AES-256, Hub Interop list/config/get/test avec gestion propre des erreurs réseau (http_status=0 sur URL fictive sans crash). RBAC verrouillé : maman reçoit bien 403 sur /interop/systems, /dhis2/indicators, /dhis2/config, /interop/config. Credentials jamais exposés en clair (has_password/has_token uniquement).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/snomed/meta",
+        "issue": "Dataset SNOMED contient seulement 137 concepts au lieu des 240 attendus (le fichier /app/backend/data/snomed_maternal.json a meta.concept_count=240 mais concepts[] ne contient que 137 items). L'endpoint renvoie concept_count=137 (calculé via len(concepts)), ce qui expose l'incohérence. Soit compléter le dataset à 240 concepts, soit ajuster l'engagement produit à 137."
+      },
+      {
+        "endpoint": "POST /api/dhis2/push",
+        "issue": "Ligne 13107 backend/server.py : `from encryption import decrypt_field` mais le code utilise `decrypt_str` (lignes 13141, 13143). Non testé (hors périmètre) mais causera NameError au premier appel push réel vers DHIS2. À corriger avant de brancher les vraies clés du MSP."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_interop_socle.py",
+    "/app/test_reports/pytest/pytest_interop_socle.xml"
+  ],
+  "action_items": [
+    "SNOMED : compléter /app/backend/data/snomed_maternal.json à 240 concepts OU corriger la documentation/annonce du produit pour refléter les 137 concepts effectivement livrés. La revue demande explicitement 240.",
+    "DHIS2 push : corriger l'import ligne 13107 (`from encryption import decrypt_field` → `from encryption import decrypt_str`) sinon crash NameError au premier push réel.",
+    "OPTIONNEL : ajouter un test de connexion réel une fois les vraies URL du MSP CI reçues (l'implémentation actuelle gère bien les erreurs — status_code=0 + error string quand DNS/timeout, pas de crash 500)."
+  ],
+  "critical_code_review_comments": [
+    "server.py L13107 : import `decrypt_field` mais code utilise `decrypt_str` → bug latent sur /dhis2/push (non couvert par les tests).",
+    "server.py L13349 : status_code initialisé à 0 quand exception réseau (pas -1 comme suggéré dans la revue). L'assertion de test l'accepte : http_status ∈ {0, -1, ≥400}. Le comportement observé est http_status=0 + error='All connection attempts failed' → conforme à l'attente 'ne pas crasher'.",
+    "server.py L12689 : cache SNOMED en mémoire lazy-loaded — pas de reload si le fichier change. Acceptable pour la production, à documenter.",
+    "server.py L13279-13296 : InteropConfigIn n'a pas de validation d'URL (http/https). Les vraies URLs du MSP passeront mais un typo utilisateur pourrait aussi passer.",
+    "SNOMED /snomed/meta : concept_count est calculé via len(concepts) au runtime (bon), mais la meta interne du JSON contient un concept_count hardcodé à 240 non utilisé. Recommandation : supprimer ce champ du JSON pour éviter l'incohérence."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_interop_socle.py (nouveau — 24 tests pytest couvrant SNOMED/DHIS2/Interop)"
+  ],
+  "success_rate": {"backend": "95.8% (23/24)", "frontend": "N/A (backend-only run)"},
+  "seed_data_creation": "Aucune. Utilisé les credentials existants (super_admin klenakan.eric@gmail.com + maman.test@alomaman.dev). Les tests créent une config DHIS2 factice + config Interop sih_national factice, laissées en base pour audit (non-destructif).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Test suite /app/backend/tests/test_interop_socle.py reproductible en 8s. Si main agent complète le dataset SNOMED à 240 concepts, relancer uniquement `pytest backend/tests/test_interop_socle.py::TestSnomed::test_meta_public_no_auth`. Config DHIS2 et interop_configs contiennent des entrées de test factices (base_url=https://dhis2.fake.msp.ci et https://sih.fake.msp.ci) — à nettoyer avant prod (db.dhis2_config.deleteMany({}), db.interop_configs.deleteMany({})).",
+  "rca_of_issue": "Écart SNOMED 240 vs 137 : le fichier de données livré (snomed_maternal.json) contient 137 objets dans le tableau concepts alors que la revue et le champ meta.concept_count=240 dans le même fichier annoncent 240. L'endpoint /snomed/meta calcule proprement concept_count=len(concepts)=137. Deux hypothèses : (a) livraison partielle du dataset, (b) engagement produit à réviser. Fix : compléter le JSON OU harmoniser la spec à 137."
+}

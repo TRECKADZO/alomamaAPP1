@@ -12669,6 +12669,778 @@ async def conjoint_current_message(user=Depends(require_roles("maman"))):
     return {"week_pp": week, "message_to_partner": current["message"], "message_week": current["week"], "discovery_mode": False}
 
 
+# ==================================================================================================
+# 🧬 SNOMED CT — Codification clinique
+# ==================================================================================================
+_SNOMED_CACHE: Dict[str, Any] = {}
+
+def _load_snomed() -> Dict[str, Any]:
+    """Charge (une fois) le sous-ensemble SNOMED CT curaté depuis le disque."""
+    global _SNOMED_CACHE
+    if _SNOMED_CACHE:
+        return _SNOMED_CACHE
+    import json as _json
+    path = ROOT_DIR / "data" / "snomed_maternal.json"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            _SNOMED_CACHE = _json.load(f)
+    except Exception as e:
+        logger.error(f"SNOMED CT: dataset introuvable ({path}): {e}")
+        _SNOMED_CACHE = {"meta": {}, "domains": [], "concepts": []}
+    return _SNOMED_CACHE
+
+
+def _normalize_txt(s: str) -> str:
+    """Normalise le texte pour la recherche fuzzy (sans accents, minuscule)."""
+    import unicodedata as _ud
+    s = (s or "").strip().lower()
+    return "".join(c for c in _ud.normalize("NFD", s) if _ud.category(c) != "Mn")
+
+
+@api.get("/snomed/meta")
+async def snomed_meta():
+    """Métadonnées du sous-ensemble SNOMED CT (public — pas d'auth)."""
+    d = _load_snomed()
+    return {"meta": d.get("meta", {}), "domains": d.get("domains", []), "concept_count": len(d.get("concepts", []))}
+
+
+@api.get("/snomed/search")
+async def snomed_search(
+    q: str = "",
+    domain: Optional[str] = None,
+    limit: int = 25,
+    user=Depends(get_current_user),
+):
+    """
+    Recherche dans le sous-ensemble SNOMED CT.
+    - q : texte de recherche (français ou anglais). Insensible aux accents/casse.
+    - domain : filtre par domaine (obstetric, perinatal, pediatric, mental_health, vaccination, symptom, procedure, diagnosis)
+    - limit : nombre max de résultats (défaut 25)
+    """
+    data = _load_snomed()
+    concepts = data.get("concepts", [])
+    qn = _normalize_txt(q)
+    results = []
+    for c in concepts:
+        if domain and c.get("domain") != domain:
+            continue
+        # Match sur code exact, display, ou fr
+        if not qn or qn in _normalize_txt(c.get("display", "")) or qn in _normalize_txt(c.get("fr", "")) or qn == c.get("code", ""):
+            results.append({
+                "system": data["meta"].get("system", "http://snomed.info/sct"),
+                "code": c["code"],
+                "display": c.get("fr") or c["display"],  # préférence français
+                "display_en": c["display"],
+                "domain": c.get("domain"),
+            })
+        if len(results) >= max(1, min(limit, 100)):
+            break
+    return {"count": len(results), "results": results}
+
+
+@api.get("/snomed/concept/{code}")
+async def snomed_get_concept(code: str, user=Depends(get_current_user)):
+    """Détail d'un concept SNOMED CT par son code."""
+    data = _load_snomed()
+    for c in data.get("concepts", []):
+        if c.get("code") == code:
+            return {
+                "system": data["meta"].get("system", "http://snomed.info/sct"),
+                "code": c["code"],
+                "display": c.get("fr") or c["display"],
+                "display_en": c["display"],
+                "domain": c.get("domain"),
+            }
+    raise HTTPException(404, f"Concept SNOMED {code} introuvable")
+
+
+class SnomedAttachIn(BaseModel):
+    """Attache un ou plusieurs codes SNOMED CT à une entité (DMP, consultation, TND, postpartum, etc.)."""
+    entity_type: str  # dmp_consultation | tnd_screening | postpartum_checkin | grossesse_journal | rdv
+    entity_id: str
+    codes: List[Dict[str, Any]]  # [{system, code, display, domain}]
+
+
+@api.post("/snomed/attach")
+async def snomed_attach(payload: SnomedAttachIn, user=Depends(get_current_user)):
+    """
+    Attache des codes SNOMED CT à une entité.
+    Écrit dans une collection dédiée `snomed_annotations` (audit-friendly)
+    ET met à jour le tableau `snomed_codes` sur l'entité cible.
+    """
+    allowed = {
+        "dmp_consultation": "dmp_consultations",
+        "tnd_screening": "tnd_screenings",
+        "postpartum_checkin": "postpartum_checkins",
+        "grossesse_journal": "grossesse_journal",
+        "rdv": "rdv",
+        "consultation_pro": "consultations",
+    }
+    coll = allowed.get(payload.entity_type)
+    if not coll:
+        raise HTTPException(400, f"entity_type inconnu: {payload.entity_type}")
+    # Valide les codes
+    for c in payload.codes:
+        if not c.get("code") or not c.get("display"):
+            raise HTTPException(400, "Chaque code doit contenir 'code' et 'display'")
+    # Update entity
+    ent = await db[coll].find_one({"id": payload.entity_id})
+    if not ent:
+        raise HTTPException(404, "Entité cible introuvable")
+    # Écrit l'annotation (immutable log)
+    annot = {
+        "id": str(uuid.uuid4()),
+        "entity_type": payload.entity_type,
+        "entity_id": payload.entity_id,
+        "codes": payload.codes,
+        "annotated_by": user["id"],
+        "annotator_role": user.get("role"),
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    await db.snomed_annotations.insert_one(annot)
+    await db[coll].update_one(
+        {"id": payload.entity_id},
+        {"$set": {"snomed_codes": payload.codes, "snomed_updated_at": datetime.utcnow().isoformat()}},
+    )
+    return {"ok": True, "annotation_id": annot["id"], "codes_count": len(payload.codes)}
+
+
+@api.get("/snomed/annotations/{entity_type}/{entity_id}")
+async def snomed_get_annotations(entity_type: str, entity_id: str, user=Depends(get_current_user)):
+    """Historique des annotations SNOMED pour une entité (audit)."""
+    items = await db.snomed_annotations.find(
+        {"entity_type": entity_type, "entity_id": entity_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return {"count": len(items), "annotations": items}
+
+
+# ==================================================================================================
+# 📊 DHIS2 — Export de données agrégées
+# ==================================================================================================
+
+# UIDs DHIS2 (compatible format DHIS2 : 11 caractères alphanumériques commençant par une lettre).
+# ⚠️ Ces UIDs sont générés côté À lo Maman et devront être MAPPÉS aux vrais dataElements/orgUnits
+# de l'instance DHIS2 du Ministère de la Santé de Côte d'Ivoire lors du déploiement.
+DHIS2_INDICATORS = [
+    {"uid": "ALM0CPN1000", "code": "ALM_CPN_1", "name": "CPN 1 effectuée", "category": "maternal", "unit": "count"},
+    {"uid": "ALM0CPN2000", "code": "ALM_CPN_2", "name": "CPN 2 effectuée", "category": "maternal", "unit": "count"},
+    {"uid": "ALM0CPN3000", "code": "ALM_CPN_3", "name": "CPN 3 effectuée", "category": "maternal", "unit": "count"},
+    {"uid": "ALM0CPN4000", "code": "ALM_CPN_4", "name": "CPN 4+ effectuée", "category": "maternal", "unit": "count"},
+    {"uid": "ALMNAISSDEC", "code": "ALM_BIRTH_DEC", "name": "Déclarations de naissance", "category": "maternal", "unit": "count"},
+    {"uid": "ALMPP0CHKIN", "code": "ALM_PP_CHECKIN", "name": "Check-ins post-partum", "category": "postpartum", "unit": "count"},
+    {"uid": "ALMEPDSHIGH", "code": "ALM_EPDS_ALERT", "name": "Alertes EPDS critiques (dépression post-partum)", "category": "postpartum", "unit": "count"},
+    {"uid": "ALMTNDPOSIT", "code": "ALM_TND_POS", "name": "Dépistages TND positifs", "category": "pediatric", "unit": "count"},
+    {"uid": "ALMTNDNEGAT", "code": "ALM_TND_NEG", "name": "Dépistages TND négatifs", "category": "pediatric", "unit": "count"},
+    {"uid": "ALMVACCTOTA", "code": "ALM_VAC_TOTAL", "name": "Vaccinations enregistrées (total)", "category": "pediatric", "unit": "count"},
+    {"uid": "ALMVACBCG00", "code": "ALM_VAC_BCG", "name": "Vaccin BCG administré", "category": "pediatric", "unit": "count"},
+    {"uid": "ALMVACROU00", "code": "ALM_VAC_MEASLES", "name": "Vaccin rougeole administré", "category": "pediatric", "unit": "count"},
+    {"uid": "ALMRDVPROTO", "code": "ALM_RDV_PRO", "name": "Consultations Pro (téléconsult + présentiel)", "category": "operational", "unit": "count"},
+    {"uid": "ALMDMPCONSU", "code": "ALM_DMP_CONS", "name": "Consultations DMP enregistrées", "category": "operational", "unit": "count"},
+    {"uid": "ALMUSERSACT", "code": "ALM_USER_ACT", "name": "Utilisatrices actives", "category": "operational", "unit": "count"},
+]
+
+
+def _period_to_dhis2(period_type: str, year: int, num: int) -> str:
+    """
+    Convertit une période en format DHIS2 :
+    - monthly YYYYMM (ex. 202607)
+    - quarterly YYYYQx (ex. 2026Q2)
+    - yearly YYYY (ex. 2026)
+    """
+    if period_type == "monthly":
+        return f"{year}{num:02d}"
+    if period_type == "quarterly":
+        return f"{year}Q{num}"
+    if period_type == "yearly":
+        return f"{year}"
+    raise ValueError(f"period_type inconnu: {period_type}")
+
+
+def _period_range(period_type: str, year: int, num: int):
+    """Retourne (start_dt, end_dt) UTC pour une période DHIS2."""
+    if period_type == "monthly":
+        start = datetime(year, num, 1)
+        if num == 12:
+            end = datetime(year + 1, 1, 1)
+        else:
+            end = datetime(year, num + 1, 1)
+    elif period_type == "quarterly":
+        start_month = (num - 1) * 3 + 1
+        start = datetime(year, start_month, 1)
+        end_month = start_month + 3
+        if end_month > 12:
+            end = datetime(year + 1, end_month - 12, 1)
+        else:
+            end = datetime(year, end_month, 1)
+    elif period_type == "yearly":
+        start = datetime(year, 1, 1)
+        end = datetime(year + 1, 1, 1)
+    else:
+        raise ValueError("period_type invalide")
+    return start, end
+
+
+async def _compute_dhis2_indicators(
+    period_type: str, year: int, num: int, region: Optional[str] = None
+) -> Dict[str, int]:
+    """
+    Agrège les indicateurs À lo Maman pour la période demandée.
+    Retourne un dict {uid: value}.
+    """
+    start, end = _period_range(period_type, year, num)
+    dt_filter = {"$gte": start.isoformat(), "$lt": end.isoformat()}
+
+    # Filtre région optionnel (basé sur user.commune ou centre.region)
+    region_filter: Dict[str, Any] = {}
+    if region:
+        region_filter = {"$or": [{"commune": region}, {"region": region}]}
+
+    async def _count(coll: str, extra: Dict[str, Any] = None) -> int:
+        q: Dict[str, Any] = {"created_at": dt_filter}
+        if extra:
+            q.update(extra)
+        try:
+            return await db[coll].count_documents(q)
+        except Exception:
+            return 0
+
+    # CPN counts — basé sur rdv (motif contient "CPN") ou grossesse.tracking sessions
+    cpn_1 = await _count("rdv", {"motif": {"$regex": "CPN.*1|1ère.*CPN|first.*antenatal", "$options": "i"}})
+    cpn_2 = await _count("rdv", {"motif": {"$regex": "CPN.*2|2ème.*CPN", "$options": "i"}})
+    cpn_3 = await _count("rdv", {"motif": {"$regex": "CPN.*3|3ème.*CPN", "$options": "i"}})
+    cpn_4 = await _count("rdv", {"motif": {"$regex": "CPN.*4|CPN[+]|4ème.*CPN", "$options": "i"}})
+
+    births = await _count("naissances")
+    pp_checkins = await _count("postpartum_checkins")
+    epds_alerts = await _count("postpartum_checkins", {"critical_alerts": {"$exists": True, "$ne": []}})
+    tnd_pos = await _count("tnd_screenings", {"$or": [{"final_level": "high_risk"}, {"level": "high_risk"}]})
+    tnd_neg = await _count("tnd_screenings", {"$or": [{"final_level": "low_risk"}, {"level": "low_risk"}]})
+    vac_total = await _count("vaccinations")
+    vac_bcg = await _count("vaccinations", {"vaccin": {"$regex": "BCG", "$options": "i"}})
+    vac_measles = await _count("vaccinations", {"vaccin": {"$regex": "rougeole|measles|ROR|MMR", "$options": "i"}})
+    rdv_pro = await _count("rdv", {"status": {"$in": ["confirme", "termine", "confirmed", "completed"]}})
+    dmp_cons = await _count("dmp_consultations")
+    active_users = await _count("users", {"last_seen": {"$gte": start.isoformat()}})
+
+    return {
+        "ALM0CPN1000": cpn_1,
+        "ALM0CPN2000": cpn_2,
+        "ALM0CPN3000": cpn_3,
+        "ALM0CPN4000": cpn_4,
+        "ALMNAISSDEC": births,
+        "ALMPP0CHKIN": pp_checkins,
+        "ALMEPDSHIGH": epds_alerts,
+        "ALMTNDPOSIT": tnd_pos,
+        "ALMTNDNEGAT": tnd_neg,
+        "ALMVACCTOTA": vac_total,
+        "ALMVACBCG00": vac_bcg,
+        "ALMVACROU00": vac_measles,
+        "ALMRDVPROTO": rdv_pro,
+        "ALMDMPCONSU": dmp_cons,
+        "ALMUSERSACT": active_users,
+    }
+
+
+@api.get("/dhis2/indicators")
+async def dhis2_list_indicators(user=Depends(require_roles("admin", "super_admin"))):
+    """Liste tous les indicateurs disponibles à l'export DHIS2."""
+    return {"count": len(DHIS2_INDICATORS), "indicators": DHIS2_INDICATORS}
+
+
+class DHIS2PreviewIn(BaseModel):
+    period_type: str  # monthly | quarterly | yearly
+    year: int
+    num: int = 1  # numéro du mois (1-12), trimestre (1-4) ou ignoré si yearly
+    region: Optional[str] = None
+    org_unit: Optional[str] = None  # UID DHIS2 orgUnit — optionnel (mock si absent)
+
+
+@api.post("/dhis2/preview")
+async def dhis2_preview(payload: DHIS2PreviewIn, user=Depends(require_roles("admin", "super_admin"))):
+    """Prévisualisation des indicateurs agrégés pour la période choisie."""
+    try:
+        period = _period_to_dhis2(payload.period_type, payload.year, payload.num)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    values = await _compute_dhis2_indicators(payload.period_type, payload.year, payload.num, payload.region)
+    rows = []
+    for ind in DHIS2_INDICATORS:
+        rows.append({
+            "uid": ind["uid"],
+            "code": ind["code"],
+            "name": ind["name"],
+            "category": ind["category"],
+            "value": values.get(ind["uid"], 0),
+        })
+    return {
+        "period": period,
+        "period_type": payload.period_type,
+        "region": payload.region,
+        "org_unit": payload.org_unit or "MOCK_ORG_UNIT_CI",
+        "generated_at": datetime.utcnow().isoformat(),
+        "total_indicators": len(rows),
+        "rows": rows,
+    }
+
+
+@api.post("/dhis2/export/dxf2")
+async def dhis2_export_dxf2(payload: DHIS2PreviewIn, user=Depends(require_roles("admin", "super_admin"))):
+    """
+    Export au format DHIS2 DXF2 JSON (dataValueSet). Format standard DHIS2 :
+    https://docs.dhis2.org/en/develop/using-the-api/dhis-core-version-master/data.html#webapi_data_values
+    """
+    try:
+        period = _period_to_dhis2(payload.period_type, payload.year, payload.num)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    values = await _compute_dhis2_indicators(payload.period_type, payload.year, payload.num, payload.region)
+    org_unit = payload.org_unit or "MOCK_ORG_UNIT_CI"
+    dxf2 = {
+        "dataSet": "ALM0DATASET",  # UID du dataSet À lo Maman (à mapper côté DHIS2 CI)
+        "period": period,
+        "orgUnit": org_unit,
+        "completeDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "dataValues": [
+            {"dataElement": ind["uid"], "value": str(values.get(ind["uid"], 0)), "comment": ind["name"]}
+            for ind in DHIS2_INDICATORS
+        ],
+    }
+    # Audit trail
+    await db.dhis2_exports.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "format": "dxf2_json",
+        "period": period,
+        "org_unit": org_unit,
+        "region": payload.region,
+        "value_count": len(dxf2["dataValues"]),
+        "exported_at": datetime.utcnow().isoformat(),
+    })
+    return dxf2
+
+
+@api.post("/dhis2/export/csv")
+async def dhis2_export_csv(payload: DHIS2PreviewIn, user=Depends(require_roles("admin", "super_admin"))):
+    """Export CSV de secours (compatible import DHIS2)."""
+    try:
+        period = _period_to_dhis2(payload.period_type, payload.year, payload.num)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    values = await _compute_dhis2_indicators(payload.period_type, payload.year, payload.num, payload.region)
+    org_unit = payload.org_unit or "MOCK_ORG_UNIT_CI"
+    lines = ["dataelement,period,orgunit,value,comment"]
+    for ind in DHIS2_INDICATORS:
+        lines.append(f'{ind["uid"]},{period},{org_unit},{values.get(ind["uid"], 0)},"{ind["name"]}"')
+    csv_content = "\n".join(lines)
+    await db.dhis2_exports.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "format": "csv",
+        "period": period,
+        "org_unit": org_unit,
+        "region": payload.region,
+        "value_count": len(DHIS2_INDICATORS),
+        "exported_at": datetime.utcnow().isoformat(),
+    })
+    return {"period": period, "org_unit": org_unit, "csv": csv_content, "row_count": len(DHIS2_INDICATORS)}
+
+
+class DHIS2ConfigIn(BaseModel):
+    base_url: str  # ex. https://dhis2.msp.ci
+    username: Optional[str] = None
+    password: Optional[str] = None
+    api_token: Optional[str] = None  # préféré (Personal Access Token DHIS2)
+    org_unit_uid: Optional[str] = None  # UID orgUnit CI dans DHIS2
+    dataset_uid: Optional[str] = None   # UID dataSet ALM dans DHIS2
+    element_mapping: Optional[Dict[str, str]] = None  # {ALM_uid: DHIS2_dataElement_uid}
+
+
+@api.post("/dhis2/config")
+async def dhis2_save_config(payload: DHIS2ConfigIn, user=Depends(require_roles("super_admin"))):
+    """
+    Enregistre la configuration DHIS2 (URL + credentials + mappings).
+    ⚠️ Les credentials sont chiffrés au repos (encryption.py).
+    Seul le super_admin peut configurer.
+    """
+    from encryption import encrypt_str
+    doc = {
+        "id": "singleton",  # unique
+        "base_url": payload.base_url,
+        "username": payload.username or "",
+        "password_enc": encrypt_str(payload.password) if payload.password else None,
+        "api_token_enc": encrypt_str(payload.api_token) if payload.api_token else None,
+        "org_unit_uid": payload.org_unit_uid or "",
+        "dataset_uid": payload.dataset_uid or "ALM0DATASET",
+        "element_mapping": payload.element_mapping or {},
+        "updated_at": datetime.utcnow().isoformat(),
+        "updated_by": user["id"],
+    }
+    await db.dhis2_config.update_one({"id": "singleton"}, {"$set": doc}, upsert=True)
+    return {"ok": True, "base_url": payload.base_url, "has_password": bool(payload.password), "has_token": bool(payload.api_token)}
+
+
+@api.get("/dhis2/config")
+async def dhis2_get_config(user=Depends(require_roles("admin", "super_admin"))):
+    """Récupère la config DHIS2 (sans exposer les credentials)."""
+    doc = await db.dhis2_config.find_one({"id": "singleton"}, {"_id": 0})
+    if not doc:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "base_url": doc.get("base_url"),
+        "username": doc.get("username"),
+        "has_password": bool(doc.get("password_enc")),
+        "has_token": bool(doc.get("api_token_enc")),
+        "org_unit_uid": doc.get("org_unit_uid"),
+        "dataset_uid": doc.get("dataset_uid"),
+        "element_mapping_count": len(doc.get("element_mapping") or {}),
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+@api.post("/dhis2/push")
+async def dhis2_push(payload: DHIS2PreviewIn, user=Depends(require_roles("admin", "super_admin"))):
+    """
+    Pousse le dataValueSet vers l'instance DHIS2 configurée.
+    Utilise l'endpoint DHIS2 /api/dataValueSets (POST JSON).
+    """
+    from encryption import decrypt_field
+    cfg = await db.dhis2_config.find_one({"id": "singleton"}, {"_id": 0})
+    if not cfg or not cfg.get("base_url"):
+        raise HTTPException(400, "Configuration DHIS2 manquante — configurez d'abord via POST /dhis2/config")
+
+    # Construit le payload DXF2
+    try:
+        period = _period_to_dhis2(payload.period_type, payload.year, payload.num)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    values = await _compute_dhis2_indicators(payload.period_type, payload.year, payload.num, payload.region)
+    org_unit = payload.org_unit or cfg.get("org_unit_uid") or "MOCK_ORG_UNIT_CI"
+    mapping = cfg.get("element_mapping") or {}
+    dxf2 = {
+        "dataSet": cfg.get("dataset_uid") or "ALM0DATASET",
+        "period": period,
+        "orgUnit": org_unit,
+        "completeDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "dataValues": [
+            {
+                "dataElement": mapping.get(ind["uid"], ind["uid"]),  # traduit UID ALM → UID DHIS2 CI
+                "value": str(values.get(ind["uid"], 0)),
+                "comment": ind["name"],
+            }
+            for ind in DHIS2_INDICATORS
+        ],
+    }
+
+    # POST vers DHIS2
+    import httpx as _httpx
+    url = cfg["base_url"].rstrip("/") + "/api/dataValueSets"
+    headers = {"Content-Type": "application/json"}
+    auth = None
+    if cfg.get("api_token_enc"):
+        headers["Authorization"] = f"ApiToken {decrypt_str(cfg['api_token_enc'])}"
+    elif cfg.get("username") and cfg.get("password_enc"):
+        auth = (cfg["username"], decrypt_str(cfg["password_enc"]))
+
+    status_code = 0
+    response_body: Any = None
+    try:
+        async with _httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(url, json=dxf2, headers=headers, auth=auth)
+            status_code = r.status_code
+            try:
+                response_body = r.json()
+            except Exception:
+                response_body = r.text
+    except Exception as e:
+        status_code = -1
+        response_body = str(e)
+
+    # Audit
+    await db.dhis2_exports.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "format": "push_dhis2",
+        "period": period,
+        "org_unit": org_unit,
+        "region": payload.region,
+        "target_url": url,
+        "http_status": status_code,
+        "value_count": len(dxf2["dataValues"]),
+        "exported_at": datetime.utcnow().isoformat(),
+    })
+
+    ok = 200 <= status_code < 300
+    return {
+        "ok": ok,
+        "http_status": status_code,
+        "period": period,
+        "org_unit": org_unit,
+        "value_count": len(dxf2["dataValues"]),
+        "target": url,
+        "response": response_body if ok else str(response_body)[:500],
+    }
+
+
+@api.get("/dhis2/history")
+async def dhis2_export_history(limit: int = 50, user=Depends(require_roles("admin", "super_admin"))):
+    """Historique des exports DHIS2 (audit)."""
+    items = await db.dhis2_exports.find({}, {"_id": 0}).sort("exported_at", -1).to_list(min(limit, 200))
+    return {"count": len(items), "items": items}
+
+
+# ==================================================================================================
+# 🔌 Hub d'interopérabilité — SIH, DPI, Santé CIV, OpenELIS, mSupply, PACS
+# ==================================================================================================
+# Architecture générique : chaque intégration a une config (URL + credentials chiffrés) + endpoints test/push.
+# Prêt pour recevoir les vraies clés API du Ministère de la Santé de Côte d'Ivoire.
+
+INTEROP_SYSTEMS = [
+    {
+        "id": "sih_national",
+        "label": "SIH national",
+        "description": "Système d'Information Hospitalier — export FHIR Bundle (admissions, séjours, actes)",
+        "protocol": "FHIR R4",
+        "resource_types": ["Patient", "Encounter", "Procedure", "Observation", "Condition"],
+        "docs_url": "https://www.hl7.org/fhir/R4/",
+    },
+    {
+        "id": "dpi_national",
+        "label": "DPI national",
+        "description": "Dossier Patient Informatisé national — synchronisation FHIR/HL7 v2",
+        "protocol": "FHIR R4 / HL7 v2.5",
+        "resource_types": ["Patient", "AllergyIntolerance", "MedicationStatement", "Immunization"],
+        "docs_url": "https://www.hl7.org/",
+    },
+    {
+        "id": "sante_civ",
+        "label": "Santé CIV (Portail e-Santé Côte d'Ivoire)",
+        "description": "Portail patient national — synchronisation compte + carnet vaccinal + RDV",
+        "protocol": "REST API",
+        "resource_types": ["Patient", "Vaccination", "Appointment"],
+        "docs_url": "https://sante.civ.ci",
+    },
+    {
+        "id": "openelis",
+        "label": "OpenELIS",
+        "description": "Laboratoire — envoi de prescriptions et réception de résultats d'analyse",
+        "protocol": "FHIR R4 / HL7 v2 ORM/ORU",
+        "resource_types": ["ServiceRequest", "DiagnosticReport", "Observation"],
+        "docs_url": "https://openelis-global.org/",
+    },
+    {
+        "id": "msupply",
+        "label": "mSupply",
+        "description": "Chaîne d'approvisionnement pharmaceutique — prescriptions & stocks",
+        "protocol": "mSupply REST API",
+        "resource_types": ["MedicationRequest", "Medication", "SupplyDelivery"],
+        "docs_url": "https://msupply.foundation/",
+    },
+    {
+        "id": "pacs",
+        "label": "PACS (Imagerie médicale)",
+        "description": "Picture Archiving & Communication System — échographies obstétricales DICOM",
+        "protocol": "DICOMweb (WADO-RS / STOW-RS / QIDO-RS)",
+        "resource_types": ["ImagingStudy", "DiagnosticReport"],
+        "docs_url": "https://www.dicomstandard.org/using/dicomweb",
+    },
+]
+
+
+@api.get("/interop/systems")
+async def interop_list_systems(user=Depends(require_roles("admin", "super_admin"))):
+    """Liste des systèmes d'interopérabilité disponibles avec leur état de configuration."""
+    configs = await db.interop_configs.find({}, {"_id": 0}).to_list(50)
+    cfg_by_id = {c["system_id"]: c for c in configs}
+    out = []
+    for sys in INTEROP_SYSTEMS:
+        c = cfg_by_id.get(sys["id"])
+        out.append({
+            **sys,
+            "configured": bool(c),
+            "base_url": c.get("base_url") if c else None,
+            "has_credentials": bool(c and (c.get("api_token_enc") or c.get("password_enc"))),
+            "last_test": c.get("last_test") if c else None,
+            "last_test_ok": c.get("last_test_ok") if c else None,
+            "updated_at": c.get("updated_at") if c else None,
+        })
+    return {"count": len(out), "systems": out}
+
+
+class InteropConfigIn(BaseModel):
+    system_id: str
+    base_url: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    api_token: Optional[str] = None
+    extra: Optional[Dict[str, Any]] = None  # ex. facility_id, provider_id, aet, etc.
+
+
+@api.post("/interop/config")
+async def interop_save_config(payload: InteropConfigIn, user=Depends(require_roles("super_admin"))):
+    """Enregistre la config d'un système. Credentials chiffrés AES-256."""
+    from encryption import encrypt_str
+    if not any(s["id"] == payload.system_id for s in INTEROP_SYSTEMS):
+        raise HTTPException(400, f"system_id inconnu: {payload.system_id}")
+    doc = {
+        "system_id": payload.system_id,
+        "base_url": payload.base_url.strip(),
+        "username": payload.username or "",
+        "password_enc": encrypt_str(payload.password) if payload.password else None,
+        "api_token_enc": encrypt_str(payload.api_token) if payload.api_token else None,
+        "extra": payload.extra or {},
+        "updated_at": datetime.utcnow().isoformat(),
+        "updated_by": user["id"],
+    }
+    await db.interop_configs.update_one({"system_id": payload.system_id}, {"$set": doc}, upsert=True)
+    return {"ok": True, "system_id": payload.system_id}
+
+
+@api.get("/interop/config/{system_id}")
+async def interop_get_config(system_id: str, user=Depends(require_roles("admin", "super_admin"))):
+    """Récupère la config (sans credentials)."""
+    doc = await db.interop_configs.find_one({"system_id": system_id}, {"_id": 0})
+    if not doc:
+        return {"configured": False, "system_id": system_id}
+    return {
+        "configured": True,
+        "system_id": system_id,
+        "base_url": doc.get("base_url"),
+        "username": doc.get("username"),
+        "has_password": bool(doc.get("password_enc")),
+        "has_token": bool(doc.get("api_token_enc")),
+        "extra": doc.get("extra") or {},
+        "updated_at": doc.get("updated_at"),
+        "last_test": doc.get("last_test"),
+        "last_test_ok": doc.get("last_test_ok"),
+    }
+
+
+@api.post("/interop/test/{system_id}")
+async def interop_test_connection(system_id: str, user=Depends(require_roles("admin", "super_admin"))):
+    """
+    Teste la connexion vers le système distant.
+    Utilise un endpoint de santé propre à chaque système (probe).
+    """
+    from encryption import decrypt_str
+    cfg = await db.interop_configs.find_one({"system_id": system_id}, {"_id": 0})
+    if not cfg:
+        raise HTTPException(400, "Système non configuré")
+    import httpx as _httpx
+
+    # Endpoints de probe par système (à adapter selon les vraies API du ministère)
+    probe_paths = {
+        "sih_national": "/fhir/metadata",             # FHIR CapabilityStatement
+        "dpi_national": "/fhir/metadata",
+        "sante_civ":    "/api/health",
+        "openelis":     "/fhir/metadata",
+        "msupply":      "/api/v4/status",
+        "pacs":         "/dicom-web/studies?limit=1",
+    }
+    url = cfg["base_url"].rstrip("/") + probe_paths.get(system_id, "/")
+    headers = {"Accept": "application/json"}
+    auth = None
+    if cfg.get("api_token_enc"):
+        token = decrypt_str(cfg["api_token_enc"])
+        headers["Authorization"] = f"Bearer {token}"
+    elif cfg.get("username") and cfg.get("password_enc"):
+        auth = (cfg["username"], decrypt_str(cfg["password_enc"]))
+
+    status_code = 0
+    err_msg = ""
+    try:
+        async with _httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url, headers=headers, auth=auth)
+            status_code = r.status_code
+    except Exception as e:
+        err_msg = str(e)[:200]
+
+    ok = 200 <= status_code < 400
+    await db.interop_configs.update_one(
+        {"system_id": system_id},
+        {"$set": {
+            "last_test": datetime.utcnow().isoformat(),
+            "last_test_ok": ok,
+            "last_test_status": status_code,
+            "last_test_error": err_msg,
+        }},
+    )
+    return {"ok": ok, "http_status": status_code, "target": url, "error": err_msg or None}
+
+
+class InteropPushIn(BaseModel):
+    system_id: str
+    resource_type: str  # ex. Patient, Encounter, Observation, ImagingStudy
+    resource: Dict[str, Any]  # payload à envoyer
+
+
+@api.post("/interop/push")
+async def interop_push_resource(payload: InteropPushIn, user=Depends(require_roles("admin", "super_admin", "professionnel"))):
+    """
+    Pousse une ressource FHIR/HL7 vers le système cible.
+    Utilise l'endpoint approprié selon le protocole du système.
+    """
+    from encryption import decrypt_str
+    cfg = await db.interop_configs.find_one({"system_id": payload.system_id}, {"_id": 0})
+    if not cfg:
+        raise HTTPException(400, "Système non configuré")
+    import httpx as _httpx
+
+    # Route par système + type de ressource
+    if payload.system_id in ("sih_national", "dpi_national", "openelis"):
+        path = f"/fhir/{payload.resource_type}"
+    elif payload.system_id == "sante_civ":
+        path = f"/api/{payload.resource_type.lower()}"
+    elif payload.system_id == "msupply":
+        path = "/api/v4/med_request"
+    elif payload.system_id == "pacs":
+        path = "/dicom-web/studies"
+    else:
+        raise HTTPException(400, "system_id non supporté")
+
+    url = cfg["base_url"].rstrip("/") + path
+    headers = {"Content-Type": "application/fhir+json" if "fhir" in path else "application/json"}
+    auth = None
+    if cfg.get("api_token_enc"):
+        headers["Authorization"] = f"Bearer {decrypt_str(cfg['api_token_enc'])}"
+    elif cfg.get("username") and cfg.get("password_enc"):
+        auth = (cfg["username"], decrypt_str(cfg["password_enc"]))
+
+    status_code = 0
+    body: Any = None
+    try:
+        async with _httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(url, json=payload.resource, headers=headers, auth=auth)
+            status_code = r.status_code
+            try: body = r.json()
+            except Exception: body = r.text
+    except Exception as e:
+        status_code = -1
+        body = str(e)
+
+    # Audit
+    await db.interop_pushes.insert_one({
+        "id": str(uuid.uuid4()),
+        "system_id": payload.system_id,
+        "resource_type": payload.resource_type,
+        "target_url": url,
+        "http_status": status_code,
+        "user_id": user["id"],
+        "pushed_at": datetime.utcnow().isoformat(),
+    })
+    ok = 200 <= status_code < 300
+    return {"ok": ok, "http_status": status_code, "target": url, "response": body if ok else str(body)[:500]}
+
+
+@api.get("/interop/history")
+async def interop_push_history(system_id: Optional[str] = None, limit: int = 100, user=Depends(require_roles("admin", "super_admin"))):
+    """Audit des push interop."""
+    q = {}
+    if system_id: q["system_id"] = system_id
+    items = await db.interop_pushes.find(q, {"_id": 0}).sort("pushed_at", -1).to_list(min(limit, 500))
+    return {"count": len(items), "items": items}
+
+
 # 🔄 Re-include final : enregistre toutes les routes ajoutées après les précédents include_router
 app.include_router(api)
 
