@@ -13104,7 +13104,7 @@ async def dhis2_push(payload: DHIS2PreviewIn, user=Depends(require_roles("admin"
     Pousse le dataValueSet vers l'instance DHIS2 configurée.
     Utilise l'endpoint DHIS2 /api/dataValueSets (POST JSON).
     """
-    from encryption import decrypt_field
+    from encryption import decrypt_str
     cfg = await db.dhis2_config.find_one({"id": "singleton"}, {"_id": 0})
     if not cfg or not cfg.get("base_url"):
         raise HTTPException(400, "Configuration DHIS2 manquante — configurez d'abord via POST /dhis2/config")
