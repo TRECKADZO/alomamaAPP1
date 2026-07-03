@@ -115,6 +115,28 @@ export default function InteropConfigScreen() {
     } finally { setTesting(false); }
   };
 
+  const deleteConfig = () => {
+    Alert.alert(
+      "Supprimer la configuration ?",
+      `La config de "${meta?.label}" sera effacée définitivement.\nL'historique des synchronisations reste conservé pour audit.`,
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Supprimer",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.delete(`/interop/config/${id}`);
+              Alert.alert("✅ Supprimé", "Configuration effacée.", [{ text: "OK", onPress: () => router.back() }]);
+            } catch (e: any) {
+              Alert.alert("Erreur", e?.response?.data?.detail || "Échec de la suppression.");
+            }
+          },
+        },
+      ],
+    );
+  };
+
   if (loading || !meta) return <SafeAreaView style={s.loader}><ActivityIndicator color="#EC4899" size="large" /></SafeAreaView>;
 
   const extras = EXTRA_FIELDS[id as string] || [];
@@ -219,6 +241,13 @@ export default function InteropConfigScreen() {
           )}
         </View>
 
+        {sys?.configured && (
+          <TouchableOpacity onPress={deleteConfig} style={s.deleteBtn}>
+            <Ionicons name="trash" size={16} color="#DC2626" />
+            <Text style={s.deleteTxt}>Supprimer cette configuration</Text>
+          </TouchableOpacity>
+        )}
+
         <Text style={s.disclaimer}>
           🔒 Les credentials sont chiffrés au repos (AES-256).{"\n"}
           Fournissez la vraie URL et le token dès que le ministère les partage.
@@ -251,5 +280,7 @@ const s = StyleSheet.create({
   saveTxt: { color: "#fff", fontWeight: "800" },
   testBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#F1F5F9", paddingVertical: 12, borderRadius: 999 },
   testTxt: { color: "#0F172A", fontWeight: "800" },
+  deleteBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#FEE2E2", paddingVertical: 12, borderRadius: 999, marginBottom: 14 },
+  deleteTxt: { color: "#DC2626", fontWeight: "800" },
   disclaimer: { fontSize: 11, color: "#94A3B8", textAlign: "center", lineHeight: 16, paddingHorizontal: 12 },
 });

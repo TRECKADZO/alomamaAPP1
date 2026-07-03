@@ -13316,6 +13316,20 @@ async def interop_get_config(system_id: str, user=Depends(require_roles("admin",
     }
 
 
+@api.delete("/interop/config/{system_id}")
+async def interop_delete_config(system_id: str, user=Depends(require_roles("super_admin"))):
+    """
+    Supprime la configuration d'un système d'interopérabilité (super_admin uniquement).
+    L'audit d'historique des push reste conservé pour traçabilité.
+    """
+    if not any(s["id"] == system_id for s in INTEROP_SYSTEMS):
+        raise HTTPException(400, f"system_id inconnu: {system_id}")
+    result = await db.interop_configs.delete_one({"system_id": system_id})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Aucune configuration à supprimer pour ce système")
+    return {"ok": True, "system_id": system_id, "deleted": True}
+
+
 @api.post("/interop/test/{system_id}")
 async def interop_test_connection(system_id: str, user=Depends(require_roles("admin", "super_admin"))):
     """
