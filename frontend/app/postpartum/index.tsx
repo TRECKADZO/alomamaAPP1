@@ -199,6 +199,34 @@ export default function PostpartumHome() {
           ))}
         </View>
 
+        {/* Export PDF */}
+        <TouchableOpacity
+          style={s.pdfBtn}
+          onPress={async () => {
+            try {
+              const { Platform, Share } = require("react-native");
+              const r = await (await import("../../lib/api")).api.get("/postpartum/report/pdf", { responseType: "blob" as any });
+              if (Platform.OS === "web") {
+                const blob = r.data instanceof Blob ? r.data : new Blob([r.data], { type: "application/pdf" });
+                const dlUrl = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = dlUrl;
+                a.download = `postpartum_rapport_${new Date().toISOString().slice(0, 10)}.pdf`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(dlUrl);
+              } else {
+                await Share.share({ url: r.request?.responseURL || "", title: "Rapport Post-Partum" });
+              }
+            } catch (e: any) {
+              Alert.alert("Erreur", "Impossible de générer le PDF.");
+            }
+          }}
+          testID="pp-export-pdf"
+        >
+          <Ionicons name="document-text" size={18} color="#fff" />
+          <Text style={s.pdfBtnTxt}>📄 Exporter mon rapport PDF</Text>
+        </TouchableOpacity>
+
         <View style={s.gentle}>
           <Ionicons name="information-circle" size={18} color="#EC4899" />
           <Text style={s.gentleTxt}>
@@ -263,4 +291,6 @@ const s = StyleSheet.create({
   gridLabel: { fontSize: 11, color: COLORS.textPrimary, fontWeight: "700", textAlign: "center" },
   gentle: { flexDirection: "row", gap: 8, padding: 12, backgroundColor: "#FCE7F3", borderRadius: RADIUS.md, alignItems: "flex-start" },
   gentleTxt: { flex: 1, color: "#831843", fontSize: 12, lineHeight: 17 },
+  pdfBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#7C3AED", paddingVertical: 12, borderRadius: RADIUS.md, marginBottom: 14 },
+  pdfBtnTxt: { color: "#fff", fontWeight: "800", fontSize: 14 },
 });

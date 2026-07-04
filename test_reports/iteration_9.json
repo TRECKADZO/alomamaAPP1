@@ -1,0 +1,48 @@
+{
+  "summary": "P2 (Export PDF TND M-CHAT-R + Post-Partum avec codes SNOMED CT) et P3 (refactor routers/pdf_reports.py) VALIDÉS sur backend — 22/22 tests pytest PASS (100%). Le log '✅ Routers modulaires chargés : pdf_reports' est bien émis au démarrage (backend.err.log). Les 3 routes injectées via register_pdf_routes(app, api, db, get_current_user, decrypt_str_fn) répondent : (1) GET /api/postpartum/report/pdf → 200 + %PDF-1.4 + 4001 bytes + Content-Disposition attachment ; contient '185' (SAMU CI) et mots-clés post-partum/EPDS/humeur extraits via pypdf. (2) GET /api/tnd/screening/{id}/pdf → 200 + %PDF + 3485 bytes ; codes SNOMED attachés via /api/snomed/attach (35489007 / TEST_DepressiveDisorderSnomed) apparaissent bien dans le PDF. (3) GET /api/postpartum/report/{user_id}/pdf (endpoint pro) → 403 sans consentement (aucun checkin consent_partage_pro=True), 200 après flip du consentement, 403 pour role=maman. Audit trail vérifié : db.audit_log incrémenté à chaque export (pdf_export_tnd, pdf_export_postpartum, pdf_export_postpartum_pro avec target_user). 404 pour screening inexistant ET pour maman sans setup postpartum (nouvelle inscription avec accepte_cgu/politique/donnees_sante). 401 sans auth. Non-régression complète : dashboard postpartum (clés postpartum_id/week_pp), checkin POST, tnd/screenings/{enfant_id}, interop/systems + dhis2/indicators (admin OK), X-Frame-Options=SAMEORIGIN, 2FA admin (1er login 200 avec grâce, 2e login 403, flag totp_setup_grace_used=True écrit en DB). Pattern d'injection dependency validé — prêt pour extraction des autres modules (postpartum, snomed, dhis2, interop, compliance).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "server.py L13603 & L13610",
+        "issue": "app.include_router(api) est appelé deux fois (avant et après register_pdf_routes). FastAPI dédoublonne les routes par (path, method) donc ce n'est pas dangereux, mais un seul include après register_pdf_routes serait plus propre. Impact 0 sur les tests."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pdf_reports_iter9.py",
+    "/app/test_reports/pytest/pytest_pdf_reports_iter9.xml"
+  ],
+  "action_items": [
+    "Aucune action bloquante — livraison P2+P3 conforme.",
+    "OPTIONNEL — Simplifier server.py L13602-L13614 : ne conserver qu'un seul app.include_router(api) APRÈS register_pdf_routes (supprimer la ligne 13603).",
+    "OPTIONNEL non couvert (hors périmètre) — bug latent iter7/iter8 : server.py L13107 `from encryption import decrypt_field` alors que le code utilise `decrypt_str`. À corriger avant push DHIS2 réel.",
+    "SUGGESTION — Ajouter pypdf à backend/requirements.txt si vous voulez que la suite de tests soit reproductible sans install manuel (utilisé uniquement en test pour extraire le texte du PDF)."
+  ],
+  "critical_code_review_comments": [
+    "routers/pdf_reports.py L13-23 : pattern d'injection dependency (app, api, db, get_current_user, decrypt_str_fn) correct pour éviter les imports circulaires. Import de pdf_generator fait DANS la fonction — bien.",
+    "routers/pdf_reports.py L37-72 (tnd_screening_pdf) : contrôle d'accès L49 solide — user parent référent (enfant.user_id) OU auteur du screening OU role∈{professionnel, admin, super_admin}. Audit avec size_bytes + timestamp isoformat.",
+    "routers/pdf_reports.py L113-155 (postpartum_report_pro_pdf) : la vérification RGPD via find_one({consent_partage_pro:True}) puis filtrage des checkins par le même critère est cohérente — un pro ne verra QUE les checkins où la maman a consenti (pas tout l'historique).",
+    "routers/pdf_reports.py L25-35 : _decrypt_checkin catche toutes les exceptions et pose '[déchiffrement impossible]' — safe pour éviter un 500 sur clé corrompue, mais logger.warning serait un plus (aucun log en cas d'échec silencieux).",
+    "server.py L13606-13613 : le try/except autour de register_pdf_routes est correct (logger.warning en cas d'échec), mais le message '⚠️ Échec chargement routers modulaires' n'a jamais été déclenché — bien.",
+    "pdf_generator.py L986 : disclaimer SAMU 185 bien présent dans le PDF post-partum. Confirmé par extraction pypdf."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pdf_reports_iter9.py (nouveau — 22 tests pytest P2+P3+non-régression)"
+  ],
+  "success_rate": {
+    "backend": "100% (22/22)",
+    "frontend": "N/A (backend-only run demandé)"
+  },
+  "seed_data_creation": "Aucune seed permanente. Les tests : (1) créent 1 maman TEST_pdf_<uuid>@alomaman.dev pour tester le 404 sans setup puis la supprime immédiatement (finally); (2) togglent consent_partage_pro=True/False sur les checkins existants de maman.test — état final : True (nécessaire pour retest ultérieur si besoin, ou à repasser à False si vous voulez re-tester le 403 fresh); (3) attachent 2 codes SNOMED TEST_* au screening 8d80d426 — ces codes RESTENT en base (mais préfixés TEST_ pour identification). Le compte super_admin klenakan.eric@gmail.com est reset (unset flags 2FA) AVANT et APRÈS le test 2FA — utilisable normalement.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Suite reproductible en ~16s : `pytest backend/tests/test_pdf_reports_iter9.py -v`. Dépendance : pypdf (installé via `pip install pypdf`). Utilise pymongo synchrone plutôt que motor asyncio pour éviter les problèmes d'event-loop pytest. Le screening TND 8d80d426-6e68-4021-84b5-4d0fb6aa13dd contient maintenant 2 codes SNOMED de test (visibles dans le PDF) — à nettoyer si besoin via `db.tnd_screenings.update_one({id:...}, {$unset:{snomed_codes:''}})`. Les checkins de maman.test ont consent_partage_pro=True après ces tests (dernière opération). Le teardown 2FA remet le super_admin à l'état vierge.",
+  "rca_of_issue": "N/A — toutes fonctionnalités PASS. Le pattern P3 (register_pdf_routes injecté) fonctionne parfaitement et sert de référence pour l'extraction des prochains modules (postpartum, snomed, dhis2, interop, compliance)."
+}

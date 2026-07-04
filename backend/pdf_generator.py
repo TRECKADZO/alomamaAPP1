@@ -538,3 +538,457 @@ def generate_carnet_pdf(
 
     c.save()
     return buf.getvalue()
+
+
+
+# ========================================================================================
+# 📊 RAPPORTS TND (M-CHAT-R) — Trouble du Neuro-Développement
+# ========================================================================================
+
+COLOR_PURPLE = HexColor("#7C3AED")
+COLOR_PINK = HexColor("#EC4899")
+COLOR_RED = HexColor("#DC2626")
+COLOR_AMBER = HexColor("#F59E0B")
+COLOR_EMERALD = HexColor("#10B981")
+
+
+def _draw_header(c: canvas.Canvas, title: str, subtitle: str, color=COLOR_PURPLE):
+    """En-tête réutilisable pour tous les rapports médicaux."""
+    width, height = A4
+    c.setFillColor(color)
+    c.rect(0, height - 3.5 * cm, width, 3.5 * cm, stroke=0, fill=1)
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(2 * cm, height - 2 * cm, title)
+    c.setFont("Helvetica", 11)
+    c.drawString(2 * cm, height - 2.8 * cm, subtitle)
+    # Logo À lo Maman texte
+    c.setFont("Helvetica-Bold", 12)
+    c.drawRightString(width - 2 * cm, height - 2 * cm, "À lo Maman 🌸")
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawRightString(width - 2 * cm, height - 2.6 * cm, "Santé maternelle & pédiatrique")
+
+
+def _draw_footer(c: canvas.Canvas, page_num: int, total_pages: int, extra: str = ""):
+    """Pied de page réutilisable."""
+    width, _ = A4
+    c.setFillColor(COLOR_GRAY)
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawString(2 * cm, 1.5 * cm, f"Généré le {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')} · alomaman.com")
+    c.drawRightString(width - 2 * cm, 1.5 * cm, f"Page {page_num}/{total_pages}")
+    if extra:
+        c.setFont("Helvetica-Oblique", 7)
+        c.drawCentredString(width / 2, 1 * cm, extra)
+
+
+def _wrap_lines(text: str, max_chars: int) -> list[str]:
+    words = text.split()
+    lines, cur = [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 <= max_chars:
+            cur = f"{cur} {w}" if cur else w
+        else:
+            if cur: lines.append(cur)
+            cur = w
+    if cur: lines.append(cur)
+    return lines
+
+
+def generate_tnd_pdf(
+    screening: Dict[str, Any],
+    enfant: Dict[str, Any],
+    maman: Dict[str, Any],
+    followup: Optional[Dict[str, Any]] = None,
+) -> bytes:
+    """
+    Génère le rapport PDF d'un dépistage M-CHAT-R/F (Trouble du Neuro-Développement).
+    Inclut :
+    - Identité enfant + parent
+    - Score et niveau de risque avec code SNOMED CT
+    - Détails Q1-Q20 avec réponses
+    - Follow-up M-CHAT-R/F si présent
+    - Recommandations
+    - Codes SNOMED CT attachés
+    """
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    # ---------- HEADER ----------
+    level = (followup or {}).get("finalized_level") or screening.get("level", "low_risk")
+    level_map = {
+        "low_risk": ("Risque faible", COLOR_EMERALD, "428443002"),
+        "medium_risk": ("Risque modéré", COLOR_AMBER, "428443002"),
+        "high_risk": ("Risque élevé — Orientation recommandée", COLOR_RED, "35919005"),
+    }
+    lvl_label, lvl_color, snomed_lvl = level_map.get(level, level_map["low_risk"])
+    _draw_header(
+        c,
+        "Rapport de dépistage M-CHAT-R/F",
+        f"Enfant : {enfant.get('prenom', '')} {enfant.get('nom', '')}",
+        color=COLOR_PURPLE,
+    )
+
+    y = height - 4.5 * cm
+
+    # ---------- BADGE NIVEAU ----------
+    c.setFillColor(lvl_color)
+    c.roundRect(2 * cm, y - 1 * cm, 17 * cm, 1.5 * cm, 6, stroke=0, fill=1)
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawCentredString(width / 2, y - 0.3 * cm, f"🎯 Résultat : {lvl_label}")
+    c.setFont("Helvetica", 9)
+    score = (followup or {}).get("final_score", screening.get("score", 0))
+    c.drawCentredString(width / 2, y - 0.75 * cm, f"Score M-CHAT-R : {score} / 20 · SNOMED CT : {snomed_lvl}")
+    y -= 2 * cm
+
+    # ---------- IDENTITÉ ----------
+    def _section_title(txt):
+        nonlocal y
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(2 * cm, y, txt)
+        c.setStrokeColor(COLOR_PURPLE)
+        c.setLineWidth(2)
+        c.line(2 * cm, y - 0.15 * cm, 6 * cm, y - 0.15 * cm)
+        y -= 0.6 * cm
+
+    def _row(label: str, value: str):
+        nonlocal y
+        c.setFillColor(COLOR_GRAY)
+        c.setFont("Helvetica", 9)
+        c.drawString(2 * cm, y, label)
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(6 * cm, y, str(value or "—"))
+        y -= 0.5 * cm
+
+    _section_title("👶 Identité de l'enfant")
+    _row("Prénom / Nom", f"{enfant.get('prenom', '')} {enfant.get('nom', '')}")
+    _row("Date de naissance", enfant.get("date_naissance", "—"))
+    age_m = enfant.get("age_mois")
+    _row("Âge au dépistage", f"{age_m} mois" if age_m else "—")
+    _row("Sexe", enfant.get("sexe", "—"))
+    _row("Parent référent", f"{maman.get('name', '')} · {maman.get('phone', '—')}")
+    y -= 0.3 * cm
+
+    _section_title("📅 Dépistage")
+    _row("Date du dépistage", screening.get("created_at", "—")[:19].replace("T", " "))
+    _row("Version M-CHAT-R", screening.get("version", "M-CHAT-R (2014)"))
+    _row("Followup M-CHAT-R/F", "Oui" if followup else "Non")
+    y -= 0.3 * cm
+
+    # ---------- DÉTAIL RÉPONSES ----------
+    if screening.get("responses"):
+        _section_title("📋 Détail des réponses (Q1-Q20)")
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica", 8)
+        responses = screening["responses"]
+        # 2 colonnes
+        col_width = 8.5 * cm
+        for i, r in enumerate(responses[:20]):
+            col = i % 2
+            row = i // 2
+            x = 2 * cm + col * col_width
+            yy = y - row * 0.55 * cm
+            q_num = r.get("question_id", i + 1)
+            answer = r.get("answer") or r.get("value") or "—"
+            is_risk = r.get("is_risk", False)
+            # Couleur point
+            c.setFillColor(COLOR_RED if is_risk else COLOR_EMERALD)
+            c.circle(x, yy + 0.1 * cm, 0.08 * cm, fill=1, stroke=0)
+            # Texte
+            c.setFillColor(COLOR_DARK)
+            c.setFont("Helvetica", 8)
+            c.drawString(x + 0.3 * cm, yy, f"Q{q_num}: {str(answer)[:35]}")
+        y -= (len(responses) // 2 + 1) * 0.55 * cm + 0.3 * cm
+
+    # ---------- FOLLOWUP ----------
+    if followup:
+        _section_title("🔍 Suivi M-CHAT-R/F (entretien approfondi)")
+        _row("Statut", "Complété" if followup.get("conducted") else "Non conduit")
+        _row("Score final ajusté", f"{followup.get('final_score', 0)} / 20")
+        _row("Niveau finalisé", followup.get("finalized_level", level))
+        if followup.get("clinician_notes"):
+            _row("Notes cliniques", (followup["clinician_notes"] or "")[:80])
+        y -= 0.3 * cm
+
+    # ---------- SNOMED CT ----------
+    snomed_codes = screening.get("snomed_codes", [])
+    if snomed_codes:
+        if y < 6 * cm:
+            _draw_footer(c, 1, 2, "SNOMED CT · MSP CI · RGSSI Niveau 3")
+            c.showPage()
+            _draw_header(c, "Rapport TND — Suite", "Codes cliniques SNOMED CT", color=COLOR_PURPLE)
+            y = height - 4.5 * cm
+        _section_title("🧬 Codification clinique SNOMED CT")
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica", 9)
+        for code in snomed_codes[:10]:
+            c.drawString(2 * cm, y, f"• {code.get('display', '—')} ({code.get('code', '—')})")
+            y -= 0.45 * cm
+        y -= 0.3 * cm
+
+    # ---------- RECOMMANDATIONS ----------
+    _section_title("💡 Recommandations")
+    reco_map = {
+        "low_risk": [
+            "Développement dans les normes attendues pour l'âge.",
+            "Poursuivre les rendez-vous pédiatriques réguliers.",
+            "Nouveau dépistage à 24 mois si première évaluation < 24 mois.",
+        ],
+        "medium_risk": [
+            "Consulter un pédiatre pour évaluation approfondie.",
+            "Suivi de développement rapproché (tous les 3 mois).",
+            "Envisager stimulation langage / motricité.",
+        ],
+        "high_risk": [
+            "🚨 Orientation vers spécialiste (neuropédiatre / CRA).",
+            "Prise en charge précoce recommandée (avant 3 ans).",
+            "Bilan orthophonique et psychomotricité conseillé.",
+            "Support parental et information sur le TSA.",
+        ],
+    }
+    for line in reco_map.get(level, reco_map["low_risk"]):
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica", 10)
+        lines = _wrap_lines(line, 90)
+        for l in lines:
+            c.drawString(2.5 * cm, y, f"• {l}")
+            y -= 0.5 * cm
+    y -= 0.3 * cm
+
+    # ---------- DISCLAIMER ----------
+    c.setFillColor(COLOR_LIGHT_GRAY)
+    c.roundRect(2 * cm, y - 1.5 * cm, 17 * cm, 1.5 * cm, 4, stroke=0, fill=1)
+    c.setFillColor(COLOR_GRAY)
+    c.setFont("Helvetica-Oblique", 8)
+    disclaimer = (
+        "Ce dépistage ne remplace PAS un diagnostic médical. Il constitue une aide à l'orientation "
+        "et doit être interprété par un professionnel de santé. La M-CHAT-R n'est pas un test diagnostique. "
+        "Rapport chiffré, conforme RGSSI N3."
+    )
+    for i, line in enumerate(_wrap_lines(disclaimer, 100)):
+        c.drawCentredString(width / 2, y - 0.4 * cm - i * 0.35 * cm, line)
+
+    _draw_footer(c, 1, 1, "M-CHAT-R · SNOMED CT · Confidentiel · RGSSI Niveau 3")
+    c.save()
+    return buf.getvalue()
+
+
+# ========================================================================================
+# 🌸 RAPPORT POST-PARTUM (Moi Aussi)
+# ========================================================================================
+
+def generate_postpartum_pdf(
+    postpartum: Dict[str, Any],
+    checkins: list,
+    maman: Dict[str, Any],
+    enfant: Optional[Dict[str, Any]] = None,
+) -> bytes:
+    """
+    Génère le rapport PDF post-partum : suivi mental & physique de la maman.
+    Inclut : profil, courbe d'humeur, EPDS, alertes critiques, symptômes, notes déchiffrées, codes SNOMED.
+    """
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    _draw_header(
+        c,
+        "Rapport Post-Partum",
+        f"Maman : {maman.get('name', '')} · {len(checkins)} check-in(s)",
+        color=COLOR_PINK,
+    )
+    y = height - 4.5 * cm
+
+    # ---------- BANDEAU SYNTHÈSE ----------
+    critical_count = sum(1 for ch in checkins if ch.get("critical_alerts"))
+    epds_scores = [ch.get("epds_score") for ch in checkins if ch.get("epds_score") is not None]
+    avg_epds = sum(epds_scores) / len(epds_scores) if epds_scores else 0
+    mood_series = [ch.get("mood", 3) for ch in checkins if ch.get("mood")]
+    avg_mood = sum(mood_series) / len(mood_series) if mood_series else 0
+
+    banner_color = COLOR_RED if critical_count > 0 or avg_epds > 12 else (
+        COLOR_AMBER if avg_epds > 9 or avg_mood < 3 else COLOR_EMERALD
+    )
+    c.setFillColor(banner_color)
+    c.roundRect(2 * cm, y - 1.5 * cm, 17 * cm, 2 * cm, 6, stroke=0, fill=1)
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 13)
+    status = "⚠️ ATTENTION requise" if critical_count > 0 or avg_epds > 12 else (
+        "🟡 Vigilance" if avg_epds > 9 or avg_mood < 3 else "✅ Récupération normale"
+    )
+    c.drawCentredString(width / 2, y - 0.5 * cm, status)
+    c.setFont("Helvetica", 9)
+    c.drawCentredString(width / 2, y - 1 * cm, f"Humeur moyenne : {avg_mood:.1f}/5  ·  EPDS moyen : {avg_epds:.1f}/30  ·  Alertes critiques : {critical_count}")
+    y -= 2.5 * cm
+
+    # ---------- IDENTITÉ ----------
+    def _section_title(txt):
+        nonlocal y
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(2 * cm, y, txt)
+        c.setStrokeColor(COLOR_PINK)
+        c.setLineWidth(2)
+        c.line(2 * cm, y - 0.15 * cm, 6 * cm, y - 0.15 * cm)
+        y -= 0.6 * cm
+
+    def _row(label: str, value: str):
+        nonlocal y
+        c.setFillColor(COLOR_GRAY)
+        c.setFont("Helvetica", 9)
+        c.drawString(2 * cm, y, label)
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(6 * cm, y, str(value or "—"))
+        y -= 0.5 * cm
+
+    _section_title("👩 Profil")
+    _row("Maman", f"{maman.get('name', '')}")
+    _row("Téléphone", maman.get("phone", "—"))
+    _row("Date accouchement", postpartum.get("accouchement_date", "—")[:10])
+    _row("Type accouchement", postpartum.get("delivery_type", "—"))
+    _row("Allaitement", postpartum.get("allaitement_mode", "—"))
+    if enfant:
+        _row("Enfant", f"{enfant.get('prenom', '')} {enfant.get('nom', '')}")
+    y -= 0.3 * cm
+
+    # ---------- COURBE D'HUMEUR ----------
+    if mood_series and len(mood_series) >= 2:
+        _section_title("📈 Courbe d'humeur (chronologique)")
+        chart_x0, chart_y0 = 2.5 * cm, y - 4 * cm
+        chart_w, chart_h = 16 * cm, 3.5 * cm
+        # Axes
+        c.setStrokeColor(COLOR_BORDER)
+        c.setLineWidth(0.5)
+        for i in range(6):
+            yy = chart_y0 + (i / 5) * chart_h
+            c.line(chart_x0, yy, chart_x0 + chart_w, yy)
+            c.setFillColor(COLOR_GRAY)
+            c.setFont("Helvetica", 7)
+            c.drawRightString(chart_x0 - 0.15 * cm, yy - 0.05 * cm, str(i))
+        # Points
+        n = min(len(mood_series), 26)
+        points = []
+        for i, m in enumerate(mood_series[:n]):
+            px = chart_x0 + (i / max(1, n - 1)) * chart_w
+            py = chart_y0 + (m / 5) * chart_h
+            points.append((px, py))
+        # Lignes
+        c.setStrokeColor(COLOR_PINK)
+        c.setLineWidth(1.5)
+        for i in range(len(points) - 1):
+            c.line(points[i][0], points[i][1], points[i + 1][0], points[i + 1][1])
+        # Points colorés
+        for px, py in points:
+            c.setFillColor(COLOR_PINK)
+            c.circle(px, py, 0.09 * cm, fill=1, stroke=0)
+        # Label
+        c.setFillColor(COLOR_GRAY)
+        c.setFont("Helvetica-Oblique", 7)
+        c.drawString(chart_x0, chart_y0 - 0.4 * cm, "Semaines 1 → présent (échelle 1-5)")
+        y = chart_y0 - 0.9 * cm
+
+    # ---------- ALERTES CRITIQUES ----------
+    critical_alerts_all = []
+    for ch in checkins:
+        for a in ch.get("critical_alerts", []) or []:
+            critical_alerts_all.append({**a, "week_pp": ch.get("week_pp", "?")})
+    if critical_alerts_all:
+        _section_title("🚨 Alertes critiques rencontrées")
+        for a in critical_alerts_all[:8]:
+            c.setFillColor(COLOR_RED)
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(2.5 * cm, y, f"⚠️ S{a.get('week_pp')} · {a.get('type', 'alerte')}")
+            y -= 0.4 * cm
+            c.setFillColor(COLOR_DARK)
+            c.setFont("Helvetica", 9)
+            msg = a.get("message", "")
+            for l in _wrap_lines(msg, 95)[:2]:
+                c.drawString(3 * cm, y, l)
+                y -= 0.4 * cm
+            y -= 0.15 * cm
+        y -= 0.2 * cm
+
+    # ---------- DÉTAIL CHECK-INS ----------
+    if y < 8 * cm:
+        _draw_footer(c, 1, 2, "Post-Partum · SNOMED CT · Confidentiel")
+        c.showPage()
+        _draw_header(c, "Rapport Post-Partum — Détails", f"Maman : {maman.get('name', '')}", color=COLOR_PINK)
+        y = height - 4.5 * cm
+
+    _section_title("📋 Historique des check-ins")
+    c.setFillColor(COLOR_DARK)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(2 * cm, y, "Sem.")
+    c.drawString(3.5 * cm, y, "Humeur")
+    c.drawString(5.5 * cm, y, "EPDS")
+    c.drawString(7.5 * cm, y, "Symptômes")
+    c.drawString(15 * cm, y, "Alerte")
+    y -= 0.4 * cm
+    c.setStrokeColor(COLOR_BORDER)
+    c.line(2 * cm, y, width - 2 * cm, y)
+    y -= 0.35 * cm
+
+    for ch in checkins[:20]:
+        if y < 3 * cm:
+            _draw_footer(c, 2, 2, "Post-Partum · SNOMED CT · Confidentiel")
+            c.showPage()
+            _draw_header(c, "Rapport Post-Partum — Suite", "", color=COLOR_PINK)
+            y = height - 4.5 * cm
+
+        c.setFillColor(COLOR_DARK)
+        c.setFont("Helvetica", 9)
+        c.drawString(2 * cm, y, f"S{ch.get('week_pp', '?')}")
+        c.drawString(3.5 * cm, y, f"{ch.get('mood', '—')}/5")
+        c.drawString(5.5 * cm, y, str(ch.get("epds_score", "—")))
+        symptoms = (ch.get("physical_symptoms", []) or []) + (ch.get("mental_symptoms", []) or [])
+        c.drawString(7.5 * cm, y, ", ".join(symptoms[:3])[:45] or "—")
+        alerts_ch = ch.get("critical_alerts", []) or []
+        if alerts_ch:
+            c.setFillColor(COLOR_RED)
+            c.drawString(15 * cm, y, f"⚠ {len(alerts_ch)}")
+        y -= 0.4 * cm
+
+    # ---------- SNOMED CT ----------
+    all_snomed: list = []
+    for ch in checkins:
+        for code in ch.get("snomed_codes", []) or []:
+            if not any(existing.get("code") == code.get("code") for existing in all_snomed):
+                all_snomed.append(code)
+    if all_snomed:
+        y -= 0.5 * cm
+        if y < 5 * cm:
+            _draw_footer(c, 2, 2, "Post-Partum · SNOMED CT · Confidentiel")
+            c.showPage()
+            _draw_header(c, "Rapport Post-Partum — Codes SNOMED", "", color=COLOR_PINK)
+            y = height - 4.5 * cm
+        _section_title("🧬 Codification clinique SNOMED CT")
+        for code in all_snomed[:15]:
+            c.setFillColor(COLOR_DARK)
+            c.setFont("Helvetica", 9)
+            c.drawString(2 * cm, y, f"• {code.get('display', '—')} ({code.get('code', '—')})")
+            y -= 0.45 * cm
+
+    # ---------- DISCLAIMER ----------
+    if y < 3 * cm:
+        c.showPage()
+        y = height - 3 * cm
+    y = max(y, 3 * cm)
+    c.setFillColor(COLOR_LIGHT_GRAY)
+    c.roundRect(2 * cm, 2 * cm, 17 * cm, 1.5 * cm, 4, stroke=0, fill=1)
+    c.setFillColor(COLOR_GRAY)
+    c.setFont("Helvetica-Oblique", 8)
+    disclaimer = (
+        "Ce rapport est confidentiel et ne remplace pas une consultation médicale. "
+        "En cas d'idées suicidaires, contactez immédiatement le 185 (SAMU CI). "
+        "Données chiffrées AES-256, conformes RGSSI Niveau 3 / RGPD."
+    )
+    for i, line in enumerate(_wrap_lines(disclaimer, 100)):
+        c.drawCentredString(width / 2, 2.6 * cm - i * 0.35 * cm, line)
+
+    _draw_footer(c, 1, 1, "Post-Partum · SNOMED CT · Confidentiel · RGSSI Niveau 3")
+    c.save()
+    return buf.getvalue()

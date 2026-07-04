@@ -207,6 +207,14 @@ export default function AdminHub() {
 
         <Text style={styles.sectionTitle}>🔌 Interopérabilité santé publique</Text>
         <SectionCard
+          icon="shield-checkmark"
+          color="#059669"
+          title="🛡️ Rapport de conformité"
+          desc="RGSSI N3 · RGPD · MSP CI — Score temps réel · Preuves techniques · Contrôles sécurité"
+          target="Direction · Auditeurs"
+          onPress={() => router.push("/admin/compliance")}
+        />
+        <SectionCard
           icon="stats-chart"
           color="#EC4899"
           title="Export DHIS2"

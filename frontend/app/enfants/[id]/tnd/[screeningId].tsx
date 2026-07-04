@@ -118,6 +118,36 @@ export default function TndDetail() {
           </TouchableOpacity>
         )}
 
+        {/* Export PDF */}
+        <TouchableOpacity
+          style={styles.pdfBtn}
+          onPress={async () => {
+            try {
+              const { Platform, Share } = require("react-native");
+              const url = `${(process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/$/, "")}/api/tnd/screening/${screeningId}/pdf`;
+              const token = await require("../../../../lib/api").getAuthToken?.();
+              const r = await api.get(`/tnd/screening/${screeningId}/pdf`, { responseType: "blob" as any });
+              if (Platform.OS === "web") {
+                const blob = r.data instanceof Blob ? r.data : new Blob([r.data], { type: "application/pdf" });
+                const dlUrl = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = dlUrl;
+                a.download = `tnd_${doc.enfant_name?.replace(/\s+/g, "_") || "rapport"}_${screeningId?.slice(0, 8)}.pdf`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(dlUrl);
+              } else {
+                await Share.share({ url, title: "Rapport TND" });
+              }
+            } catch (e: any) {
+              Alert.alert("Erreur", "Impossible de générer le PDF. Réessayez.");
+            }
+          }}
+          testID="tnd-export-pdf"
+        >
+          <Ionicons name="document-text" size={18} color="#fff" />
+          <Text style={styles.pdfTxt}>📄 Exporter le rapport PDF</Text>
+        </TouchableOpacity>
+
         {/* Méta */}
         <View style={styles.meta}>
           <Text style={styles.metaTxt}>Version : {doc.version}</Text>
@@ -154,6 +184,8 @@ const styles = StyleSheet.create({
   actionTxt: { flex: 1, fontSize: 13, color: COLORS.textPrimary, lineHeight: 19 },
   rdvBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: RADIUS.md, ...SHADOW, marginTop: 8 },
   rdvTxt: { color: "#fff", fontWeight: "800", fontSize: 14 },
+  pdfBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: RADIUS.md, marginTop: 8, backgroundColor: "#7C3AED" },
+  pdfTxt: { color: "#fff", fontWeight: "800", fontSize: 14 },
   finalBox: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: COLORS.border },
   finalLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "800", letterSpacing: 1 },
   finalScore: { fontSize: 14, fontWeight: "800", marginTop: 4 },
