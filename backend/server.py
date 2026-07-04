@@ -802,8 +802,21 @@ async def login(payload: LoginIn):
             user["phone"] = canon
 
     # 🔐 RGSSI Niveau 3 — 2FA TOTP obligatoire pour les Pros si activé
-    # ⚠️ Phase de test : possibilité de bypass via TWO_FACTOR_ENFORCEMENT="off"
+    # ⚠️ Phase de test : bypass possible via TWO_FACTOR_ENFORCEMENT="off" pour les rôles NON-admin
     _2fa_enforced = (os.environ.get("TWO_FACTOR_ENFORCEMENT", "on").strip().lower() not in ("off", "false", "0", "disabled", "no"))
+    # 🔐 CONFORMITÉ N3 : 2FA STRICTEMENT OBLIGATOIRE pour admin & super_admin (non désactivable)
+    _admin_role = user.get("role") in ("admin", "super_admin") or user.get("is_super_admin")
+    # Pour les admins on force TOUJOURS l'exigence 2FA (aucun bypass possible)
+    _admin_2fa_required = _admin_role and not user.get("totp_enabled")
+    if _admin_2fa_required:
+        setup_grace = user.get("totp_setup_grace_used", False)
+        if setup_grace:
+            raise HTTPException(
+                status_code=403,
+                detail="🔐 2FA obligatoire pour les administrateurs. Activez Google Authenticator via /admin/security/2fa avant de vous reconnecter."
+            )
+        # Premier login sans 2FA : on marque la grâce comme utilisée, l'utilisateur DOIT activer 2FA maintenant
+        await db.users.update_one({"id": user["id"]}, {"$set": {"totp_setup_grace_used": True, "must_setup_2fa": True}})
     if user.get("totp_enabled") and _2fa_enforced:
         otp = (payload.totp_code or "").strip().replace(" ", "")
         if not otp:
@@ -13465,3 +13478,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# 🔐 CONFORMITÉ N3 — Security headers HTTP (OWASP Top 10)
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # HSTS : force HTTPS pendant 1 an (préchargé par navigateur)
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # X-Content-Type-Options : empêche le MIME sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    # X-Frame-Options : anti-clickjacking
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    # Referrer-Policy : protège l'origine des requêtes
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Permissions-Policy : désactive géoloc/mic/cam sur les endpoints API
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # CSP : politique de sécurité contenus (relax pour compat API JSON)
+    if request.url.path.startswith("/api"):
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    return response

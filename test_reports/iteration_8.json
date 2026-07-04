@@ -1,0 +1,38 @@
+{
+  "summary": "Conformité RGSSI Niveau 3 (Ministère Santé Côte d'Ivoire) validée sur backend — 26/26 tests pytest PASS (100%). Les 3 nouvelles mesures fonctionnent : (1) 6 security headers HTTP présents sur /api/snomed/meta (HSTS max-age=31536000+includeSubDomains, X-Frame-Options=SAMEORIGIN, X-Content-Type-Options=nosniff, Referrer-Policy=strict-origin-when-cross-origin, Permissions-Policy avec geolocation/microphone/camera désactivés, CSP=default-src 'none'+frame-ancestors 'none' sur /api). (2) 2FA STRICTEMENT obligatoire pour admin/super_admin — grâce accordée au 1er login (200 OK + doc DB porte totp_setup_grace_used=True et must_setup_2fa=True), 403 aux logins suivants avec message 'activez Google Authenticator', et le bypass via TWO_FACTOR_ENFORCEMENT=off ne s'applique PLUS aux admins (confirmé en environnement où l'env vaut effectivement 'off'). Les non-admins (maman, pro) passent sans blocage. (3) DELETE /api/interop/config/{system_id} opérationnel : super_admin peut supprimer (200 + deleted=true), maman renvoie 403, sans auth 401, system_id inconnu 400, config inexistante 404, GET post-delete renvoie configured=False. Non-régression : interop list/config/get/test/save, SNOMED meta/search/concept, DHIS2 indicators/preview/history/config — tous OK. Aucun credential jamais exposé en clair (has_password/has_token uniquement). Super admin remis à l'état neuf (grace/must_setup unset) par le teardown de la suite.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_rgssi_n3_security.py",
+    "/app/test_reports/pytest/pytest_rgssi_n3_iter8.xml"
+  ],
+  "action_items": [
+    "Aucune action bloquante. RAS pour la livraison RGSSI N3.",
+    "OPTIONNEL — Nettoyer une éventuelle config interop test résiduelle en base (déjà purgée côté tests via db.interop_configs.delete_many({base_url:/test.msp.ci/}) ; le teardown pytest ne le fait pas encore automatiquement).",
+    "OPTIONNEL — Bug latent noté à iter7 toujours présent : server.py L13107 `from encryption import decrypt_field` alors que le code utilise `decrypt_str` (crash NameError au 1er /dhis2/push réel). Non couvert car hors périmètre 2FA/DELETE/headers, mais à corriger avant branchement des vraies clés MSP."
+  ],
+  "critical_code_review_comments": [
+    "server.py L804-819 : la logique 2FA admin est correcte et cohérente — _admin_role capte role∈{admin,super_admin} OU is_super_admin=True. Le flag TWO_FACTOR_ENFORCEMENT n'est plus consulté que pour les non-admins (ligne 820), garantissant le non-bypass admin. Bien.",
+    "server.py L811-819 : la grâce est marquée AVANT génération du token (update_one puis create_token L850) — cela empêche le user d'utiliser le 1er login pour re-tenter éternellement. Correct.",
+    "server.py L13483-13500 : middleware security_headers appliqué APRÈS CORSMiddleware — l'ordre est bon (les headers sont ajoutés sur toutes les responses y compris préflight). CSP restreint à /api/* uniquement (bon compromis pour ne pas casser l'app Expo web).",
+    "server.py L13332-13343 : DELETE /interop/config/{system_id} respecte l'ordre validation (INTEROP_SYSTEMS ⇒ 400) puis existence (⇒ 404) puis 200 avec deleted=True. RBAC super_admin only via require_roles. Conforme.",
+    "SECURITY : le message 403 admin sans 2FA (L816) donne le chemin `/admin/security/2fa` — cohérent pour le mobile mais à vérifier que la route existe côté frontend. Non testé ici (backend-only)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_rgssi_n3_security.py (nouveau — 26 tests pytest RGSSI N3)"
+  ],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "N/A (backend-only run)"},
+  "seed_data_creation": "Aucune seed permanente. Les tests créent 2 configs interop factices (sih_national et openelis, base_url *.test.msp.ci) puis les suppriment automatiquement (delete + cleanup post-run). Le compte super_admin klenakan.eric@gmail.com est reset (unset totp_setup_grace_used/must_setup_2fa/totp_enabled/totp_secret) par le fixture teardown de session — il est utilisable normalement après les tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Suite reproductible en ~14s : `pytest backend/tests/test_rgssi_n3_security.py -v`. Elle reset elle-même le super_admin avant les tests 2FA (via motor direct connect à MONGO_URL) et le remet à l'état neuf en teardown session. Pré-requis : TWO_FACTOR_ENFORCEMENT=off dans backend/.env (le test test_two_factor_enforcement_env_is_off le vérifie explicitement pour prouver que la 2FA admin n'est PAS bypassée même dans ce contexte). Si vous relancez, tenez compte du fait que reset_admin() est appelé AVANT chaque scenario 2FA — pas besoin de manuel. Les headers sont vérifiés sur /api/snomed/meta (endpoint public sans auth).",
+  "rca_of_issue": "N/A — toutes les fonctionnalités passent."
+}

@@ -222,10 +222,26 @@ function pdfViewerHTML(rawBase64: string): string {
           await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
         }
       }).catch(function(e) {
-        document.body.innerHTML = '<div class="err">❌ Erreur de lecture du PDF<br><br>' + (e && e.message ? e.message : e) + '<br><br>Utilisez le bouton « Partager » en haut à droite.</div>';
+        var msg = (e && e.message) ? String(e.message) : String(e || 'inconnue');
+        var esc = document.createElement('div');
+        esc.className = 'err';
+        esc.appendChild(document.createTextNode('❌ Erreur de lecture du PDF'));
+        esc.appendChild(document.createElement('br'));
+        esc.appendChild(document.createElement('br'));
+        esc.appendChild(document.createTextNode(msg));
+        esc.appendChild(document.createElement('br'));
+        esc.appendChild(document.createElement('br'));
+        esc.appendChild(document.createTextNode('Utilisez le bouton « Partager » en haut à droite.'));
+        document.body.innerHTML = '';
+        document.body.appendChild(esc);
       });
     } catch (e) {
-      document.body.innerHTML = '<div class="err">❌ Erreur: ' + (e && e.message ? e.message : e) + '</div>';
+      var msg = (e && e.message) ? String(e.message) : String(e || 'inconnue');
+      var esc = document.createElement('div');
+      esc.className = 'err';
+      esc.appendChild(document.createTextNode('❌ Erreur: ' + msg));
+      document.body.innerHTML = '';
+      document.body.appendChild(esc);
     }
   })();
 </script>
