@@ -1,0 +1,40 @@
+{
+  "summary": "Backend testing du nouveau service d'abonnements MongoDB (routers/subscriptions.py) — 20/20 tests pytest passent. Toutes les fonctions internes (activate_subscription, get_active_subscription, check_subscription_status, cancel_subscription, renew_subscription, list_user_subscriptions) et tous les endpoints REST (/subscription/status, /subscription/history, /subscription/cancel, /admin/subscriptions, /admin/subscriptions/stats) fonctionnent correctement. Le webhook /pay/webhook répond 200, activate_subscription est bien branché en interne. Fallback source=user_doc validé pour maman.test (subscription doc en 'cancelled' mais users.premium=True). Rétention correcte : source=subscription_doc pour un nouveau doc actif, source=user_doc pour legacy users. Durée 30j pour monthly/premium_mensuel et 365j pour annual/premium_annuel/yearly/annuel validée. Renew expire l'ancien + crée un nouveau (1 seul actif). Sync users.premium + current_plan + premium_until OK. 403 non-admin, 401/403 sans auth validés. Non-regression /compliance/report OK.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "activate_subscription (routers/subscriptions.py:83-86)", "issue": "db.users.update_one() n'utilise pas upsert=True. Si un user_id n'existe pas dans users, la sync premium+current_plan+premium_until est perdue silencieusement (le doc subscription est toutefois créé). En prod, le webhook passe un user_id existant, donc pas de risque immédiat — mais tout appel programmatique à activate_subscription pour un user supprimé/hors DB ne resterait pas cohérent. Note: pas bloquant."},
+      {"endpoint": "GET /api/subscription/status (fallback user_doc)", "issue": "Quand source=user_doc, start_date=null. C'est cohérent avec le modèle legacy (users.premium_until n'a pas de start_date) mais peut poser souci si le frontend affiche 'Actif depuis…'. Idée : renvoyer une valeur estimée (end_date - 30j) ou documenter."},
+      {"endpoint": "POST /api/subscription/cancel", "issue": "Idempotent (renvoie ok=true avec cancelled_count=0 même sans doc actif). Bon comportement UX, mais pas d'erreur explicite si l'utilisateur clique par mégarde. Aucun impact bug."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_subscriptions_iter10.py",
+    "/app/test_reports/pytest/pytest_subscriptions_iter10.xml"
+  ],
+  "action_items": [
+    "Aucune action bloquante — le service est prêt pour prod. Optionnel : ajouter upsert=True sur db.users.update_one dans activate_subscription pour cohérence défensive.",
+    "Optionnel : exposer start_date estimée (ou 'legacy' explicite) dans la réponse status quand source=user_doc pour l'UI."
+  ],
+  "critical_code_review_comments": [
+    "routers/subscriptions.py : bon découpage modulaire, tous les _id MongoDB sont exclus (projection {\"_id\":0} + pop), await + async partout, gestion d'exceptions loguée.",
+    "Le webhook (server.py:7815-7828) enveloppe l'appel activate_subscription dans un try/except → une trace échouée n'empêche pas la mise à jour users (bonne pratique).",
+    "L'ordre de duration_days_check (server.py:7813 utilise days=30*months et l'appel activate passe duration_days=30*months en override) : cohérent avec _duration_days uniquement quand months∈{1,12}. Pour un abonnement 6 mois, l'override est explicite → OK.",
+    "audit_log inséré uniquement si payload.reason fourni — pas d'audit systématique. Ok pour la contrainte fonctionnelle donnée."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_subscriptions_iter10.py (nouveau)"
+  ],
+  "success_rate": {"backend": "100% (20/20 tests)", "frontend": "N/A"},
+  "seed_data_creation": "Test crée temporairement un user TEST_sub_user_<hex> + 2 docs subscription (mensuel puis annuel via renew) → nettoyé en fin de test (delete_many). Aucune donnée persistante ajoutée.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "État post-tests : maman.test a toujours son doc subscription en 'cancelled', users.premium=True + premium_until futur → GET /api/subscription/status renvoie has_active_subscription=true source=user_doc plan=premium_mensuel days_remaining≈29. Le fixture admin_ctx bypass 2FA via unset de totp_* sur le user super admin (méthode utilisée aussi par test_pdf_reports_iter9.py & test_rgssi_n3_security.py). Log backend confirmé : '✅ Routers modulaires chargés : pdf_reports, subscriptions' à chaque redémarrage.",
+  "rca_of_issue": "N/A — aucun bug détecté. Setup initial : (a) pytest-asyncio non installé donc tests async convertis en wrappers asyncio.run(); (b) Super Admin bloqué par 2FA obligatoire → reset des champs totp_* dans MongoDB avant login (méthode standard des autres suites). Les 20 tests couvrent activate/renew (durée 30j/365j, expiration ancien actif, unicité active), check_status (subscription_doc & user_doc & none), cancel (audit_log), history (tri desc), admin list & stats + filtres, 401/403 gating, webhook accessibility."
+}

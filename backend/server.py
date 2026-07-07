@@ -7812,6 +7812,20 @@ async def pay_webhook(request: Request):
             if p["kind"] == "subscription":
                 end = now + timedelta(days=30 * p["months"])
                 await db.users.update_one({"id": p["user_id"]}, {"$set": {"premium": True, "premium_until": end.isoformat()}})
+                # 🧾 Trace immuable dans la collection subscriptions (service dédié)
+                try:
+                    from routers.subscriptions import activate_subscription as _activate_sub
+                    plan_label = "premium_annuel" if p["months"] >= 12 else "premium_mensuel"
+                    await _activate_sub(
+                        db=db,
+                        user_id=p["user_id"],
+                        plan=plan_label,
+                        invoice_token=token,
+                        payment_method="paydunya",
+                        duration_days=30 * p["months"],
+                    )
+                except Exception as _sub_e:
+                    logger.warning(f"[subscription] Trace échouée user={p['user_id']}: {_sub_e}")
                 await push_notif(p["user_id"], "Premium activé 🎉", f"Abonnement actif jusqu'au {end.strftime('%d/%m/%Y')}", "info")
             elif p["kind"] == "consultation":
                 await db.rdv.update_one({"id": p["rdv_id"]}, {"$set": {"paye": True, "payment_token": token, "status": "confirme", "paid_at": now.isoformat()}})
@@ -13605,10 +13619,12 @@ app.include_router(api)
 # 🧩 Enregistrement des routers modulaires (refactor progressif de server.py)
 try:
     from routers.pdf_reports import register_pdf_routes
+    from routers.subscriptions import register_subscription_routes, activate_subscription
     from encryption import decrypt_str as _decrypt_str_for_pdf
     register_pdf_routes(app, api, db, get_current_user, _decrypt_str_for_pdf)
+    register_subscription_routes(app, api, db, get_current_user, require_roles)
     app.include_router(api)  # re-enregistre pour prendre en compte les routes ajoutées
-    logger.info("✅ Routers modulaires chargés : pdf_reports")
+    logger.info("✅ Routers modulaires chargés : pdf_reports, subscriptions")
 except Exception as _e:
     logger.warning(f"⚠️ Échec chargement routers modulaires : {_e}")
 
