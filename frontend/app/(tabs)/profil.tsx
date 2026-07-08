@@ -176,6 +176,7 @@ export default function Profil() {
               }}
             />
             <MenuRow icon="lock-closed-outline" label="Sécurité & Mot de passe" onPress={() => router.push("/changer-mot-de-passe")} />
+            <MenuRow icon="shield-checkmark-outline" label="🔐 Authentification 2FA" value="Sécurité renforcée" onPress={() => router.push("/security/2fa-setup" as any)} />
             {user?.role === "maman" && (
               <>
                 <MenuRow icon="document-text-outline" label="📝 Mes notes médicales" onPress={() => router.push("/mes-notes" as any)} />
