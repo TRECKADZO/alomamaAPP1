@@ -205,6 +205,32 @@ export default function AdminHub() {
           onPress={() => router.push("/admin/annuaire")}
         />
 
+        <Text style={styles.sectionTitle}>🏥 Établissements MSP CI · Phase 4-5</Text>
+        <SectionCard
+          icon="stats-chart"
+          color="#7C3AED"
+          title="📊 Analytics UNICEF/Ministère"
+          desc="Couverture santé maternelle · Déserts médicaux · Orientations · Export CSV pour partenaires B2B"
+          target="UNICEF · Ministère · ONG"
+          onPress={() => router.push("/admin/analytics_etablissements" as any)}
+        />
+        <SectionCard
+          icon="ribbon"
+          color="#EC4899"
+          title="👨‍⚕️ Demandes pros (claims)"
+          desc="Valider les professionnels qui revendiquent un établissement — Approuver / Rejeter"
+          target="Administration réseau"
+          onPress={() => router.push("/admin/pro_claims" as any)}
+        />
+        <SectionCard
+          icon="map"
+          color="#0891B2"
+          title="🗺️ Annuaire officiel (1507 établissements)"
+          desc="Liste + carte des cliniques, maternités, pédiatries autorisés MSP CI"
+          target="Public + admin"
+          onPress={() => router.push("/etablissements" as any)}
+        />
+
         <Text style={styles.sectionTitle}>🔌 Interopérabilité santé publique</Text>
         <SectionCard
           icon="shield-checkmark"
