@@ -162,11 +162,32 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
         await db.etablissements_officiels.insert_many(docs)
         return {"ok": True, "inserted": len(docs), "replaced": payload.replace}
 
+    async def _log_orientation(user, context, level_or_type, commune, items):
+        """Enregistre l'orientation dans orient_logs (pour analytics UNICEF/Ministère)."""
+        try:
+            await db.orient_logs.insert_one({
+                "user_id": user.get("id"),
+                "user_role": user.get("role"),
+                "context": context,  # 'tnd' | 'postpartum'
+                "level": level_or_type,
+                "commune": commune or "",
+                "user_ville": (user.get("ville") or ""),
+                "user_region": (user.get("region") or ""),
+                "items_shown": len(items or []),
+                "specialites_targetees": list({sp for e in (items or []) for sp in (e.get("specialites_metier") or [])}),
+                "regions_touchees": list({e.get("region") for e in (items or []) if e.get("region")}),
+                "communes_touchees": list({e.get("commune") for e in (items or []) if e.get("commune")}),
+                "created_at": datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            pass  # ne bloque jamais la réponse principale
+
     @api.get("/etablissements/orient/tnd/{level}")
     async def orient_tnd(level: str, commune: Optional[str] = None, limit: int = 5, user=Depends(get_current_user)):
         """
         Orientation automatique après dépistage TND.
         Suggère les établissements pédiatriques les plus proches.
+        Enregistre l'orientation dans orient_logs (pour analytics).
         """
         await _seed_if_empty()
         q: Dict[str, Any] = {"specialites_metier": "Pédiatrie"}
@@ -181,6 +202,7 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
             items = await db.etablissements_officiels.find(
                 {"specialites_metier": "Pédiatrie"}, {"_id": 0}
             ).limit(limit).to_list(limit)
+        await _log_orientation(user, "tnd", level, commune, items)
         return {"count": len(items), "level": level, "items": items}
 
     @api.get("/etablissements/orient/postpartum/{alert_type}")
@@ -189,6 +211,7 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
         Orientation automatique après alerte post-partum.
         - alert_type=depression → Psychiatrie + Maternité
         - alert_type=medical → Maternité + Clinique
+        Enregistre l'orientation dans orient_logs (pour analytics).
         """
         await _seed_if_empty()
         if alert_type == "depression":
@@ -201,6 +224,7 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
         if not items and commune:
             del q["commune"]
             items = await db.etablissements_officiels.find(q, {"_id": 0}).limit(limit).to_list(limit)
+        await _log_orientation(user, "postpartum", alert_type, commune, items)
         return {"count": len(items), "alert_type": alert_type, "items": items}
 
     @api.get("/admin/etablissements/stats")

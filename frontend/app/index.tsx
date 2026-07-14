@@ -61,6 +61,8 @@ export default function Landing() {
           <View style={styles.features}>
             <Feature icon="heart" text="Suivi grossesse semaine par semaine" />
             <Feature icon="medkit" text="Carnet de santé de vos enfants" />
+            <Feature icon="body" text="Bilan de développement — DMP" />
+            <Feature icon="flower" text="Post-Partum : suivi 52 semaines" />
             <Feature icon="chatbubbles" text="Assistant IA & communauté de mamans" />
             <Feature icon="shield-checkmark" text="CMU & ressources OMS / UNICEF" />
           </View>

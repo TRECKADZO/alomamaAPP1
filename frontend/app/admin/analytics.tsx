@@ -34,6 +34,19 @@ export default function AdminAnalytics() {
       </LinearGradient>
 
       <ScrollView contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 60 }}>
+        {/* CTA Analytics UNICEF/Ministère */}
+        <TouchableOpacity
+          style={{ backgroundColor: "#7C3AED", padding: 14, borderRadius: 12, marginBottom: 14, flexDirection: "row", alignItems: "center", gap: 10 }}
+          onPress={() => router.push("/admin/analytics_etablissements" as any)}
+        >
+          <Ionicons name="business" size={22} color="#fff" />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>📊 Analytics Établissements</Text>
+            <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 11 }}>KPIs UNICEF · Ministère · Export CSV</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#fff" />
+        </TouchableOpacity>
+
         <Text style={styles.sectionTitle}>Activité des 7 derniers jours</Text>
         <View style={styles.metricsRow}>
           <MetricCard icon="person-add" label="Nouveaux users" value={data.activity_7d.new_users} color="#10B981" />
