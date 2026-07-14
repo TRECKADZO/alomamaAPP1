@@ -13620,11 +13620,13 @@ app.include_router(api)
 try:
     from routers.pdf_reports import register_pdf_routes
     from routers.subscriptions import register_subscription_routes, activate_subscription
+    from routers.etablissements import register_etablissements_routes
     from encryption import decrypt_str as _decrypt_str_for_pdf
     register_pdf_routes(app, api, db, get_current_user, _decrypt_str_for_pdf)
     register_subscription_routes(app, api, db, get_current_user, require_roles)
+    register_etablissements_routes(app, api, db, get_current_user, require_roles)
     app.include_router(api)  # re-enregistre pour prendre en compte les routes ajoutées
-    logger.info("✅ Routers modulaires chargés : pdf_reports, subscriptions")
+    logger.info("✅ Routers modulaires chargés : pdf_reports, subscriptions, etablissements")
 except Exception as _e:
     logger.warning(f"⚠️ Échec chargement routers modulaires : {_e}")
 
