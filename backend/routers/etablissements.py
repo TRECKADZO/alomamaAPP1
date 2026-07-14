@@ -272,5 +272,141 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
     return {"registered": [
         "/etablissements", "/etablissements/meta", "/etablissements/{id}",
         "/etablissements/orient/tnd/{level}", "/etablissements/orient/postpartum/{type}",
+        "/etablissements/{id}/geocode",
         "/admin/etablissements/import", "/admin/etablissements/stats",
+        "/etablissements/{id}/claim", "/etablissements/claims",
     ]}
+
+
+def register_pro_claim_routes(app, api, db, get_current_user, require_roles_fn):
+    """
+    Phase 4 — Espace Pro self-service : réclamation d'un établissement + vérification croisée.
+    Un professionnel de santé peut demander à devenir "gestionnaire" d'un établissement listé.
+    L'admin valide/rejette après vérification croisée (identifiants MSP, diplôme, etc.).
+    """
+    from pydantic import BaseModel
+    from typing import Optional
+    from uuid import uuid4
+
+    class ClaimIn(BaseModel):
+        etablissement_id: str
+        nom_complet: str
+        specialite: str
+        numero_ordre: str  # Numéro Ordre National (Médecins, Sages-femmes, etc.)
+        piece_identite: Optional[str] = None  # base64 (facultatif)
+        justificatif_exercice: Optional[str] = None  # base64
+        message: Optional[str] = ""
+
+    @api.post("/etablissements/{id}/claim")
+    async def claim_establishment(id: str, payload: ClaimIn, user=Depends(get_current_user)):
+        """Un pro demande à devenir gestionnaire d'un établissement autorisé."""
+        # Vérifier que l'établissement existe
+        e = await db.etablissements_officiels.find_one({"id": id}, {"_id": 0})
+        if not e:
+            raise HTTPException(404, "Établissement introuvable")
+        # Vérifier qu'aucune réclamation n'existe déjà de ce user pour cet établissement
+        existing = await db.pro_claims.find_one({"etablissement_id": id, "user_id": user["id"], "status": {"$ne": "rejected"}})
+        if existing:
+            raise HTTPException(400, "Une réclamation existe déjà pour cet établissement")
+        # Vérification croisée automatique : nom de l'établissement contient-il le nom du pro ?
+        # (Certains centres portent le nom du fondateur — auto-approbation possible)
+        cross_check_score = 0
+        if payload.nom_complet.upper() in e.get("nom", "").upper():
+            cross_check_score += 40
+        if e.get("responsable") and payload.nom_complet.upper() in e["responsable"].upper():
+            cross_check_score += 50
+        # Numéro d'ordre respectant le format CI (ex. CI-MED-XXXX, CI-SF-XXXX)
+        import re as _re
+        if _re.match(r"^CI-(MED|SF|IDE|PHA|DENT)-\d{4,6}$", payload.numero_ordre.upper()):
+            cross_check_score += 30
+
+        claim = {
+            "id": str(uuid4()),
+            "etablissement_id": id,
+            "etablissement_nom": e["nom"],
+            "user_id": user["id"],
+            "user_email": user.get("email"),
+            "nom_complet": payload.nom_complet,
+            "specialite": payload.specialite,
+            "numero_ordre": payload.numero_ordre,
+            "piece_identite": payload.piece_identite,
+            "justificatif_exercice": payload.justificatif_exercice,
+            "message": (payload.message or "")[:1000],
+            "cross_check_score": cross_check_score,
+            "status": "auto_approved" if cross_check_score >= 70 else "pending",
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        await db.pro_claims.insert_one(claim)
+
+        # Si auto-approuvé, mettre à jour le doc établissement
+        if claim["status"] == "auto_approved":
+            await db.etablissements_officiels.update_one(
+                {"id": id},
+                {"$addToSet": {"gestionnaires": user["id"]}, "$set": {"has_pro_manager": True}},
+            )
+
+        claim.pop("_id", None)
+        claim.pop("piece_identite", None)
+        claim.pop("justificatif_exercice", None)
+        return {
+            "ok": True,
+            "status": claim["status"],
+            "cross_check_score": cross_check_score,
+            "message": (
+                "✅ Auto-approuvé grâce à la vérification croisée (score >= 70)"
+                if claim["status"] == "auto_approved"
+                else "🕒 En attente de validation admin. Réponse sous 48-72h."
+            ),
+            "claim_id": claim["id"],
+        }
+
+    @api.get("/etablissements/claims/me")
+    async def my_claims(user=Depends(get_current_user)):
+        """Mes réclamations d'établissements."""
+        items = await db.pro_claims.find(
+            {"user_id": user["id"]},
+            {"_id": 0, "piece_identite": 0, "justificatif_exercice": 0},
+        ).sort("created_at", -1).to_list(20)
+        return {"count": len(items), "claims": items}
+
+    @api.get("/admin/pro_claims")
+    async def admin_list_claims(
+        status: Optional[str] = None,
+        user=Depends(require_roles_fn("admin", "super_admin")),
+    ):
+        """Liste des réclamations pro (admin)."""
+        q = {}
+        if status: q["status"] = status
+        items = await db.pro_claims.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+        return {"count": len(items), "claims": items}
+
+    class ClaimReviewIn(BaseModel):
+        decision: str  # "approve" | "reject"
+        admin_note: Optional[str] = ""
+
+    @api.post("/admin/pro_claims/{claim_id}/review")
+    async def admin_review_claim(
+        claim_id: str,
+        payload: ClaimReviewIn,
+        user=Depends(require_roles_fn("admin", "super_admin")),
+    ):
+        """Admin valide ou rejette une réclamation."""
+        claim = await db.pro_claims.find_one({"id": claim_id})
+        if not claim:
+            raise HTTPException(404, "Réclamation introuvable")
+        new_status = "approved" if payload.decision == "approve" else "rejected"
+        await db.pro_claims.update_one(
+            {"id": claim_id},
+            {"$set": {
+                "status": new_status,
+                "admin_note": (payload.admin_note or "")[:500],
+                "reviewed_by": user["id"],
+                "reviewed_at": datetime.utcnow().isoformat(),
+            }},
+        )
+        if new_status == "approved":
+            await db.etablissements_officiels.update_one(
+                {"id": claim["etablissement_id"]},
+                {"$addToSet": {"gestionnaires": claim["user_id"]}, "$set": {"has_pro_manager": True}},
+            )
+        return {"ok": True, "status": new_status}

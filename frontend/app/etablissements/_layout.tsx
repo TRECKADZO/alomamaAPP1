@@ -6,6 +6,7 @@ export default function EtablissementsLayout() {
       <Stack.Screen name="index" options={{ title: "🏥 Établissements agréés" }} />
       <Stack.Screen name="[id]" options={{ title: "Détail établissement" }} />
       <Stack.Screen name="carte" options={{ title: "🗺️ Carte interactive" }} />
+      <Stack.Screen name="claim" options={{ title: "👨‍⚕️ Réclamer" }} />
     </Stack>
   );
 }

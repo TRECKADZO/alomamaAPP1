@@ -16,7 +16,7 @@ import * as Location from "expo-location";
 import { api } from "../../lib/api";
 
 // Import conditionnel : react-native-maps ne fonctionne pas sur web
-const MapView: any = Platform.OS !== "web" ? require("react-native-maps").default : null;
+const MapView: any = Platform.OS !== "web" ? require("react-native-map-clustering").default : null;
 const Marker: any = Platform.OS !== "web" ? require("react-native-maps").Marker : null;
 const PROVIDER_DEFAULT: any = Platform.OS !== "web" ? require("react-native-maps").PROVIDER_DEFAULT : null;
 
@@ -126,6 +126,9 @@ export default function EtabMapScreen() {
         onRegionChangeComplete={setRegion}
         showsUserLocation={!!userLoc}
         showsMyLocationButton
+        clusterColor="#EC4899"
+        clusterTextColor="#fff"
+        radius={40}
       >
         {filtered.map((e) => (
           <Marker

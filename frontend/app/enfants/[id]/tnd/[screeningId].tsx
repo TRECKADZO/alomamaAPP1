@@ -8,6 +8,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { api, formatError } from "../../../../lib/api";
 import { cachedGet } from "../../../../lib/offline";
+import NearbyEstablishments from "../../../../components/NearbyEstablishments";
+
 import { COLORS, RADIUS, SHADOW } from "../../../../constants/theme";
 
 const LEVEL_COLOR: Record<string, string> = { faible: "#10B981", modere: "#F59E0B", eleve: "#DC2626" };
@@ -147,6 +149,16 @@ export default function TndDetail() {
           <Ionicons name="document-text" size={18} color="#fff" />
           <Text style={styles.pdfTxt}>📄 Exporter le rapport PDF</Text>
         </TouchableOpacity>
+
+        {/* Établissements proches (Phase 3) */}
+        {(doc.level === "modere" || doc.level === "eleve" || doc.level === "medium_risk" || doc.level === "high_risk") && (
+          <NearbyEstablishments
+            context="tnd"
+            level={doc.level === "eleve" || doc.level === "high_risk" ? "high_risk" : "medium_risk"}
+            commune={doc.enfant_commune || undefined}
+            limit={3}
+          />
+        )}
 
         {/* Méta */}
         <View style={styles.meta}>

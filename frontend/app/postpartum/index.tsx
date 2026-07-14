@@ -8,6 +8,8 @@ import { formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
 export default function PostpartumHome() {
+import NearbyEstablishments from "../../components/NearbyEstablishments";
+
   const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -198,6 +200,15 @@ export default function PostpartumHome() {
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* Établissements proches (Phase 3) — Si alerte critique ou EPDS > 12 */}
+        {(last?.critical_alerts?.length > 0 || (last?.epds_score ?? 0) > 12) && (
+          <NearbyEstablishments
+            context="postpartum"
+            alertType={last?.epds_score > 12 ? "depression" : "medical"}
+            limit={3}
+          />
+        )}
 
         {/* Export PDF */}
         <TouchableOpacity
