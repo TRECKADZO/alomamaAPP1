@@ -1,0 +1,55 @@
+{
+  "summary": "Iter 13 — Validation migration XLSX v2 (1507 → 1676 établissements MSP). 16/17 tests PASS (94%). Toutes les métriques cibles atteintes : meta.total=1676, 32 régions MSP (Abidjan 1, Abidjan 2, Sud-Comoé, Gbêkê, Poro, Bounkani, Cavally, Folon vérifiées), 133 communes, 12 catégories. Yopougon Maternité=11 items (>=10), tous avec num_ordre int >=1. Abidjan 2 : total=671 en tête de by_region. Analytics admin : coverage.total_etablissements=1676, geocoded=1671/1676 (99.7%), maternite>=80, by_region[0]=Abidjan 2 avec total=671, pro_claims.total=3. TND high_risk Cocody retourne <=5 items pédiatriques + logué dans orient_logs (vérifiable via analytics.orientations.tnd>=1). Unicité (region, num_ordre) confirmée sur les 1676 docs, aucun doublon. 1 SEUL BUG BLOQUANT identifié : reliaison des claims pro incomplète — 1/3 claims pointe encore vers un ancien ID `esp_0100` qui n'existe plus (voir action_items). Anomalie mineure : les slugs contiennent des apostrophes pour la région N'Zi (ids `esp_n'zi_XXXX`).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "reimport_v2.py / migration claims",
+        "issue": "1 claim sur 3 (id=ae848007-f1db-47bf-b9bb-f73f805fe9a0, user=pro.test@alomaman.dev) pointe vers l'ancien etablissement_id='esp_0100' qui n'existe plus. L'établissement correspondant existe bien dans les nouvelles données sous id='esp_goh_0001' (CENTRE DE SANTE RURAL PRIVE CONFESSIONNEL NOTRE DAME DU CALVAIRE, région Gôh, num_ordre=1). La reliaison auto n'a donc pas rattrapé ce claim historique.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "IDs slugification (région N'Zi)",
+        "issue": "Les IDs `esp_n'zi_XXXX` contiennent une apostrophe issue de la région N'Zi. Cela ne casse pas les endpoints (URL-encoded), mais l'exemple donné dans le task précisait `esp_{region_slug}_{num_ordre:04d}` avec slug=safe. Envisager slug alphanumérique/hyphens uniquement (ex: `esp_nzi_XXXX` ou `esp_n-zi_XXXX`)."
+      },
+      {
+        "endpoint": "GET /api/admin/analytics/etablissements",
+        "issue": "period=1d n'est toujours pas accepté par le router (routers/analytics.py:227 whitelist=[1d,7d,30d,90d,all] — corrigée depuis iter12, ok). Note: iter12 signalait le manque, il a bien été ajouté."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_etablissements_v2_iter13.py",
+    "/app/test_reports/pytest/iter13_results.xml"
+  ],
+  "action_items": [
+    "URGENT : Ré-exécuter le fix de reliaison des claims dans reimport_v2.py — pour chaque claim ayant `etablissement_id` au format legacy `esp_XXXX` (sans région dans le slug), matcher par `etablissement_nom` dans etablissements_officiels et mettre à jour `etablissement_id`. Actuellement 1 claim orphelin (esp_0100 → devrait être esp_goh_0001). Requête MongoDB de correction : `db.pro_claims.updateOne({id:'ae848007-f1db-47bf-b9bb-f73f805fe9a0'}, {$set:{etablissement_id:'esp_goh_0001'}})`.",
+    "(Optionnel/cosmétique) Nettoyer le slug des régions contenant des caractères non-alphanumériques (N'Zi → nzi) dans parse_edepps_xlsx.py pour respecter strictement le format annoncé `esp_{region_slug}_{num_ordre:04d}`.",
+    "(Optionnel) Ajouter un index MongoDB unique sur (region, num_ordre) dans reimport_v2.py pour verrouiller l'invariant en base : `db.etablissements_officiels.create_index([('region',1),('num_ordre',1)], unique=True)`."
+  ],
+  "critical_code_review_comments": [
+    "routers/etablissements.py:16-31 : _load_dataset() garde encore la fallback vers `etablissements_ci.json` (ancienne source PDF). Depuis la migration v2, seul l'XLSX est source de vérité — mais MongoDB est le vrai backend donc ce cache local n'impacte que _seed_if_empty (idempotent car count>0). Bas risque, mais retirer les anciens JSON à long terme.",
+    "routers/etablissements.py:44 : num_ordre n'est PAS validé côté insert (import_batch) — un import futur pourrait insérer sans ce champ. Ajouter une validation Pydantic requise dans ImportBatchIn si num_ordre devient un contrat d'API.",
+    "routers/analytics.py:56 : `{'$ne': ['$lat', None]}` compte les docs où lat existe ET != null. Après migration v2, tous les docs ont `lat` (99.7% via centroïde), donc cohérent. OK."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_etablissements_v2_iter13.py (nouveau — 17 tests)",
+    "/app/backend/tests/conftest.py (auto-marker pytest.mark.asyncio pour test_mongo_*)"
+  ],
+  "success_rate": {
+    "backend": "94% (16/17) — le seul FAIL est un bug réel de migration claims (voir action_items)",
+    "frontend": "N/A (focus backend uniquement)"
+  },
+  "seed_data_creation": "Reset MongoDB à chaque test admin : $unset totp_setup_grace_used + must_setup_2fa sur klenakan.eric@gmail.com. Le test TND crée 1 nouveau document orient_logs pour maman.test@alomaman.dev à Cocody (cumulé avec ceux d'iter11/12).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Toutes les métriques cibles du task iter13 sont conformes : total=1676, 32 régions, 133 communes, Abidjan 2=671, geocoded=1671/1676 (99.7%), maternite>=80, pro_claims.total=3, no dupe (region,num_ordre). Point d'attention majeur : script de reliaison des claims (reimport_v2.py) doit être re-exécuté ou complété — 1/3 claims est orphelin (esp_0100 → à mapper sur esp_goh_0001 par matching nom). Une fois corrigé, relancer `pytest backend/tests/test_etablissements_v2_iter13.py::test_pro_claims_linked_to_existing_etabs` pour valider. Admin password valide = 474Treckadzo$1986 (le test tente aussi Admin1234!).",
+  "rca_of_issue": "RCA orphan claim : le claim historique (créé en iter11 avant migration v2) référence `esp_0100`, un ID au format legacy `esp_{seq}` (4 chiffres seq global). Après la re-import v2, les IDs ont été refondus au format `esp_{region_slug}_{num_ordre:04d}`. La fonction de reliaison de reimport_v2.py était censée matcher par nom d'établissement puis riécrire `etablissement_id` sur les 3 claims existants ; elle a fonctionné pour 2/3 (les claims iter11 vers esp_abidjan_1_0001 et esp_abidjan_1_0002 sont bien liés) mais a manqué le claim vers `CENTRE DE SANTE RURAL PRIVE CONFESSIONNEL NOTRE DAME DU CALVAIRE` (existe sous esp_goh_0001, région Gôh). Repro : `db.pro_claims.find({}, {etablissement_id:1, etablissement_nom:1})` — le claim ae848007-... porte etablissement_id='esp_0100'. Mitigation immédiate : `db.pro_claims.updateOne({id:'ae848007-f1db-47bf-b9bb-f73f805fe9a0'}, {$set:{etablissement_id:'esp_goh_0001'}})`. Mitigation systématique : ajouter dans reimport_v2.py une passe finale qui pour chaque claim avec etablissement_id.match(/^esp_\\d+$/) fait un lookup par `nom` insensitive et met à jour."
+}
