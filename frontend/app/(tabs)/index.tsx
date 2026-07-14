@@ -220,6 +220,7 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
     activites: { icon: "game-controller", label: "Activités", route: "/activites", color: "#10B981", key: "activites" },
     contraception: { icon: "shield-checkmark", label: "Contraception", route: "/contraception", color: "#F59E0B", key: "contraception" },
     medecins: { icon: "medical", label: "Médecins", route: "/search", color: "#6366F1", key: "medecins" },
+    etablissements: { icon: "business", label: "🏥 Établissements MSP", route: "/etablissements", color: "#0891B2", key: "etablissements" },
     domicile: { icon: "home", label: "🏠 À domicile", route: "/home-request?type=domicile", color: "#F59E0B", key: "domicile" },
     teleconsult: { icon: "videocam", label: "📹 Téléconsult", route: "/search?mode=teleconsultation", color: "#A855F7", key: "teleconsult" },
     urgence_dom: { icon: "medkit", label: "🆘 Urgence sans-RDV", route: "/home-request/new?type=urgence", color: "#DC2626", key: "urgence_dom" },
@@ -238,10 +239,10 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
     else favoritesKeys = ["urgence_dom", "rdv", "plan_naissance", "naissance", "postpartum", "assistant"];
   } else if (enfants.length > 0) {
     // Maman avec enfants — Moi Aussi en évidence (post-partum jusqu'à 12 mois)
-    favoritesKeys = ["urgence_dom", "postpartum", "enfants", "dmp", "rdv", "assistant"];
+    favoritesKeys = ["urgence_dom", "postpartum", "enfants", "dmp", "etablissements", "assistant"];
   } else {
     // Onboarding — ni grossesse ni enfants — Moi Aussi accessible en mode découverte
-    favoritesKeys = ["urgence_dom", "assistant", "cycle", "postpartum", "medecins", "teleconsult"];
+    favoritesKeys = ["urgence_dom", "assistant", "cycle", "postpartum", "etablissements", "teleconsult"];
   }
   const favorites = favoritesKeys.map((k) => ALL_TOOLS[k]).filter(Boolean);
 

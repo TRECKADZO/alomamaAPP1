@@ -221,6 +221,54 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
             },
         }
 
+    @api.post("/etablissements/{id}/geocode")
+    async def geocode_etablissement(id: str, user=Depends(get_current_user)):
+        """
+        Géolocalise un établissement via Nominatim (OpenStreetMap gratuit).
+        Utilise adresse + commune + Côte d'Ivoire comme requête.
+        Résultat mis en cache dans le doc.
+        """
+        e = await db.etablissements_officiels.find_one({"id": id}, {"_id": 0})
+        if not e:
+            raise HTTPException(404, "Établissement introuvable")
+        if e.get("lat") and e.get("lon"):
+            return e  # déjà géocodé
+        import httpx as _httpx
+        from urllib.parse import quote
+        parts = [e.get("adresse"), e.get("commune"), e.get("region"), "Côte d'Ivoire"]
+        query = ", ".join([p for p in parts if p])
+        base = "https://nominatim.openstreetmap.org/search"
+        headers = {"User-Agent": "AloMaman/1.0 (sante maternelle CI)", "Accept": "application/json"}
+        try:
+            async with _httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+                # Encoder manuellement pour supporter les accents
+                url = f"{base}?q={quote(query)}&format=json&limit=1&countrycodes=ci"
+                r = await client.get(url)
+                data = r.json() if r.status_code == 200 else []
+                if not data:
+                    q2 = ", ".join([p for p in [e.get("commune"), e.get("region"), "Côte d'Ivoire"] if p])
+                    url2 = f"{base}?q={quote(q2)}&format=json&limit=1&countrycodes=ci"
+                    r2 = await client.get(url2)
+                    data = r2.json() if r2.status_code == 200 else []
+                if not data:
+                    raise HTTPException(404, f"Coordonnées introuvables pour: {query[:80]}")
+                lat = float(data[0]["lat"])
+                lon = float(data[0]["lon"])
+                display = data[0].get("display_name", "")
+        except HTTPException:
+            raise
+        except Exception as ex:
+            raise HTTPException(502, f"Nominatim indisponible: {str(ex)[:100]}")
+        # Sauvegarde
+        await db.etablissements_officiels.update_one(
+            {"id": id},
+            {"$set": {"lat": lat, "lon": lon, "geocoded_display": display, "geocoded_at": datetime.utcnow().isoformat()}},
+        )
+        e["lat"] = lat
+        e["lon"] = lon
+        e["geocoded_display"] = display
+        return e
+
     return {"registered": [
         "/etablissements", "/etablissements/meta", "/etablissements/{id}",
         "/etablissements/orient/tnd/{level}", "/etablissements/orient/postpartum/{type}",
