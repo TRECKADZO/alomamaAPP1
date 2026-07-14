@@ -153,6 +153,9 @@ export default function EtablissementsScreen() {
             <Ionicons name="close-circle" size={18} color="#94A3B8" />
           </TouchableOpacity>
         )}
+        <TouchableOpacity onPress={() => router.push("/etablissements/carte" as any)} style={s.mapIconBtn}>
+          <Ionicons name="map" size={18} color="#EC4899" />
+        </TouchableOpacity>
       </View>
 
       {/* Filtres actions */}
@@ -277,6 +280,7 @@ const s = StyleSheet.create({
   loader: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F8FAFC" },
   searchBar: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#fff", marginHorizontal: 14, marginTop: 12, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: "#E5E7EB" },
   searchInp: { flex: 1, color: "#0F172A", fontSize: 14 },
+  mapIconBtn: { paddingHorizontal: 6 },
   filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: 14, marginBottom: 6 },
   filterBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "#fff", borderRadius: 999, borderWidth: 1, borderColor: "#E5E7EB" },
   filterTxt: { color: "#0F172A", fontSize: 12, fontWeight: "700" },
