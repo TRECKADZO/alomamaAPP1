@@ -17,10 +17,16 @@ def _load_dataset() -> Dict[str, Any]:
     global _DATASET_CACHE
     if _DATASET_CACHE:
         return _DATASET_CACHE
-    try:
-        with open(ROOT / "data" / "etablissements_ci.json", "r", encoding="utf-8") as f:
-            _DATASET_CACHE = json.load(f)
-    except Exception:
+    # Charger le fichier fusionné complet (PDF + Excel officiels)
+    for filename in ("etablissements_ci_full.json", "etablissements_ci.json"):
+        try:
+            with open(ROOT / "data" / filename, "r", encoding="utf-8") as f:
+                _DATASET_CACHE = json.load(f)
+                if _DATASET_CACHE.get("etablissements"):
+                    break
+        except Exception:
+            continue
+    if not _DATASET_CACHE:
         _DATASET_CACHE = {"meta": {}, "specialites_metier": {}, "etablissements": []}
     return _DATASET_CACHE
 

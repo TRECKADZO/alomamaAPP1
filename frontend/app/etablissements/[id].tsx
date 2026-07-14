@@ -10,6 +10,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, router } from "expo-router";
 import { api } from "../../lib/api";
+import { openMapsDirections } from "../../components/NearbyEstablishments";
 
 type Etab = any;
 
@@ -104,10 +105,16 @@ export default function EtabDetailScreen() {
               <Text style={s.geocodeTxt}>Géolocaliser (Nominatim)</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={s.mapBtn} onPress={openInMaps}>
-            <Ionicons name="map" size={16} color="#fff" />
-            <Text style={s.mapBtnTxt}>Ouvrir dans Google Maps</Text>
-          </TouchableOpacity>
+          <View style={s.mapBtnRow}>
+            <TouchableOpacity style={[s.mapBtn, { flex: 1, backgroundColor: "#EC4899" }]} onPress={() => openMapsDirections(e)}>
+              <Ionicons name="navigate" size={16} color="#fff" />
+              <Text style={s.mapBtnTxt}>Itinéraire</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.mapBtn, { flex: 1 }]} onPress={openInMaps}>
+              <Ionicons name="map" size={16} color="#fff" />
+              <Text style={s.mapBtnTxt}>Voir sur Maps</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Spécialités */}
@@ -179,6 +186,7 @@ const s = StyleSheet.create({
   geocodeBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 10, backgroundColor: "#FCE7F3", borderRadius: 8, marginTop: 10 },
   geocodeTxt: { color: "#EC4899", fontWeight: "800", fontSize: 12 },
   mapBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 12, backgroundColor: "#0F172A", borderRadius: 8, marginTop: 8 },
+  mapBtnRow: { flexDirection: "row", gap: 8, marginTop: 8 },
   mapBtnTxt: { color: "#fff", fontWeight: "800", fontSize: 13 },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { paddingHorizontal: 10, paddingVertical: 4, backgroundColor: "#FCE7F3", borderRadius: 999 },

@@ -1,0 +1,43 @@
+{
+  "summary": "Backend tests iter11 — Import massif de 1507 établissements officiels MSP CI vérifié avec succès. Tous les 11 tests passent (100%). Total DB = 1507 (>=1500 comme attendu). Filtre Yopougon+Maternité retourne 8 résultats tous géocodés. Meta expose 71 régions dont 4 nouvelles régions attendues (Bounkani, Poro, Cavally, Tonkpi). Orientation TND high_risk Cocody, orientation postpartum medical Yopougon, création pro_claim, et enforcement 2FA admin fonctionnent correctement.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/etablissements?q=...",
+        "issue": "Le filtre texte libre `q` est appliqué APRÈS le limit MongoDB (routers/etablissements.py:89-98). Résultat : `q=maternite&limit=100` ne parcourt que les 100 premiers docs de la collection puis filtre en Python. Si un utilisateur cherche 'maternite' sans autre filtre, il peut manquer des résultats si les maternités ne sont pas parmi les 100 premiers docs retournés. Pour ce test, 5 matches trouvés dans les 100 premiers docs — acceptable mais à moyen terme, migrer q vers un `$or` regex Mongo côté DB pour couvrir toute la collection."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_etablissements_import_iter11.py",
+    "/app/test_reports/pytest/iter11_results.xml"
+  ],
+  "action_items": [
+    "(Optionnel/moyen terme) Refactorer le filtre `q` dans GET /api/etablissements pour utiliser un `$or` regex Mongo côté DB (nom, adresse, commune, responsable) au lieu d'un filtrage Python post-limit. Impact utilisateur faible tant que les recherches sont combinées avec un filtre commune/region.",
+    "Aucune autre action requise — l'import massif est validé."
+  ],
+  "critical_code_review_comments": [
+    "routers/etablissements.py:81 — `_seed_if_empty()` est appelé au début de chaque handler (list, meta, orient/*). C'est bien idempotent (compte docs d'abord), mais ajoute une requête count_documents à chaque appel API. Pour optimiser, mettre en cache le résultat en mémoire après le 1er seed check.",
+    "routers/etablissements.py:92-98 — Filtre `q` post-Python après limit MongoDB (voir minor issue).",
+    "routers/etablissements.py:12 — `_DATASET_CACHE` global module-level, correctement invalidé après 1er chargement. OK."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_etablissements_import_iter11.py (nouveau)"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11)",
+    "frontend": "N/A (non testé)"
+  },
+  "seed_data_creation": "Un pro_claim a été créé (status=pending) par pro.test@alomaman.dev sur un établissement dispo. Peut être nettoyé via db.pro_claims.delete_many({user_email: 'pro.test@alomaman.dev'}).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Base MongoDB `etablissements_officiels` contient bien 1507 entrées. 71 régions incluant Bounkani/Poro/Cavally/Tonkpi. Endpoints publics (list/meta/detail) et endpoints authentifiés (orient TND, orient postpartum, claim) fonctionnent. Admin bloqué par 2FA au login (401) — RGSSI N3 conforme, ne pas essayer de contourner. Test data: pro.test a maintenant 1 claim pending; MAMAN et PRO tokens fonctionnent normalement.",
+  "rca_of_issue": "N/A — aucun bug bloquant détecté."
+}

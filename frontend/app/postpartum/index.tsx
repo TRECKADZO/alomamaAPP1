@@ -6,9 +6,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { cachedGet } from "../../lib/offline";
 import { formatError } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
+import NearbyEstablishments from "../../components/NearbyEstablishments";
 
 export default function PostpartumHome() {
-import NearbyEstablishments from "../../components/NearbyEstablishments";
 
   const router = useRouter();
   const [data, setData] = useState<any>(null);
