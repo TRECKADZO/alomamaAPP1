@@ -3,7 +3,7 @@ Router — Annuaire des établissements sanitaires privés autorisés (E-DEPPS M
 Phase 1 MVP : liste + recherche + filtres. Prêt pour import CSV complet (657 lignes).
 """
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel
@@ -177,7 +177,7 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
                 "specialites_targetees": list({sp for e in (items or []) for sp in (e.get("specialites_metier") or [])}),
                 "regions_touchees": list({e.get("region") for e in (items or []) if e.get("region")}),
                 "communes_touchees": list({e.get("commune") for e in (items or []) if e.get("commune")}),
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             })
         except Exception:
             pass  # ne bloque jamais la réponse principale

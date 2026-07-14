@@ -22,9 +22,10 @@ import io
 def register_analytics_routes(app, api, db, require_roles_fn):
 
     def _period_start(period: str) -> Optional[datetime]:
-        """Convertit '7d' / '30d' / '90d' / 'all' en datetime UTC de départ."""
+        """Convertit '1d' / '7d' / '30d' / '90d' / 'all' en datetime UTC de départ."""
         now = datetime.now(timezone.utc)
         return {
+            "1d": now - timedelta(days=1),
             "7d": now - timedelta(days=7),
             "30d": now - timedelta(days=30),
             "90d": now - timedelta(days=90),
@@ -58,8 +59,11 @@ def register_analytics_routes(app, api, db, require_roles_fn):
         ]
         by_region = []
         async for r in etabs.aggregate(by_region_pipeline):
+            reg = r["_id"]
+            if not reg or reg in ("?", "De"):  # filtrer les valeurs parasites
+                continue
             by_region.append({
-                "region": r["_id"] or "?",
+                "region": reg,
                 "total": r["total"],
                 "maternite": r.get("maternite", 0),
                 "pediatrie": r.get("pediatrie", 0),
@@ -220,8 +224,8 @@ def register_analytics_routes(app, api, db, require_roles_fn):
         KPIs stratégiques Phase 5 (UNICEF/Ministère).
         period : 7d | 30d | 90d | all
         """
-        if period not in ("7d", "30d", "90d", "all"):
-            raise HTTPException(400, "period doit être 7d, 30d, 90d ou all")
+        if period not in ("1d", "7d", "30d", "90d", "all"):
+            raise HTTPException(400, "period doit être 1d, 7d, 30d, 90d ou all")
         data = await _compute_analytics(period)
         return data
 
