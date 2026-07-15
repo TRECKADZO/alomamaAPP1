@@ -144,7 +144,7 @@ export default function EtabDetailScreen() {
           <Ionicons name="calendar" size={18} color="#fff" />
           <Text style={s.actionTxt}>Prendre RDV via Alo Maman</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.actionBtn, { backgroundColor: "#7C3AED" }]} onPress={() => router.push({ pathname: "/etablissements/claim", params: { id: e.id } } as any)}>
+        <TouchableOpacity testID="etab-claim-btn" style={[s.actionBtn, { backgroundColor: "#7C3AED" }]} onPress={() => router.push({ pathname: "/etablissements/claim", params: { id: e.id } } as any)}>
           <Ionicons name="ribbon" size={18} color="#fff" />
           <Text style={s.actionTxt}>👨‍⚕️ Je suis pro dans cet établissement</Text>
         </TouchableOpacity>

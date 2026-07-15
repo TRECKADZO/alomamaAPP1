@@ -229,6 +229,7 @@ export default function EtablissementsScreen() {
           return (
             <TouchableOpacity
               key={e.id}
+              testID={`etab-card-${e.id}`}
               style={s.card}
               onPress={() => router.push({ pathname: "/etablissements/[id]", params: { id: e.id } } as any)}
             >

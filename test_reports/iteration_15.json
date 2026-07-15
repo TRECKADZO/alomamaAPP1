@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only test of pro dashboard entry point to /etablissements → fiche → claim. All 5 requested flows PASS ✓. Login pro OK, 2 nouveaux tools visibles dans 'Ressources & Réseau' (Établissements MSP CI + Carte des établissements), searchbar filtre correctement sur 'revendiquer' et 'msp', navigation vers /etablissements affiche '200/1676 · Source MSP CI', tap sur 1er établissement (CABINET D'ACUPUNTURE D'ABOBO-TE, id=esp_abidjan_1_0001) ouvre /etablissements/[id] avec bouton violet #7C3AED '👨‍⚕️ Je suis pro dans cet établissement', tap redirige vers /etablissements/claim?id=esp_abidjan_1_0001 avec formulaire pré-rempli. Le point d'entrée manquant est bien réparé. Ajouté 2 testIDs (etab-claim-btn + etab-card-{id}) pour tests fiables. Console errors 'Unexpected text node' détectés (non bloquant, préexistants).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "etablissements list/detail", "issue": "Console error 'Unexpected text node: . A text node cannot be a child of a <View>.' détecté sur /etablissements et /etablissements/[id]. Espace ou string vide rendu directement dans un <View> au lieu d'être wrappé dans <Text>. Non bloquant mais à corriger. Reference: /app/frontend/app/etablissements/index.tsx et /app/frontend/app/etablissements/[id].tsx"},
+    {"component": "Ionicons stethoscope", "issue": "'stethoscope' is not a valid icon name for family 'ionicons' — remplacer par 'medical' ou 'medkit'. Non bloquant."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optionnel: corriger les warnings 'Unexpected text node' dans /app/frontend/app/etablissements/index.tsx et [id].tsx (probable espace/string entre balises <View>).",
+    "Optionnel: remplacer icône Ionicons 'stethoscope' (invalide) par 'medical' ou 'medkit'."
+  ],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/frontend/app/etablissements/[id].tsx (ajout testID=etab-claim-btn sur bouton 'Je suis pro dans cet établissement')",
+    "/app/frontend/app/etablissements/index.tsx (ajout testID=etab-card-{id} sur cartes de liste)"
+  ],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Utiliser testID 'tool-etablissements-msp', 'tool-etablissements-carte' sur /pro/mon-espace-pro. Testez 'etab-card-{id}' sur liste et 'etab-claim-btn' sur fiche. Bouton claim est violet rgb(124,58,237) = #7C3AED.",
+  "rca_of_issue": "Bug: pro n'avait aucun tool vers /etablissements dans son dashboard. Fix: 2 tools ajoutés dans catégorie 'Ressources & Réseau' — 'Établissements MSP CI (Officiel)' → /etablissements et 'Carte des établissements' → /etablissements/carte. Vérifié end-to-end : Login pro → mon-espace-pro → tool MSP → liste 1676 établissements → fiche établissement → bouton 'Je suis pro dans cet établissement' → claim page avec établissement pré-rempli."
+}

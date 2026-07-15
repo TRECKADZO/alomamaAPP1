@@ -94,6 +94,8 @@ const CATEGORIES: Category[] = [
       { id: "glossaire", label: "Glossaire médical", sub: "Définitions claires", icon: "book", color: "#3B82F6", path: "/glossaire" },
       { id: "search", label: "Trouver un confrère", sub: "Annuaire pros", icon: "search", color: "#6366F1", path: "/search" },
       { id: "centres", label: "Centres de santé", sub: "Annuaire PMI, cliniques", icon: "business", color: "#14B8A6", path: "/centres" },
+      { id: "etablissements-msp", label: "Établissements MSP CI (Officiel)", sub: "1676 cliniques agréées · Revendiquer mon établissement 👨‍⚕️", icon: "ribbon", color: "#7C3AED", path: "/etablissements", keywords: ["msp", "officiel", "clinique", "claim", "revendiquer", "e-depps"] },
+      { id: "etablissements-carte", label: "Carte des établissements", sub: "Localiser · Itinéraire GPS", icon: "map", color: "#EC4899", path: "/etablissements/carte", keywords: ["carte", "map", "gps"] },
       { id: "support", label: "Aide & Support", sub: "FAQ, contact", icon: "headset", color: "#06B6D4", path: "/aide-support" },
       { id: "support-prem", label: "Support Premium 💎", sub: "FAQ avancée · Tutos vidéo · Email prioritaire", icon: "school", color: "#7C3AED", path: "/support-premium", keywords: ["premium", "formation", "tutoriel"] },
       { id: "2fa-pro", label: "Authentification 2FA", sub: "Optionnel (phase test)", icon: "shield-checkmark", color: "#3B82F6", path: "/security/2fa-setup", keywords: ["2fa", "totp", "securité"] },
