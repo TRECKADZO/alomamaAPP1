@@ -62,6 +62,7 @@ export default function Landing() {
             <Feature icon="heart" text="Suivi grossesse semaine par semaine" />
             <Feature icon="medkit" text="Carnet de santé de vos enfants" />
             <Feature icon="body" text="Bilan de développement — DMP" />
+            <Feature icon="pulse" text="TND — Détection des Troubles du Neurodéveloppement" />
             <Feature icon="flower" text="Post-Partum : suivi 52 semaines" />
             <Feature icon="chatbubbles" text="Assistant IA & communauté de mamans" />
             <Feature icon="shield-checkmark" text="CMU & ressources OMS / UNICEF" />
