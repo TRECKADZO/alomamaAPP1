@@ -48,6 +48,15 @@ export async function openMapsDirections(e: {
     : `https://www.google.com/maps/search/?api=1&query=${query}`;
 
   const primary = Platform.OS === "ios" ? iosNative : androidNative;
+  // Sur web : sauter directement au webFallback (Linking.canOpenURL renvoie true à tort)
+  if (Platform.OS === "web") {
+    try {
+      await Linking.openURL(webFallback);
+    } catch {
+      Alert.alert("Impossible d'ouvrir Maps", "Aucune application de cartographie n'est installée.");
+    }
+    return;
+  }
   try {
     const supported = await Linking.canOpenURL(primary);
     if (supported) {
