@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only validation of the MSP CI établissements navigation fix (bug: maman ne trouvait pas le lien vers /etablissements et /etablissements/carte). Testé sur viewport mobile 390x844 avec le compte maman.test@alomaman.dev (T3, 32 SA, enfants suivis). Tous les 6 scénarios PASS: (1) La section '🏥 Réseau santé officiel MSP CI' est bien présente sur le dashboard maman avec les 2 cartes cliquables 'link-etablissements' et 'link-etablissements-carte'; (2) tap 'link-etablissements' → /etablissements affiche '200/1676 · Source MSP CI'; (3) tap 'link-etablissements-carte' → /etablissements/carte (fallback web CarteMap.web); (4) le bouton Itinéraire déclenche bien window.open avec URL 'google.navigation:q=<lat>,<lon>' (openMapsDirections OK, fallback webFallback → Google Maps sur mobile natif); (5) l'icône map à droite de la barre de recherche sur /etablissements navigue vers /etablissements/carte; (6) la fiche détail /etablissements/[id] affiche bien les 2 boutons 'Itinéraire' (rose) et 'Voir sur Maps' (noir). Note secondaire: warnings console récurrents 'Unexpected text node: . A text node cannot be a child of a <View>' présents sur toutes les pages (existant, non lié à ce fix).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/etablissements", "issues": ["L'icône map en haut-droite de la barre de recherche n'a pas de testID (cliquée par coordonnées lors du test). Ajouter testID='etablissements-map-icon' pour robustesse des tests futurs. Ref: /app/frontend/app/etablissements/index.tsx:156"]}
+    ],
+    "react_native_issues": [
+      {"component": "Text node dans <View>", "issue": "Warning console récurrent 'Unexpected text node: . A text node cannot be a child of a <View>' sur multiples écrans (dashboard, liste établissements, détail). Un espace ou texte brut est rendu directement dans un <View> au lieu d'être wrappé dans <Text>. À rechercher via grep pour espaces/strings orphelins entre balises JSX. Non bloquant mais à corriger."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Cosmetic) Ajouter testID='etablissements-map-icon' sur la TouchableOpacity de l'icône map (etablissements/index.tsx:156) pour faciliter les tests.",
+    "(Cosmetic) Rechercher et corriger les text nodes orphelins qui déclenchent 'Unexpected text node: . A text node cannot be a child of a <View>' — vérifier _layout.tsx et composants racine.",
+    "Fix principal VALIDÉ: la section 🏥 Réseau santé officiel MSP CI est bien accessible depuis le dashboard maman quel que soit le contexte (grossesse T1/T2/T3, enfants ou onboarding)."
+  ],
+  "critical_code_review_comments": [
+    "openMapsDirections (NearbyEstablishments.tsx) utilise Platform.OS pour choisir le schéma natif; sur web Platform.OS='web' tombe dans la branche androidNative='google.navigation:...'. Puisque Linking.canOpenURL retourne true côté web (react-native-web), le fallback webFallback (https://www.google.com/maps/...) n'est jamais utilisé et l'utilisateur web ne voit rien s'ouvrir. À affiner: ajouter Platform.OS === 'web' → toujours webFallback."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend only)", "frontend": "100% (6/6 scenarios)"},
+  "seed_data_creation": "Aucune donnée créée. Utilisé compte MAMAN persistant.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Section '🏥 Réseau santé officiel MSP CI' présente entre 'Outils essentiels' (favoris) et 'Communauté'. testIDs: link-etablissements + link-etablissements-carte. Map icon liste établissements n'a pas de testID (voir action item).",
+  "rca_of_issue": "RCA original: dans app/(tabs)/index.tsx (favoritesKeys), le lien 'etablissements' n'apparaissait que si enfants.length > 0 (ligne 242) ou onboarding (ligne 245). Pour les mamans enceintes T1/T2/T3, le lien était absent → user ne pouvait pas atteindre /etablissements ni /etablissements/carte depuis le dashboard. Fix E1: ajout d'une section dédiée 'Réseau santé officiel MSP CI' (lignes 468-503) avec 2 cartes toujours visibles indépendamment de l'état. Validé côté UI: la section est bien rendue et les 2 navigations fonctionnent."
+}

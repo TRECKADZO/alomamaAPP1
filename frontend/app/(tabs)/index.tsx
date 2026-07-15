@@ -466,6 +466,42 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
           ))}
         </View>
 
+        {/* 🏥 SECTION RÉSEAU SANTÉ OFFICIEL MSP CI — toujours visible */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitleV2}>🏥 Réseau santé officiel MSP CI</Text>
+        </View>
+        <View style={{ gap: 8 }}>
+          <TouchableOpacity
+            style={styles.connectCard}
+            onPress={() => router.push("/etablissements" as any)}
+            testID="link-etablissements"
+          >
+            <View style={[styles.connectIcon, { backgroundColor: "#CFFAFE" }]}>
+              <Ionicons name="business" size={20} color="#0891B2" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.connectTitle}>1676 établissements agréés</Text>
+              <Text style={styles.connectSub}>Maternités · Pédiatries · Cliniques · Officines</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.connectCard}
+            onPress={() => router.push("/etablissements/carte" as any)}
+            testID="link-etablissements-carte"
+          >
+            <View style={[styles.connectIcon, { backgroundColor: "#FCE7F3" }]}>
+              <Ionicons name="map" size={20} color="#EC4899" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.connectTitle}>Carte interactive</Text>
+              <Text style={styles.connectSub}>Localiser un établissement · Itinéraire GPS</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+        </View>
+
         {/* 🎁 SECTION CONNECT — Communauté + Famille + Premium */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitleV2}>Communauté</Text>
