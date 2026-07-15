@@ -100,7 +100,11 @@ export default function CarteMap() {
         <View style={s.warning}>
           <Ionicons name="information-circle" size={18} color="#B45309" />
           <Text style={s.warningTxt}>
-            Vue liste (carte native disponible dans l&apos;app installée). Boutons « Itinéraire » ouvrent Google/Apple Maps.
+            {Platform.OS === "android"
+              ? "Vue liste optimisée. Les boutons « Itinéraire » ouvrent Google Maps natif pour la navigation GPS."
+              : Platform.OS === "web"
+                ? "Vue liste (carte native disponible sur mobile). Boutons « Itinéraire » ouvrent Google Maps."
+                : "Vue liste. Boutons « Itinéraire » ouvrent Plans natif."}
           </Text>
         </View>
         <FiltersRow filter={filter} setFilter={setFilter} count={items.length} />
