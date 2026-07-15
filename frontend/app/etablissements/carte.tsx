@@ -162,7 +162,8 @@ function CarteScreenInner() {
 
       {/* Chips filtres actifs */}
       {(specialite || cmuOnly || radiusKm < 500) && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.activeFilters}>
+        <View style={{ maxHeight: 44 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.activeFilters}>
           {specialite && (
             <TouchableOpacity style={s.chipActive} onPress={() => setSpecialite("")}>
               <Text style={s.chipActiveTxt}>{specialite} ×</Text>
@@ -182,6 +183,7 @@ function CarteScreenInner() {
             <Text style={[s.chipActiveTxt, { color: "#64748B" }]}>Tout effacer</Text>
           </TouchableOpacity>
         </ScrollView>
+        </View>
       )}
 
       {/* Map */}
@@ -339,7 +341,7 @@ const s = StyleSheet.create({
   iconBtn: { width: 40, height: 40, borderRadius: 10, backgroundColor: "#EDE9FE", alignItems: "center", justifyContent: "center", position: "relative" },
   badge: { position: "absolute", top: -4, right: -4, backgroundColor: "#EC4899", borderRadius: 8, minWidth: 16, height: 16, paddingHorizontal: 4, alignItems: "center", justifyContent: "center" },
   badgeTxt: { color: "#fff", fontSize: 9, fontWeight: "800" },
-  activeFilters: { paddingHorizontal: 10, paddingVertical: 6, gap: 6, backgroundColor: "#fff" },
+  activeFilters: { paddingHorizontal: 10, paddingVertical: 6, gap: 6, alignItems: "center", backgroundColor: "#fff", maxHeight: 44 },
   chipActive: { backgroundColor: "#EDE9FE", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
   chipActiveTxt: { color: "#5B21B6", fontWeight: "700", fontSize: 11 },
   loadingOverlay: { position: "absolute", top: 10, alignSelf: "center", backgroundColor: "rgba(255,255,255,0.95)", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 8 },
