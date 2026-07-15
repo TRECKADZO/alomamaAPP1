@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only test of the CarteMap crash fix (iteration 2). Static code inspection confirmed all requested guards: `CAN_USE_NATIVE_MAPS = Platform.OS === 'ios'` at CarteMap.tsx:27, the `require('react-native-maps')` block is wrapped inside `if (CAN_USE_NATIVE_MAPS) { try { ... } catch { ... } }` at CarteMap.tsx:29-45, ErrorBoundary class implements getDerivedStateFromError/componentDidCatch/reset, and carte.tsx wraps `<CarteMap />` in `<ErrorBoundary fallback={<SafeFallback />}>`. E2E flow validated on web preview: Metro bundle is clean (no errors in expo.out.log), /etablissements/carte loads without crash, login maman.test@alomaman.dev → dashboard → tap 'Carte interactive' navigates successfully to /etablissements/carte, 501 'Itinéraire' buttons render (API /etablissements returns geolocated items), no red screen, no ErrorBoundary fallback triggered. IMPORTANT LIMITATION: on web preview Metro resolves `CarteMap.web.tsx` (a distinct file that never touches react-native-maps), so the Android-specific fix (CAN_USE_NATIVE_MAPS gate + SafeFallback via ErrorBoundary) CANNOT be functionally exercised from the web preview. Validation of the native Android crash fix is purely by static inspection + logic; the user must confirm with a fresh Android build.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_17.json"],
+  "action_items": [
+    "Ask the user to Publish a new Android build and confirm the carte no longer crashes. The current preview validation is only via static inspection since web uses CarteMap.web.tsx.",
+    "Long-term: configure `expo.android.config.googleMaps.apiKey` in app.json (requires Google Cloud billing) to re-enable native Android maps. Currently Android will forever fall back to the list view.",
+    "Consider adding a testID on the 'Carte interactive' entry point and on the SafeFallback root View to make the ErrorBoundary path testable via E2E on a native build.",
+    "Note (non-blocking): expo warns `expo@54.0.35 - expected version: ~54.0.36`. Small patch bump when convenient."
+  ],
+  "critical_code_review_comments": [
+    "SafeFallback in /app/frontend/app/etablissements/carte.tsx uses useFocusEffect (line 25) to fetch — good, but it only fetches on focus AFTER an ErrorBoundary catch, which is fine. However on web this path is unreachable (Metro picks CarteMap.web.tsx). This is intentional but worth documenting.",
+    "CarteMap.tsx line 27 comment correctly states the reason (Google Maps API key missing) but does NOT surface a user-visible warning banner on Android saying 'carte réduite: clé maps manquante'. The existing yellow banner (line 100-105) says 'Vue liste (carte native disponible dans l'app installée)' which is misleading on native Android now — the user is already IN the installed app. Suggest editing the warning text to be Android-specific.",
+    "openMapsDirections is imported from ../../components/NearbyEstablishments in both CarteMap.tsx and carte.tsx — DRY-ok since it's shared via a named export."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only)", "frontend": "100% (5/5 checks: bundle clean, static guards present, route loads, login+nav works, list+Itinéraire render)"},
+  "seed_data_creation": "None. Used existing test account maman.test@alomaman.dev.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Route /etablissements/carte on web uses CarteMap.web.tsx (Metro extension resolution), NOT CarteMap.tsx — so ErrorBoundary+SafeFallback path is unreachable from web preview. To E2E-test SafeFallback you must either (a) temporarily throw inside CarteMap.web.tsx to trigger the boundary, or (b) test on Android native build. The Android crash fix (CAN_USE_NATIVE_MAPS=false on Android) is only validated by static inspection here.",
+  "rca_of_issue": "User's Android crash root cause: react-native-maps requires an `expo.android.config.googleMaps.apiKey` in app.json to render `<MapView>`; without it, the native Android view fails to construct and throws a Java/Kotlin exception NOT catchable by JS try/catch (which only guards the require()). Fix applied by main agent: force `CAN_USE_NATIVE_MAPS = Platform.OS === 'ios'` so Android never mounts MapView and always renders the fallback list. Additional safety net: ErrorBoundary wrapper in carte.tsx renders SafeFallback if CarteMap itself throws for any other reason. Both guards look correct on inspection. Verified iOS unaffected (still gets native Apple Maps via default provider)."
+}

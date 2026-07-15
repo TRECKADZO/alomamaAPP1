@@ -14,26 +14,34 @@ import { openMapsDirections } from "./NearbyEstablishments";
 // ── Lazy require : n'échoue jamais au bundle time.
 // Si le module natif n'est pas disponible (Expo Go, ou build sans les modules maps),
 // on tombe en fallback liste avec bouton "Itinéraire" (comme sur web).
+// ⚠️ Sur Android, react-native-maps nécessite une Google Maps API key. Sans clé
+// configurée dans app.json, l'app crashe au render. On force donc le fallback
+// liste sur Android tant qu'une clé n'est pas configurée.
 let MapView: any = null;
 let Marker: any = null;
 let PROVIDER_DEFAULT: any = null;
 let Location: any = null;
 let mapsAvailable = false;
 
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const clustering = require("react-native-map-clustering");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const maps = require("react-native-maps");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  Location = require("expo-location");
-  MapView = clustering?.default || clustering;
-  Marker = maps?.Marker;
-  PROVIDER_DEFAULT = maps?.PROVIDER_DEFAULT;
-  mapsAvailable = !!(MapView && Marker);
-} catch (e) {
-  mapsAvailable = false;
-  console.warn("[CarteMap] react-native-maps non disponible → fallback liste :", e);
+// Force le fallback sur Android (pas de Google Maps API key)
+const CAN_USE_NATIVE_MAPS = Platform.OS === "ios";
+
+if (CAN_USE_NATIVE_MAPS) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const clustering = require("react-native-map-clustering");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const maps = require("react-native-maps");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Location = require("expo-location");
+    MapView = clustering?.default || clustering;
+    Marker = maps?.Marker;
+    PROVIDER_DEFAULT = maps?.PROVIDER_DEFAULT;
+    mapsAvailable = !!(MapView && Marker);
+  } catch (e) {
+    mapsAvailable = false;
+    console.warn("[CarteMap] react-native-maps non disponible → fallback liste :", e);
+  }
 }
 
 const CI_CENTER = { latitude: 7.5, longitude: -5.5, latitudeDelta: 6, longitudeDelta: 6 };
