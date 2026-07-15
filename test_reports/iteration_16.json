@@ -1,0 +1,27 @@
+{
+  "summary": "Frontend-only bug fix verification for CarteMap native crash (Expo Go). Static code inspection + web preview runtime tests both PASS. CarteMap.tsx has been correctly refactored to use lazy require() inside try/catch for react-native-maps, react-native-map-clustering, and expo-location, with a mapsAvailable flag and conditional list-fallback branch. On web preview (localhost:3000), the .web.tsx variant is served (verified via 'Carte native disponible sur mobile' header + list of Itinéraire buttons). Zero pageerror events, no red screen, back navigation returns to dashboard cleanly. Metro bundler logs show no CarteMap-related errors — only benign expo-notifications/shadow* deprecation warnings.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Informational, not a regression from this fix) Direct navigation to /etablissements/carte while unauthenticated does NOT redirect to /login on web — the page renders publicly. If gating is desired, add an auth guard in app/etablissements/carte.tsx. Does NOT block the current bug fix (no crash observed).",
+    "(Pre-existing, out of scope) Numerous console warnings across the app: 'shadow*' props deprecated (use boxShadow), 'props.pointerEvents' deprecated (use style.pointerEvents), Animated useNativeDriver falls back to JS on web. These are cosmetic and not caused by this fix."
+  ],
+  "critical_code_review_comments": [
+    "CarteMap.tsx correctly uses `let ... = null` + try/catch require pattern (lines 17-37). mapsAvailable flag drives conditional fallback at line 89. This is the recommended Expo Go-safe pattern.",
+    "Fallback branch (lines 89-118) reuses openMapsDirections from NearbyEstablishments — good DRY, and the yellow warning bandeau clearly communicates the mode to the user.",
+    "grep confirmed 0 static imports of react-native-maps / react-native-map-clustering / expo-location in CarteMap.tsx."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not tested)", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The native crash fix on CarteMap can only be *fully* validated on a real device / dev build with react-native-maps installed. Web preview only exercises CarteMap.web.tsx. Code inspection of the .tsx (native) variant confirms the try/catch + require + mapsAvailable + fallback branch pattern is correctly in place — this is the standard Expo Go safety pattern and should prevent the reported native crash.",
+  "rca_of_issue": "Original crash: static ES `import` of react-native-maps at top of CarteMap.tsx triggered a native module resolution at bundle-parse time in Expo Go, which does not embed react-native-maps → RN runtime raised a red-screen 'application closed due to bug'. Fix: replace all three static imports (`react-native-maps`, `react-native-map-clustering`, `expo-location`) with `require()` calls wrapped in a single try/catch. On failure, mapsAvailable stays false and the component renders the pre-existing list fallback (same UX as web). Reproduction: prior code base with `import MapView from 'react-native-map-clustering'` opened in Expo Go → immediate native crash. Mitigation: retested in web preview (CarteMap.web.tsx served) — no crash, no page error, list + Itinéraire buttons render. Native validation requires an EAS/dev-client build."
+}
