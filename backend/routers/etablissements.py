@@ -117,6 +117,67 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
             "source": "Ministère de la Santé Côte d'Ivoire · E-DEPPS Juin 2026",
         }
 
+    @api.get("/etablissements/nearby")
+    async def etablissements_nearby(
+        lat: float,
+        lon: float,
+        radius_km: float = 10.0,
+        specialite: Optional[str] = None,
+        categorie: Optional[str] = None,
+        cmu: Optional[bool] = None,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ):
+        """
+        Retourne les établissements dans un rayon donné, triés par distance (Haversine).
+        """
+        import math
+
+        def haversine(la1, lo1, la2, lo2):
+            R = 6371.0
+            phi1, phi2 = math.radians(la1), math.radians(la2)
+            dphi = math.radians(la2 - la1)
+            dlambda = math.radians(lo2 - lo1)
+            a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+            return 2 * R * math.asin(math.sqrt(a))
+
+        query: Dict[str, Any] = {"lat": {"$exists": True, "$ne": None}}
+        if specialite: query["specialites_metier"] = specialite
+        if categorie: query["categorie"] = categorie
+        if cmu is True: query["cmu_accepted"] = True
+        if q:
+            query["$or"] = [
+                {"nom": {"$regex": q, "$options": "i"}},
+                {"commune": {"$regex": q, "$options": "i"}},
+                {"adresse": {"$regex": q, "$options": "i"}},
+            ]
+
+        deg_lat = radius_km / 111.0
+        deg_lon = radius_km / (111.0 * max(math.cos(math.radians(lat)), 0.1))
+        query["lat"]["$gte"] = lat - deg_lat
+        query["lat"]["$lte"] = lat + deg_lat
+        query["lon"] = {"$gte": lon - deg_lon, "$lte": lon + deg_lon}
+
+        items = []
+        async for e in db.etablissements_officiels.find(query, {"_id": 0}):
+            try:
+                d = haversine(lat, lon, float(e["lat"]), float(e["lon"]))
+            except (TypeError, ValueError):
+                continue
+            if d <= radius_km:
+                e["distance_km"] = round(d, 2)
+                e["travel_min_car"] = round(d / 30 * 60)
+                items.append(e)
+
+        items.sort(key=lambda x: x["distance_km"])
+        return {
+            "count": len(items[:limit]),
+            "total_in_radius": len(items),
+            "radius_km": radius_km,
+            "user_position": {"lat": lat, "lon": lon},
+            "items": items[:limit],
+        }
+
     @api.get("/etablissements/{id}")
     async def get_etablissement(id: str):
         """Détail d'un établissement."""

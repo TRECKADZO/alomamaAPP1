@@ -1,0 +1,40 @@
+{
+  "summary": "Tested Leaflet+OSM interactive map (backend /nearby endpoint + frontend carte.tsx). Backend: 9/9 pytest passed — nearby route ordering correct (declared before /{id}), Maternité 5km Abidjan returns 20+ items with distance_km/travel_min_car and sorted asc, CMU=true returns 0 (expected), q='maternite' filters by name, /etablissements/{id} still works. Frontend: iframe with Leaflet content renders 500 markers clustered around Abidjan (8/292/127/73 visible), Options modal opens with all filters (Spécialité chips + CMU toggle + Rayon 1/5/10/20/50/Tout), Maternité filter applied reduces to 84 nationwide with active pink chip 'Maternité ×', consent modal (RGSSI N3) opens with Refuser/Autoriser, Refuser closes modal without permission request. Compteur shows '500 établissements'. One minor UI: active-filter horizontal ScrollView appears to occupy excessive vertical height on web pushing map down (needs height cap). Deprecated packages detected: none. SafeAreaView issues detected: none.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "carte.tsx activeFilters ScrollView", "issue": "Horizontal ScrollView showing active filter chips (Maternité ×, Tout effacer) renders with excessive vertical height on web preview (~360px), pushing the map area far below the header. Add explicit height (e.g., ~40) to the ScrollView style or wrap in a fixed-height View. Reference: /app/frontend/app/etablissements/carte.tsx:165", "testID": "n/a", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/etablissements/carte", "issues": ["Interactive elements lack testID attributes (Options btn, Près de moi btn, Refuser/Autoriser, chip filters, search input) — makes automated selection brittle; recommend adding testID to header options button, location button, consent buttons, radius/specialite chips."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_carte_leaflet_iter17.py",
+    "/app/test_reports/pytest/iter17_carte_leaflet.xml"
+  ],
+  "action_items": [
+    "(Optional/UI) Fix excessive vertical height of active filters horizontal ScrollView in /app/frontend/app/etablissements/carte.tsx (add height:44 or wrap in View with fixed height).",
+    "(Nice-to-have) Add testID props to interactive elements on carte.tsx: iconBtn (options), locBtn, consentBtnDeny, consentBtnAllow, chipFilter items, actionBtn (Appliquer/Réinitialiser)."
+  ],
+  "critical_code_review_comments": [
+    "etablissements.py: /nearby route correctly placed BEFORE /{id} — good.",
+    "LeafletMap uses unpkg CDN for leaflet + markercluster — requires online. Consider self-hosting or bundling for offline mode (RGSSI N3 privacy noted).",
+    "LeafletMap iframe sandbox includes allow-scripts + allow-same-origin (browser warns this can escape sandboxing). Since we control the HTML this is acceptable but noteworthy.",
+    "carte.tsx loadMarkers useCallback depends on all filter state — every keystroke on textSearch triggers loading; consider debouncing textSearch."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_carte_leaflet_iter17.py (new)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% (all 5 UI flows verified: iframe render, filter modal, Maternité filter, consent modal open, Refuser closes)"},
+  "seed_data_creation": "None — used existing seeded etablissements_officiels collection (500+ items).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Frontend URL is set via EXPO_PUBLIC_BACKEND_URL (not EXPO_BACKEND_URL) — verified. For direct login testing bypass, POST /api/auth/login then set localStorage.auth_token before navigating to /etablissements/carte. Options button click coord: (360, 94). Filter modal fully text-searchable ('Filtres avancés', 'Maternité', 'Appliquer'). Consent modal texts: 'Autoriser la géolocalisation ?', 'Refuser', 'Autoriser', 'RGSSI N3'. 500 markers cluster around Abidjan showing badges 8/292/127/73.",
+  "rca_of_issue": "N/A — no bugs to reproduce; feature works as spec."
+}
