@@ -339,7 +339,34 @@ export default function VideoCall() {
   const endCall = () => {
     Alert.alert("Terminer la consultation ?", "L'appel sera déconnecté", [
       { text: "Annuler", style: "cancel" },
-      { text: "Raccrocher", style: "destructive", onPress: () => { cleanupCall(); router.back(); } },
+      {
+        text: "Raccrocher",
+        style: "destructive",
+        onPress: () => {
+          cleanupCall();
+          // 💊 Proposer la pharmacie de garde après la fin d'appel (utile pour ordonnance)
+          if (user?.role === "maman") {
+            setTimeout(() => {
+              Alert.alert(
+                "💊 Besoin d'un médicament ?",
+                "Trouvez une pharmacie de garde ouverte 24h/24 près de chez vous.",
+                [
+                  { text: "Plus tard", style: "cancel", onPress: () => router.back() },
+                  {
+                    text: "Voir les pharmacies",
+                    onPress: () => {
+                      router.back();
+                      setTimeout(() => router.push("/pharmacies-garde" as any), 200);
+                    },
+                  },
+                ]
+              );
+            }, 250);
+          } else {
+            router.back();
+          }
+        },
+      },
     ]);
   };
 

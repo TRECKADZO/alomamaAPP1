@@ -296,4 +296,60 @@ def register_pharmacies_garde_routes(app, api, db, get_current_user, require_rol
             logger.error(f"Refresh pharmacies_garde failed: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Erreur scraping : {str(e)}")
 
+    @api.get("/admin/pharmacies/garde/history")
+    async def admin_pharmacies_history(user=Depends(get_current_user), limit: int = 20):
+        """Historique des scrapes (audit) — ADMIN ONLY."""
+        if user.get("role") not in ("admin", "super_admin") and not user.get("is_super_admin"):
+            raise HTTPException(status_code=403, detail="Réservé aux administrateurs")
+        cursor = db.pharmacies_garde_history.find({}, {"_id": 0}).sort("scraped_at", -1).limit(min(limit, 50))
+        items = await cursor.to_list(min(limit, 50))
+        return {"count": len(items), "items": items}
+
+    # ─────────────────────────────────────────────────────────────
+    # Historique utilisateur — pharmacies consultées / appelées
+    # ─────────────────────────────────────────────────────────────
+    @api.post("/pharmacies/garde/{id}/track")
+    async def track_pharmacy_view(id: str, action: str = "view", user=Depends(get_current_user)):
+        """
+        Enregistre une consultation de pharmacie par l'utilisateur.
+        action : "view" (ouverture fiche), "call" (bouton appeler), "directions" (itinéraire)
+        """
+        if action not in ("view", "call", "directions"):
+            raise HTTPException(status_code=400, detail="Action invalide")
+        item = await db.pharmacies_garde.find_one({"id": id}, {"_id": 0, "id": 1, "nom": 1, "commune": 1, "zone": 1, "telephone_primary": 1, "lat": 1, "lon": 1})
+        if not item:
+            raise HTTPException(status_code=404, detail="Pharmacie non trouvée")
+        entry = {
+            "user_id": user["id"],
+            "pharmacie_id": id,
+            "action": action,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "snapshot": item,  # snapshot au moment de l'action (résilient si retirée plus tard)
+        }
+        await db.pharmacies_garde_user_history.insert_one(entry)
+        # Cap : garder les 100 dernières par user
+        count = await db.pharmacies_garde_user_history.count_documents({"user_id": user["id"]})
+        if count > 100:
+            to_delete = await db.pharmacies_garde_user_history.find({"user_id": user["id"]}, {"_id": 1}).sort("at", 1).to_list(count - 100)
+            for d in to_delete:
+                await db.pharmacies_garde_user_history.delete_one({"_id": d["_id"]})
+        return {"ok": True}
+
+    @api.get("/pharmacies/garde/me/history")
+    async def my_pharmacies_history(user=Depends(get_current_user), limit: int = 30):
+        """Historique personnel des pharmacies consultées."""
+        cursor = db.pharmacies_garde_user_history.find(
+            {"user_id": user["id"]}, {"_id": 0}
+        ).sort("at", -1).limit(min(limit, 100))
+        items = await cursor.to_list(min(limit, 100))
+        # Dédupliquer par pharmacie_id (garder le plus récent)
+        seen = set()
+        unique = []
+        for it in items:
+            pid = it.get("pharmacie_id")
+            if pid not in seen:
+                seen.add(pid)
+                unique.append(it)
+        return {"count": len(unique), "items": unique}
+
     logger.info("✅ Router pharmacies_garde enregistré")

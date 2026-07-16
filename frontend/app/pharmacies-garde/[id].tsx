@@ -45,6 +45,8 @@ export default function PharmacieGardeDetail() {
         ]);
         setItem(detail.data);
         setMeta(metaRes.data || {});
+        // Track view (async, silent)
+        api.post(`/pharmacies/garde/${id}/track`, null, { params: { action: "view" } }).catch(() => {});
       } catch (e: any) {
         Alert.alert("Erreur", "Impossible de charger la pharmacie", [
           { text: "Retour", onPress: () => router.back() },
@@ -55,11 +57,15 @@ export default function PharmacieGardeDetail() {
 
   const callPhone = (phone: string) => {
     const url = `tel:${phone}`;
+    // Track "call" action (silent)
+    api.post(`/pharmacies/garde/${id}/track`, null, { params: { action: "call" } }).catch(() => {});
     Linking.canOpenURL(url).then((ok) => ok && Linking.openURL(url));
   };
 
   const openDirections = () => {
     if (!item) return;
+    // Track "directions" action (silent)
+    api.post(`/pharmacies/garde/${id}/track`, null, { params: { action: "directions" } }).catch(() => {});
     const { lat, lon, nom } = item;
     const label = encodeURIComponent(nom);
     let url = "";

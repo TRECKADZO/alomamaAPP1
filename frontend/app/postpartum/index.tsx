@@ -191,6 +191,7 @@ export default function PostpartumHome() {
             { id: "testimonials", label: "Elles en parlent", icon: "chatbubbles", color: "#8B5CF6", nav: "/postpartum/testimonials" },
             { id: "fiches", label: "Conseils S1-S52", icon: "book", color: "#F97316", nav: "/postpartum/fiches" },
             { id: "conjoint", label: "Mon conjoint", icon: "people", color: "#06B6D4", nav: "/postpartum/conjoint" },
+            { id: "pharmacies_garde", label: "Pharmacie de garde", icon: "medkit", color: "#16A34A", nav: "/pharmacies-garde" },
           ].map((tt) => (
             <TouchableOpacity key={tt.id} style={s.gridItem} onPress={() => router.push(tt.nav as any)}>
               <View style={[s.gridIcon, { backgroundColor: tt.color + "22" }]}>

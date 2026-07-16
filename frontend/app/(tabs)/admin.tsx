@@ -230,6 +230,14 @@ export default function AdminHub() {
           target="Public + admin"
           onPress={() => router.push("/etablissements" as any)}
         />
+        <SectionCard
+          icon="medkit"
+          color="#16A34A"
+          title="💊 Pharmacies de garde (hebdo)"
+          desc="Refresh manuel · Historique des scrapes · Communes couvertes · Diff N/N-1"
+          target="Public + admin"
+          onPress={() => router.push("/admin/pharmacies_garde" as any)}
+        />
 
         <Text style={styles.sectionTitle}>🔌 Interopérabilité santé publique</Text>
         <SectionCard

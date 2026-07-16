@@ -89,6 +89,9 @@ export default function PharmaciesGardeIndex() {
               {meta.periode || "Chargement…"}
             </Text>
           </View>
+          <TouchableOpacity onPress={() => router.push("/pharmacies-garde/historique" as any)} testID="history-btn" style={styles.iconBtn}>
+            <Ionicons name="time" size={20} color="#fff" />
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => router.push("/pharmacies-garde/carte" as any)} testID="map-btn" style={styles.iconBtn}>
             <Ionicons name="map" size={20} color="#fff" />
           </TouchableOpacity>
