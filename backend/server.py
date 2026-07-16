@@ -1364,7 +1364,11 @@ async def update_grossesse(gid: str, payload: GrossesseIn, user=Depends(require_
 # ----------------------------------------------------------------------
 @api.get("/enfants")
 async def list_enfants(user=Depends(require_roles("maman"))):
-    items = await db.enfants.find({"user_id": user["id"]}, {"_id": 0}).to_list(100)
+    """Liste enfants (sans photos ni historique mesures — endpoint dédié /enfants/{id} pour détails)."""
+    items = await db.enfants.find(
+        {"user_id": user["id"]},
+        {"_id": 0, "photo": 0, "mesures": 0},  # exclure les gros champs
+    ).to_list(100)
     # 🔐 Déchiffrer numero_cmu + allergies
     return [decrypt_enfant(e) for e in items]
 
@@ -1719,7 +1723,7 @@ async def list_rdv(user=Depends(get_current_user)):
     items = await db.rdv.find(q, {"_id": 0}).sort("date", 1).to_list(500)
     # enrich with names
     ids = list({i["maman_id"] for i in items} | {i["pro_id"] for i in items})
-    users_map = {u["id"]: u for u in await db.users.find({"id": {"$in": ids}}, {"_id": 0}).to_list(500)}
+    users_map = {u["id"]: u for u in await db.users.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "specialite": 1}).to_list(500)}
     for it in items:
         it["maman_name"] = users_map.get(it["maman_id"], {}).get("name", "")
         it["pro_name"] = users_map.get(it["pro_id"], {}).get("name", "")
@@ -2013,16 +2017,18 @@ async def conversations(user=Depends(get_current_user)):
 
 
 @api.get("/messages/{other_id}")
-async def get_thread(other_id: str, user=Depends(get_current_user)):
-    msgs = await db.messages.find(
-        {
-            "$or": [
-                {"from_id": user["id"], "to_id": other_id},
-                {"from_id": other_id, "to_id": user["id"]},
-            ]
-        },
-        {"_id": 0},
-    ).sort("created_at", 1).to_list(1000)
+async def get_thread(other_id: str, user=Depends(get_current_user), limit: int = 100, before: str | None = None):
+    """Récupère les messages entre l'utilisateur courant et other_id, paginé (limit=100 par défaut, before=ISO datetime)."""
+    q: dict = {
+        "$or": [
+            {"from_id": user["id"], "to_id": other_id},
+            {"from_id": other_id, "to_id": user["id"]},
+        ]
+    }
+    if before:
+        q["created_at"] = {"$lt": before}
+    msgs = await db.messages.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    msgs.reverse()  # renvoyer en ordre chronologique
     # mark as read
     await db.messages.update_many(
         {"from_id": other_id, "to_id": user["id"], "read": False},
@@ -2066,8 +2072,14 @@ async def send_message(payload: MessageIn, user=Depends(get_current_user)):
     return doc
 # ----------------------------------------------------------------------
 @api.get("/community")
-async def list_posts(user=Depends(get_current_user)):
-    posts = await db.posts.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+async def list_posts(user=Depends(get_current_user), limit: int = 50, skip: int = 0):
+    """Feed communauté paginé (défaut 50 posts par page)."""
+    posts = await db.posts.find(
+        {},
+        {"_id": 0, "id": 1, "user_id": 1, "user_name": 1, "user_role": 1,
+         "title": 1, "content": 1, "likes": 1, "comments_count": 1,
+         "created_at": 1, "tags": 1, "image_thumb": 1},
+    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     return posts
 
 
