@@ -275,7 +275,11 @@ export default function Grossesse() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.btnSecondary} onPress={() => router.push("/(tabs)/assistant")}>
                 <Ionicons name="sparkles" size={18} color={COLORS.primary} />
-                <Text style={styles.btnSecondaryText}>Questions à l'Assistant IA</Text>
+                <Text style={styles.btnSecondaryText}>Questions à l&apos;Assistant IA</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btnSecondary, { borderColor: "#16A34A" }]} onPress={() => router.push("/pharmacies-garde" as any)} testID="btn-pharmacies-garde-grossesse">
+                <Ionicons name="medkit" size={18} color="#16A34A" />
+                <Text style={[styles.btnSecondaryText, { color: "#16A34A" }]}>💊 Pharmacie de garde</Text>
               </TouchableOpacity>
             </View>
           </>

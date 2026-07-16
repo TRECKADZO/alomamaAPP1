@@ -228,21 +228,22 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
     cmu: { icon: "shield", label: "CMU", route: "/cmu", color: "#16A34A", key: "cmu" },
     naissance: { icon: "balloon", label: "Déclarer naissance", route: "/naissance", color: "#14B8A6", key: "naissance" },
     postpartum: { icon: "rose", label: "Moi Aussi 🌸", route: "/postpartum", color: "#EC4899", key: "postpartum" },
+    pharmacies_garde: { icon: "medkit", label: "💊 Pharmacie garde", route: "/pharmacies-garde", color: "#16A34A", key: "pharmacies_garde" },
   };
 
   // Choix contextuel des 6 favoris
   let favoritesKeys: string[];
   if (g) {
     // Enceinte
-    if (trimestre === 1) favoritesKeys = ["urgence_dom", "assistant", "rdv", "domicile", "postpartum", "medecins"];
-    else if (trimestre === 2) favoritesKeys = ["urgence_dom", "rdv", "echo", "domicile", "postpartum", "assistant"];
-    else favoritesKeys = ["urgence_dom", "rdv", "plan_naissance", "naissance", "postpartum", "assistant"];
+    if (trimestre === 1) favoritesKeys = ["urgence_dom", "assistant", "rdv", "domicile", "pharmacies_garde", "medecins"];
+    else if (trimestre === 2) favoritesKeys = ["urgence_dom", "rdv", "echo", "domicile", "pharmacies_garde", "assistant"];
+    else favoritesKeys = ["urgence_dom", "rdv", "plan_naissance", "naissance", "pharmacies_garde", "assistant"];
   } else if (enfants.length > 0) {
-    // Maman avec enfants — Moi Aussi en évidence (post-partum jusqu'à 12 mois)
-    favoritesKeys = ["urgence_dom", "postpartum", "enfants", "dmp", "etablissements", "assistant"];
+    // Maman avec enfants — Pharmacie de garde en évidence après post-partum
+    favoritesKeys = ["urgence_dom", "postpartum", "enfants", "dmp", "pharmacies_garde", "assistant"];
   } else {
-    // Onboarding — ni grossesse ni enfants — Moi Aussi accessible en mode découverte
-    favoritesKeys = ["urgence_dom", "assistant", "cycle", "postpartum", "etablissements", "teleconsult"];
+    // Onboarding — ni grossesse ni enfants
+    favoritesKeys = ["urgence_dom", "assistant", "cycle", "postpartum", "pharmacies_garde", "teleconsult"];
   }
   const favorites = favoritesKeys.map((k) => ALL_TOOLS[k]).filter(Boolean);
 

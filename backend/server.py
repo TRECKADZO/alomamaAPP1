@@ -8504,6 +8504,62 @@ async def startup():
     except Exception as e:
         logger.warning(f"Auto-payouts scheduler not started: {e}")
 
+    try:
+        asyncio.create_task(_pharmacies_garde_scheduler())  # 💊 Scraping hebdomadaire
+        logger.info("💊 Pharmacies de garde scheduler started (Lundi 06:00 UTC)")
+    except Exception as e:
+        logger.warning(f"Pharmacies de garde scheduler not started: {e}")
+
+
+async def _pharmacies_garde_scheduler():
+    """
+    💊 Scraping hebdomadaire de la liste des pharmacies de garde en CI.
+    - Exécution automatique tous les Lundis à 06:00 UTC (soit ~06:00 CI locale)
+    - Cette planification correspond au changement hebdo (Samedi → Vendredi)
+    - En cas d'erreur, retry 2h plus tard (max 3 fois par semaine)
+    """
+    import asyncio
+    await asyncio.sleep(90)  # attendre démarrage
+    last_scrape_iso_week = None
+    retry_count = 0
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            # Lundi (weekday=0) à 06h UTC
+            iso_year, iso_week, iso_weekday = now.isocalendar()
+            key = f"{iso_year}-W{iso_week}"
+            should_run = (
+                iso_weekday == 1  # Lundi
+                and now.hour == 6
+                and last_scrape_iso_week != key
+            )
+            # 1er démarrage : scrape si la DB est vide OU si périodes de plus d'1 semaine
+            if last_scrape_iso_week is None:
+                try:
+                    meta = await db.pharmacies_garde_meta.find_one({"key": "current"})
+                    if not meta or (meta.get("periode_fin") and datetime.fromisoformat(meta["periode_fin"].replace("Z", "+00:00")) < now):
+                        should_run = True
+                except Exception:
+                    should_run = True
+
+            if should_run:
+                try:
+                    from scrape_pharmacies_garde import scrape_and_persist
+                    result = await scrape_and_persist(db)
+                    logger.info(
+                        f"💊 Pharmacies de garde mis à jour : {result['total']} ({result.get('added',0)} nouveaux, {result.get('removed',0)} retirés) — période {result.get('periode')}"
+                    )
+                    last_scrape_iso_week = key
+                    retry_count = 0
+                except Exception as e:
+                    retry_count += 1
+                    logger.error(f"Pharmacies de garde scraping failed (retry {retry_count}/3): {e}")
+                    if retry_count >= 3:
+                        last_scrape_iso_week = key  # abandonne pour cette semaine
+        except Exception as e:
+            logger.warning(f"Pharmacies de garde scheduler iteration failed: {e}")
+        await asyncio.sleep(3600)  # check toutes les heures
+
 
 async def _backup_scheduler():
     """
@@ -13636,14 +13692,16 @@ try:
     from routers.subscriptions import register_subscription_routes, activate_subscription
     from routers.etablissements import register_etablissements_routes, register_pro_claim_routes
     from routers.analytics import register_analytics_routes
+    from routers.pharmacies_garde import register_pharmacies_garde_routes
     from encryption import decrypt_str as _decrypt_str_for_pdf
     register_pdf_routes(app, api, db, get_current_user, _decrypt_str_for_pdf)
     register_subscription_routes(app, api, db, get_current_user, require_roles)
     register_etablissements_routes(app, api, db, get_current_user, require_roles)
     register_pro_claim_routes(app, api, db, get_current_user, require_roles)
     register_analytics_routes(app, api, db, require_roles)
+    register_pharmacies_garde_routes(app, api, db, get_current_user, require_roles)
     app.include_router(api)  # re-enregistre pour prendre en compte les routes ajoutées
-    logger.info("✅ Routers modulaires chargés : pdf_reports, subscriptions, etablissements, pro_claims, analytics")
+    logger.info("✅ Routers modulaires chargés : pdf_reports, subscriptions, etablissements, pro_claims, analytics, pharmacies_garde")
 except Exception as _e:
     logger.warning(f"⚠️ Échec chargement routers modulaires : {_e}")
 

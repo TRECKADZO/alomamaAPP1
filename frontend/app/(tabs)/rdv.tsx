@@ -180,6 +180,24 @@ export default function Rdv() {
           </TouchableOpacity>
         )}
 
+        {/* 💊 CTA Pharmacie de garde — utile après téléconsultation ou ordonnance */}
+        {user?.role === "maman" && (
+          <TouchableOpacity
+            style={styles.pharmacieGardeCta}
+            onPress={() => router.push("/pharmacies-garde" as any)}
+            testID="pharmacies-garde-cta-rdv"
+          >
+            <View style={styles.pharmacieGardeIcon}>
+              <Ionicons name="medkit" size={22} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pharmacieGardeTitle}>💊 Pharmacie de garde</Text>
+              <Text style={styles.pharmacieGardeSub}>Après une téléconsultation ou une ordonnance</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#fff" />
+          </TouchableOpacity>
+        )}
+
         {/* Filtres statut */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersRow}>
           {statuts.map((s) => (
@@ -550,6 +568,28 @@ const styles = StyleSheet.create({
   },
   findDoctorTitle: { color: "#fff", fontWeight: "800", fontSize: 16 },
   findDoctorSub: { color: "rgba(255,255,255,0.95)", fontSize: 12, marginTop: 2 },
+
+  // 💊 CTA Pharmacie de garde (vert)
+  pharmacieGardeCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    padding: 14,
+    borderRadius: RADIUS.lg,
+    backgroundColor: "#16A34A",
+    marginBottom: 14,
+  },
+  pharmacieGardeIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pharmacieGardeTitle: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  pharmacieGardeSub: { color: "rgba(255,255,255,0.95)", fontSize: 11, marginTop: 2 },
+
   tabsRow: { flexDirection: "row", gap: 6, paddingHorizontal: SPACING.xl, marginBottom: 4 },
   tab: { flex: 1, flexDirection: "row", gap: 6, paddingVertical: 10, borderRadius: RADIUS.pill, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
   tabActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
