@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator,
-  TextInput, KeyboardAvoidingView, Platform,
+  TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, FlatList,
 } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -61,6 +61,13 @@ export default function RdvNouveau() {
   const [selectedType, setSelectedType] = useState<string>("");
   const [motif, setMotif] = useState("");
   const [searchQ, setSearchQ] = useState("");
+  // 🏥 Filtre par établissement (MSP CI officiel)
+  const [selectedEtab, setSelectedEtab] = useState<any | null>(null);
+  const [etabModalOpen, setEtabModalOpen] = useState(false);
+  const [etabSearch, setEtabSearch] = useState("");
+  const [etabResults, setEtabResults] = useState<any[]>([]);
+  const [etabLoading, setEtabLoading] = useState(false);
+  const [selectedSpecialite, setSelectedSpecialite] = useState<string | null>(null);
   // 💳 Méthode de paiement (uniquement pertinente pour mode=presentiel ; les autres = "online" forcé)
   const [paymentMethod, setPaymentMethod] = useState<"online" | "cabinet">("cabinet");
 
@@ -91,6 +98,25 @@ export default function RdvNouveau() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 🏥 Recherche debouncée des établissements officiels quand le modal est ouvert
+  useEffect(() => {
+    if (!etabModalOpen) return;
+    const t = setTimeout(async () => {
+      setEtabLoading(true);
+      try {
+        const res = await api.get("/etablissements", {
+          params: { q: etabSearch || undefined, limit: 40 },
+        });
+        setEtabResults(res.data?.items || []);
+      } catch {
+        setEtabResults([]);
+      } finally {
+        setEtabLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [etabModalOpen, etabSearch]);
 
   const pickPro = async (pro: any, autoAdvance = false) => {
     setSelectedPro(pro);
@@ -312,7 +338,7 @@ export default function RdvNouveau() {
                   style={styles.searchInput}
                   value={searchQ}
                   onChangeText={setSearchQ}
-                  placeholder="Rechercher par nom, spécialité..."
+                  placeholder="Rechercher par nom, spécialité, ville..."
                   placeholderTextColor={COLORS.textMuted}
                   testID="search-pro-input"
                 />
@@ -322,21 +348,118 @@ export default function RdvNouveau() {
                 </TouchableOpacity>
               </View>
 
-              {/* Liste pros */}
-              {pros.length === 0 ? (
-                <View style={styles.emptyWrap}>
-                  <Ionicons name="medkit-outline" size={48} color={COLORS.textMuted} />
-                  <Text style={styles.emptyTitle}>Aucun professionnel</Text>
-                  <Text style={styles.emptyText}>Utilisez la recherche avancée pour trouver un pro.</Text>
-                  <TouchableOpacity style={styles.ctaPrimary} onPress={() => { router.back(); router.push("/search"); }}>
-                    <Text style={styles.ctaPrimaryText}>Ouvrir la recherche</Text>
+              {/* 🏥 Filtres rapides — Établissement + Spécialité */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterChipsRow}
+              >
+                {/* Chip Établissement */}
+                <TouchableOpacity
+                  style={[styles.filterChip, selectedEtab && styles.filterChipActive]}
+                  onPress={() => setEtabModalOpen(true)}
+                  testID="filter-etablissement-btn"
+                >
+                  <Ionicons
+                    name="business"
+                    size={14}
+                    color={selectedEtab ? "#fff" : COLORS.primary}
+                  />
+                  <Text style={[styles.filterChipText, selectedEtab && { color: "#fff" }]} numberOfLines={1}>
+                    {selectedEtab ? selectedEtab.nom : "🏥 Établissement"}
+                  </Text>
+                  {selectedEtab && (
+                    <TouchableOpacity
+                      onPress={(e) => { e.stopPropagation(); setSelectedEtab(null); }}
+                      hitSlop={10}
+                      testID="clear-etab-filter"
+                    >
+                      <Ionicons name="close-circle" size={16} color="#fff" />
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+
+                {/* Chips spécialités uniques */}
+                {Array.from(new Set(pros.map((p: any) => p.specialite).filter(Boolean))).slice(0, 12).map((sp: any) => (
+                  <TouchableOpacity
+                    key={sp}
+                    style={[styles.filterChip, selectedSpecialite === sp && styles.filterChipActive]}
+                    onPress={() => setSelectedSpecialite(selectedSpecialite === sp ? null : sp)}
+                    testID={`filter-spec-${sp}`}
+                  >
+                    <Text style={[styles.filterChipText, selectedSpecialite === sp && { color: "#fff" }]}>
+                      {sp}
+                    </Text>
                   </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Bandeau info si un établissement est sélectionné */}
+              {selectedEtab && (
+                <View style={styles.etabBanner}>
+                  <Ionicons name="location" size={14} color="#0891B2" />
+                  <Text style={styles.etabBannerText} numberOfLines={2}>
+                    Praticiens à proximité de {selectedEtab.nom} · {selectedEtab.commune || selectedEtab.region}
+                  </Text>
                 </View>
-              ) : (
-                pros
-                  .filter((p: any) => !searchQ || (p.name || "").toLowerCase().includes(searchQ.toLowerCase()) || (p.specialite || "").toLowerCase().includes(searchQ.toLowerCase()))
-                  .map((p: any) => <ProCard key={p.id} pro={p} selected={selectedPro?.id === p.id} onPress={() => pickPro(p)} />)
               )}
+
+              {/* Liste pros */}
+              {(() => {
+                const q = searchQ.trim().toLowerCase();
+                const etabCommune = (selectedEtab?.commune || "").toLowerCase();
+                const etabRegion = (selectedEtab?.region || "").toLowerCase();
+                const filtered = pros.filter((p: any) => {
+                  // Filtre texte (nom / spécialité / ville / région)
+                  const matchQ = !q ||
+                    (p.name || "").toLowerCase().includes(q) ||
+                    (p.specialite || "").toLowerCase().includes(q) ||
+                    (p.ville || "").toLowerCase().includes(q) ||
+                    (p.region || "").toLowerCase().includes(q);
+                  // Filtre spécialité (chip)
+                  const matchSpec = !selectedSpecialite || (p.specialite === selectedSpecialite);
+                  // Filtre établissement : matche par ville ou région
+                  const proVille = (p.ville || "").toLowerCase();
+                  const proRegion = (p.region || "").toLowerCase();
+                  const matchEtab = !selectedEtab ||
+                    (etabCommune && proVille && (proVille.includes(etabCommune) || etabCommune.includes(proVille))) ||
+                    (etabRegion && proRegion && (proRegion.includes(etabRegion) || etabRegion.includes(proRegion)));
+                  return matchQ && matchSpec && matchEtab;
+                });
+                if (pros.length === 0) {
+                  return (
+                    <View style={styles.emptyWrap}>
+                      <Ionicons name="medkit-outline" size={48} color={COLORS.textMuted} />
+                      <Text style={styles.emptyTitle}>Aucun professionnel</Text>
+                      <Text style={styles.emptyText}>Utilisez la recherche avancée pour trouver un pro.</Text>
+                      <TouchableOpacity style={styles.ctaPrimary} onPress={() => { router.back(); router.push("/search"); }}>
+                        <Text style={styles.ctaPrimaryText}>Ouvrir la recherche</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                }
+                if (filtered.length === 0) {
+                  return (
+                    <View style={styles.emptyWrap}>
+                      <Ionicons name="filter-outline" size={48} color={COLORS.textMuted} />
+                      <Text style={styles.emptyTitle}>Aucun praticien ne correspond</Text>
+                      <Text style={styles.emptyText}>
+                        Essayez d&apos;élargir votre recherche ou de changer d&apos;établissement.
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.ctaPrimary}
+                        onPress={() => { setSelectedEtab(null); setSelectedSpecialite(null); setSearchQ(""); }}
+                        testID="reset-filters-btn"
+                      >
+                        <Text style={styles.ctaPrimaryText}>Réinitialiser les filtres</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                }
+                return filtered.map((p: any) => (
+                  <ProCard key={p.id} pro={p} selected={selectedPro?.id === p.id} onPress={() => pickPro(p)} />
+                ));
+              })()}
             </View>
           )}
 
@@ -683,6 +806,100 @@ export default function RdvNouveau() {
           })()}
         </View>
       </KeyboardAvoidingView>
+
+      {/* 🏥 Bottom sheet — Sélection d'un établissement MSP CI */}
+      <Modal
+        visible={etabModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEtabModalOpen(false)}
+        statusBarTranslucent
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setEtabModalOpen(false)}>
+          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeader}>
+              <Ionicons name="business" size={22} color="#0891B2" />
+              <Text style={styles.modalTitle}>Filtrer par établissement</Text>
+              <TouchableOpacity onPress={() => setEtabModalOpen(false)} hitSlop={12}>
+                <Ionicons name="close" size={22} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Choisissez un établissement agréé MSP CI pour trouver un spécialiste à proximité (par ville / région).
+            </Text>
+
+            {/* Barre de recherche */}
+            <View style={styles.modalSearchRow}>
+              <Ionicons name="search" size={16} color={COLORS.textMuted} />
+              <TextInput
+                style={styles.modalSearchInput}
+                value={etabSearch}
+                onChangeText={setEtabSearch}
+                placeholder="Rechercher un CHU, hôpital, clinique, PMI..."
+                placeholderTextColor={COLORS.textMuted}
+                autoFocus={false}
+                testID="etab-search-input"
+              />
+              {etabSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setEtabSearch("")} hitSlop={10}>
+                  <Ionicons name="close-circle" size={18} color={COLORS.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {etabLoading ? (
+              <View style={{ paddingVertical: 40 }}>
+                <ActivityIndicator color={COLORS.primary} />
+              </View>
+            ) : etabResults.length === 0 ? (
+              <View style={styles.modalEmptyWrap}>
+                <Ionicons name="business-outline" size={40} color={COLORS.textMuted} />
+                <Text style={styles.modalEmptyText}>Aucun établissement trouvé</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={etabResults}
+                keyExtractor={(item: any) => item.id || item.nom}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 24 }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.etabRow}
+                    onPress={() => {
+                      setSelectedEtab(item);
+                      setEtabModalOpen(false);
+                      setEtabSearch("");
+                    }}
+                    testID={`pick-etab-${item.id}`}
+                  >
+                    <View style={styles.etabIconWrap}>
+                      <Ionicons
+                        name={
+                          /officine|pharmacie/i.test(item.categorie || "") ? "medkit" :
+                          /materni/i.test(item.categorie || "") ? "heart" :
+                          /clinique/i.test(item.categorie || "") ? "business" :
+                          "medical"
+                        }
+                        size={18}
+                        color="#0891B2"
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.etabName} numberOfLines={2}>{item.nom}</Text>
+                      <Text style={styles.etabMeta} numberOfLines={1}>
+                        {[item.categorie, item.commune, item.region].filter(Boolean).join(" · ")}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+                  </TouchableOpacity>
+                )}
+                ItemSeparatorComponent={() => <View style={styles.etabSep} />}
+              />
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -776,6 +993,112 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, color: COLORS.textPrimary, fontSize: 14 },
   advancedBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: COLORS.primaryLight, borderRadius: 999 },
   advancedText: { color: COLORS.primary, fontSize: 12, fontWeight: "800" },
+
+  // 🏥 Filtres rapides (chips établissement + spécialités)
+  filterChipsRow: { flexDirection: "row", gap: 8, paddingBottom: 12, paddingRight: 8 },
+  filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    maxWidth: 260,
+  },
+  filterChipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    maxWidth: 200,
+  },
+  etabBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    backgroundColor: "#CFFAFE",
+    borderRadius: RADIUS.md,
+    marginBottom: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: "#0891B2",
+  },
+  etabBannerText: { flex: 1, fontSize: 12, color: "#0E7490", fontWeight: "600" },
+
+  // Modal bottom sheet — établissement
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: 8,
+    paddingBottom: 24,
+    maxHeight: "85%",
+  },
+  modalHandle: {
+    alignSelf: "center",
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: COLORS.border,
+    marginBottom: 12,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 4,
+  },
+  modalTitle: { flex: 1, fontSize: 17, fontWeight: "800", color: COLORS.textPrimary },
+  modalSubtitle: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 14, lineHeight: 17 },
+  modalSearchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: COLORS.bgPrimary,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalSearchInput: { flex: 1, color: COLORS.textPrimary, fontSize: 14 },
+  modalEmptyWrap: {
+    alignItems: "center",
+    paddingVertical: 40,
+    gap: 10,
+  },
+  modalEmptyText: { color: COLORS.textMuted, fontSize: 13 },
+  etabRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  etabSep: { height: 1, backgroundColor: COLORS.border, marginHorizontal: 4 },
+  etabIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#CFFAFE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  etabName: { fontSize: 13, fontWeight: "700", color: COLORS.textPrimary },
+  etabMeta: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
 
   proCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, marginBottom: 10, borderWidth: 2, borderColor: "transparent" },
   proCardActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryLight },
