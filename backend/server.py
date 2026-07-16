@@ -805,9 +805,11 @@ async def login(payload: LoginIn):
     # ⚠️ Phase de test : bypass possible via TWO_FACTOR_ENFORCEMENT="off" pour les rôles NON-admin
     _2fa_enforced = (os.environ.get("TWO_FACTOR_ENFORCEMENT", "on").strip().lower() not in ("off", "false", "0", "disabled", "no"))
     # 🔐 CONFORMITÉ N3 : 2FA STRICTEMENT OBLIGATOIRE pour admin & super_admin (non désactivable)
+    # 🔓 Exception : per-user opt-out via `admin_2fa_opt_out=True` (accordé par le Super Admin uniquement, journalisé)
     _admin_role = user.get("role") in ("admin", "super_admin") or user.get("is_super_admin")
-    # Pour les admins on force TOUJOURS l'exigence 2FA (aucun bypass possible)
-    _admin_2fa_required = _admin_role and not user.get("totp_enabled")
+    _admin_2fa_opt_out = bool(user.get("admin_2fa_opt_out"))
+    # Pour les admins on force TOUJOURS l'exigence 2FA (aucun bypass possible, sauf opt-out explicite)
+    _admin_2fa_required = _admin_role and not user.get("totp_enabled") and not _admin_2fa_opt_out
     if _admin_2fa_required:
         setup_grace = user.get("totp_setup_grace_used", False)
         if setup_grace:

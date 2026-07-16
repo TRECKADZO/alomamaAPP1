@@ -3,9 +3,8 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
   KeyboardAvoidingView, Platform, ActivityIndicator,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { api } from "../../lib/api";
 import { COLORS, RADIUS, SPACING } from "../../constants/theme";
 
@@ -16,7 +15,10 @@ interface Msg {
 }
 
 export default function AssistantIA() {
-  const tabBarHeight = useBottomTabBarHeight();
+  // 🛡️ useBottomTabBarHeight crashe hors du BottomTabNavigator (notamment sur web).
+  // On utilise à la place une hauteur fixe raisonnable + safe area insets.
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = 60 + insets.bottom;
   const [messages, setMessages] = useState<Msg[]>([
     {
       id: "welcome",
