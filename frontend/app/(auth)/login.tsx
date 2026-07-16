@@ -27,6 +27,9 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
+  // 🔐 2FA (RGSSI N3)
+  const [needsTotp, setNeedsTotp] = useState(false);
+  const [totpCode, setTotpCode] = useState("");
 
   const handleLogin = async () => {
     if (!identifier || !password) {
@@ -40,11 +43,27 @@ export default function Login() {
         return;
       }
     }
+    if (needsTotp && totpCode.trim().length !== 6) {
+      Alert.alert("Code 2FA requis", "Saisissez le code à 6 chiffres généré par votre application d'authentification.");
+      return;
+    }
     setLoading(true);
     try {
-      await login(
-        { [mode]: mode === "email" ? identifier.trim().toLowerCase() : identifier.trim(), password } as any
-      );
+      const idValue = mode === "email" ? identifier.trim().toLowerCase() : identifier.trim();
+      const result: any = await login({
+        [mode]: idValue,
+        password,
+        totp_code: needsTotp ? totpCode.trim() : undefined,
+      } as any);
+      // Cas où l'API renvoie requires_2fa → afficher l'input TOTP
+      if (result && result.requires_2fa) {
+        setNeedsTotp(true);
+        Alert.alert(
+          "Vérification en 2 étapes",
+          "Saisissez le code à 6 chiffres généré par votre application d'authentification (Google Authenticator, Authy…)."
+        );
+        return;
+      }
       router.replace("/(tabs)");
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
@@ -138,6 +157,30 @@ export default function Login() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* 🔐 Champ code 2FA (affiché uniquement après le 1er login si le compte a activé TOTP) */}
+          {needsTotp && (
+            <View style={styles.field}>
+              <Text style={styles.label}>Code à 6 chiffres (Google Authenticator / Authy)</Text>
+              <View style={styles.inputWrap}>
+                <Ionicons name="shield-checkmark-outline" size={18} color={COLORS.textMuted} />
+                <TextInput
+                  style={styles.input}
+                  value={totpCode}
+                  onChangeText={(v) => setTotpCode(v.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="123 456"
+                  placeholderTextColor={COLORS.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  autoFocus
+                  testID="login-totp-input"
+                />
+              </View>
+              <Text style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 6 }}>
+                Vérification en 2 étapes obligatoire (sécurité RGSSI N3).
+              </Text>
+            </View>
+          )}
 
           <TouchableOpacity
             style={styles.btnPrimary}

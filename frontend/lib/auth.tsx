@@ -21,7 +21,7 @@ export interface User {
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<User>;
+  login: (credentials: { email?: string; phone?: string; password: string; totp_code?: string }) => Promise<User | { requires_2fa: true; user_id: string; email?: string; message?: string }>;
   register: (payload: {
     email: string;
     password: string;
@@ -63,8 +63,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
-  const login = async (credentials: { email?: string; phone?: string; password: string }) => {
+  const login = async (credentials: { email?: string; phone?: string; password: string; totp_code?: string }) => {
     const { data } = await api.post("/auth/login", credentials);
+    // 🔐 Cas 2FA requis : le backend renvoie { requires_2fa: true, user_id, email, message }
+    if (data?.requires_2fa) {
+      return { requires_2fa: true as const, user_id: data.user_id, email: data.email, message: data.message };
+    }
     await saveAuth(data.token, data.user);
     setUser(data.user);
     registerExpoPushToken().catch(() => {});

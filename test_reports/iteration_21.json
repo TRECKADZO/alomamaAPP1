@@ -1,0 +1,28 @@
+{
+  "summary": "Validated the 2FA mobile-login bug fix end-to-end. Backend: TWO_FACTOR_ENFORCEMENT='on' is honoured — POST /api/auth/login for a user without TOTP returns {token,user} unchanged (maman.test), while for a TOTP-enrolled user (pro.test enrolled via DB), missing totp_code returns HTTP 200 with {requires_2fa:true,user_id,email,message}, wrong totp_code returns 401 and a valid pyotp code returns {token,user} + working /auth/me. Frontend web preview (mobile viewport 390x844): maman.test signs in normally (no TOTP field), pro.test after enrollment shows the login-totp-input (inputmode=numeric, maxLength=6) and a valid TOTP completes login → dashboard 'Bonjour Dr. TestPro'. No regressions.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_2fa_mobile_login.py",
+    "/app/test_reports/pytest/iter21_2fa_mobile.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend returns HTTP 200 (not 400/401) for the requires_2fa gating step. The frontend correctly checks data.requires_2fa, so this is functional, but the task description mentioned 400/401 — please align documentation.",
+    "login() return type in /app/frontend/lib/auth.tsx correctly covers the {requires_2fa:true,...} union — handled in login.tsx via `result.requires_2fa` check. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_2fa_mobile_login.py (new pytest suite, 6 tests)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (login w/o 2FA + login with TOTP both pass)"},
+  "seed_data_creation": "pro.test@alomaman.dev was temporarily enrolled in TOTP (totp_secret/totp_enabled/mfa_enabled) inside a scoped fixture and restored to its original state after each pytest module and after the Playwright run (fields unset).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "TWO_FACTOR_ENFORCEMENT='on' is now enforced globally. Comptes seed: maman.test (no 2FA), pro.test (no 2FA by default; enroll on the fly if you want to test the TOTP prompt). Frontend testIDs: login-identifier-input, login-password-input, login-totp-input (conditional), login-submit-btn. Backend login endpoint returns HTTP 200 with {requires_2fa:true,...} when TOTP is required — not 401.",
+  "rca_of_issue": "Two root causes were fixed in this iteration: (1) backend/.env had TWO_FACTOR_ENFORCEMENT='off' which bypassed TOTP verification for non-admin roles even when totp_enabled=true — now set to 'on'; (2) the mobile client login() previously called saveAuth(data.token, data.user) unconditionally, and the login screen had no TOTP input — fixed by returning the {requires_2fa:true,...} shape from lib/auth.tsx and rendering a conditional TextInput (keyboardType='number-pad', maxLength=6, testID=login-totp-input) in app/(auth)/login.tsx. Both are validated by the pytest suite and by a Playwright end-to-end run."
+}
