@@ -20,10 +20,11 @@ import unicodedata
 from collections import defaultdict
 from datetime import datetime
 
+from pathlib import Path
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
-load_dotenv("/app/backend/.env")
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 def _norm(s: str) -> str:

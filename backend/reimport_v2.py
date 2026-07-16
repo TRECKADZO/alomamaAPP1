@@ -20,7 +20,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
-load_dotenv("/app/backend/.env")
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 ROOT = Path(__file__).resolve().parent
 DATA_FILE = ROOT / "data" / "etablissements_ci_xlsx.json"

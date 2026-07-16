@@ -33,9 +33,7 @@ def _get_or_create_key() -> bytes:
         # Génération automatique (32 bytes = 256 bits) + persist dans .env
         new_key = AESGCM.generate_key(bit_length=256)
         key_b64 = base64.urlsafe_b64encode(new_key).decode()
-        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend", ".env")
-        if not os.path.exists(env_path):
-            env_path = "/app/backend/.env"
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
         try:
             with open(env_path, "a") as f:
                 f.write(f"\nENCRYPTION_KEY=\"{key_b64}\"\n")

@@ -5,8 +5,9 @@ Respect rate limit : 1 requête/seconde.
 """
 import asyncio, os, sys
 from motor.motor_asyncio import AsyncIOMotorClient
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv("/app/backend/.env")
+load_dotenv(Path(__file__).resolve().parent / ".env")
 import httpx
 from urllib.parse import quote
 from datetime import datetime

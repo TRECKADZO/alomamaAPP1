@@ -7,9 +7,10 @@ Usage : python /app/backend/cleanup_demo_accounts.py
 import asyncio
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv("/app/backend/.env")
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ.get("DB_NAME", "alomaman")

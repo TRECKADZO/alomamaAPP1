@@ -1,8 +1,8 @@
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Load .env first so ENCRYPTION_KEY is available
-load_dotenv("/app/backend/.env")
+# Load .env first so ENCRYPTION_KEY is available (chemin relatif au fichier pour portabilité)
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from encryption import (
     encrypt_str, decrypt_str, encrypt_list, decrypt_list,

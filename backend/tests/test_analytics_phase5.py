@@ -43,7 +43,7 @@ def maman_token():
 @pytest.fixture(scope="module")
 def admin_token():
     # Reset 2FA grace
-    modified, user = asyncio.get_event_loop().run_until_complete(_reset_admin_2fa_grace())
+    modified, user = asyncio.new_event_loop().run_until_complete(_reset_admin_2fa_grace())
     print(f"Admin 2FA reset: modified={modified} user_meta={user}")
 
     last_err = None
