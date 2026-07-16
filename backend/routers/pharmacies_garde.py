@@ -189,15 +189,19 @@ def register_pharmacies_garde_routes(app, api, db, get_current_user, require_rol
             # Recherche partielle (ex : "cocody" → matche "COCODY - RIVIERA" et "COCODY II PLATEAUX")
             query["commune_norm"] = {"$regex": _norm(commune), "$options": "i"}
 
+        # 🔍 Recherche libre (q) — appliquée directement en Mongo via $or regex
+        if q:
+            q_escaped = re.escape(q.strip())
+            if q_escaped:
+                query["$or"] = [
+                    {"nom": {"$regex": q_escaped, "$options": "i"}},
+                    {"commune": {"$regex": q_escaped, "$options": "i"}},
+                    {"responsable": {"$regex": q_escaped, "$options": "i"}},
+                    {"contact_raw": {"$regex": q_escaped, "$options": "i"}},
+                ]
+
         cursor = db.pharmacies_garde.find(query, {"_id": 0}).skip(max(0, offset)).limit(min(limit, 1000))
         items = await cursor.to_list(min(limit, 1000))
-
-        if q:
-            qn = _norm(q)
-            items = [p for p in items if
-                     qn in _norm(p.get("nom", "")) or
-                     qn in _norm(p.get("commune", "")) or
-                     qn in _norm(p.get("responsable", ""))]
 
         # Récupère la période
         meta = await db.pharmacies_garde_meta.find_one({"key": "current"}, {"_id": 0}) or {}

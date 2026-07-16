@@ -65,17 +65,17 @@ function CarteScreenInner() {
             specialite: specialite || undefined,
             cmu: cmuOnly ? true : undefined,
             q: textSearch || undefined,
-            limit: 300,
+            limit: 2000,
           },
         });
         items = r.data?.items || [];
       } else {
-        // Sans position ou "Tout" : list globale avec filtres
+        // Sans position ou "Tout" : list globale avec filtres — récupère TOUS les établissements
         const r = await api.get("/etablissements", {
           params: {
             specialite: specialite || undefined,
             q: textSearch || undefined,
-            limit: 500,
+            limit: 2000,
           },
         });
         items = (r.data?.items || []).filter((e: any) => e.lat && e.lon);

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel
-import json, unicodedata
+import json, unicodedata, re
 
 ROOT = Path(__file__).resolve().parent.parent
 _DATASET_CACHE: Dict[str, Any] = {}
@@ -86,16 +86,24 @@ def register_etablissements_routes(app, api, db, get_current_user, require_roles
         if categorie: query["categorie"] = {"$regex": categorie, "$options": "i"}
         if specialite: query["specialites_metier"] = specialite
 
-        cursor = db.etablissements_officiels.find(query, {"_id": 0}).skip(max(0, offset)).limit(min(limit, 500))
-        items = await cursor.to_list(min(limit, 500))
-
+        # 🔍 Recherche libre (q) : appliquée DIRECTEMENT en Mongo via $or regex
+        # → cherche dans nom, adresse, commune, région, nature, catégorie, responsable, district_sanitaire
         if q:
-            qn = _norm(q)
-            items = [e for e in items if
-                     qn in _norm(e.get("nom", "")) or
-                     qn in _norm(e.get("adresse", "")) or
-                     qn in _norm(e.get("commune", "")) or
-                     qn in _norm(e.get("responsable", ""))]
+            q_escaped = re.escape(q.strip())
+            if q_escaped:
+                query["$or"] = [
+                    {"nom": {"$regex": q_escaped, "$options": "i"}},
+                    {"adresse": {"$regex": q_escaped, "$options": "i"}},
+                    {"commune": {"$regex": q_escaped, "$options": "i"}},
+                    {"region": {"$regex": q_escaped, "$options": "i"}},
+                    {"nature": {"$regex": q_escaped, "$options": "i"}},
+                    {"categorie": {"$regex": q_escaped, "$options": "i"}},
+                    {"responsable": {"$regex": q_escaped, "$options": "i"}},
+                    {"district_sanitaire": {"$regex": q_escaped, "$options": "i"}},
+                ]
+
+        cursor = db.etablissements_officiels.find(query, {"_id": 0}).skip(max(0, offset)).limit(min(limit, 2000))
+        items = await cursor.to_list(min(limit, 2000))
 
         total = await db.etablissements_officiels.count_documents(query)
         return {"count": len(items), "total": total, "items": items}
