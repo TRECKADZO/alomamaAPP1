@@ -325,6 +325,61 @@ function MamanDash({ user, data, router, unreadNotif = 0 }: any) {
       </View>
 
       <View style={styles.body}>
+        {/* 📝 CHECKLIST — Étapes pour compléter votre profil santé */}
+        {scoreSante < 100 && (
+          <View style={styles.checklistCard} testID="profile-completion-steps">
+            <View style={styles.checklistHeader}>
+              <Ionicons name="list-circle" size={22} color="#EC4899" />
+              <Text style={styles.checklistTitle}>Complétez votre profil santé</Text>
+              <View style={styles.checklistBadge}>
+                <Text style={styles.checklistBadgeText}>
+                  {Object.values(scoreFactors).filter(Boolean).length}/5
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.checklistSub}>
+              Débloquez toutes les fonctionnalités en complétant ces étapes 👇
+            </Text>
+            {[
+              { key: "profil", label: "Renseigner nom, téléphone & photo", done: scoreFactors.profil, route: "/(tabs)/profil", icon: "person" as const, color: "#EC4899" },
+              { key: "suivi", label: g ? "Suivre ma grossesse" : enfants.length > 0 ? "Suivi enfants activé" : "Ajouter une grossesse ou un enfant", done: scoreFactors.suivi, route: (g ? "/(tabs)/grossesse" : "/(tabs)/enfants") as any, icon: "heart" as const, color: "#F472B6" },
+              { key: "rdv", label: "Planifier un premier rendez-vous", done: scoreFactors.rdv, route: "/(tabs)/rdv" as any, icon: "calendar" as const, color: "#A855F7" },
+              { key: "dossier", label: "Compléter votre dossier médical", done: scoreFactors.dossier, route: "/dossier-medical" as any, icon: "document-text" as const, color: "#14B8A6" },
+              { key: "consent", label: "Valider le consentement RGSSI N3", done: scoreFactors.consent, route: "/consentements" as any, icon: "shield-checkmark" as const, color: "#16A34A" },
+            ].map((step, i) => (
+              <TouchableOpacity
+                key={step.key}
+                style={[styles.checklistRow, step.done && styles.checklistRowDone]}
+                onPress={() => !step.done && router.push(step.route)}
+                testID={`profile-step-${step.key}`}
+                activeOpacity={step.done ? 1 : 0.7}
+              >
+                <View style={[styles.checklistCheckbox, step.done ? styles.checklistCheckboxDone : { borderColor: step.color }]}>
+                  {step.done ? (
+                    <Ionicons name="checkmark" size={14} color="#fff" />
+                  ) : (
+                    <Text style={[styles.checklistStepNum, { color: step.color }]}>{i + 1}</Text>
+                  )}
+                </View>
+                <View style={[styles.checklistIconWrap, { backgroundColor: (step.done ? "#10B981" : step.color) + "1A" }]}>
+                  <Ionicons name={step.icon} size={14} color={step.done ? "#10B981" : step.color} />
+                </View>
+                <Text
+                  style={[styles.checklistLabel, step.done && styles.checklistLabelDone]}
+                  numberOfLines={2}
+                >
+                  {step.label}
+                </Text>
+                {step.done ? (
+                  <Text style={styles.checklistDoneTag}>Fait</Text>
+                ) : (
+                  <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {/* 📅 SECTION : AUJOURD'HUI */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitleV2}>Aujourd&apos;hui</Text>
@@ -1258,6 +1313,69 @@ const styles = StyleSheet.create({
   scoreCircleText: { fontSize: 14, fontWeight: "900" },
   scoreLabel: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary },
   scoreSub: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
+
+  // Checklist "Complétez votre profil"
+  checklistCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: "#FBCFE8",
+    padding: 14,
+    marginTop: 4,
+    marginBottom: 4,
+    ...SHADOW.sm,
+  },
+  checklistHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
+  checklistTitle: { flex: 1, fontSize: 15, fontWeight: "800", color: COLORS.textPrimary },
+  checklistBadge: {
+    backgroundColor: "#FCE7F3",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  checklistBadgeText: { fontSize: 11, fontWeight: "800", color: "#BE185D" },
+  checklistSub: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 10 },
+  checklistRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+  },
+  checklistRowDone: { opacity: 0.6 },
+  checklistCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: "#D1D5DB",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+  checklistCheckboxDone: { backgroundColor: "#10B981", borderColor: "#10B981" },
+  checklistStepNum: { fontSize: 12, fontWeight: "900" },
+  checklistIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checklistLabel: { flex: 1, fontSize: 13, fontWeight: "600", color: COLORS.textPrimary },
+  checklistLabelDone: { color: COLORS.textMuted, textDecorationLine: "line-through" },
+  checklistDoneTag: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#10B981",
+    backgroundColor: "#DCFCE7",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+
 
   // Section headers V2
   sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 18, marginBottom: 10 },
