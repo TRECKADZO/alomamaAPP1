@@ -323,15 +323,17 @@ class GrossesseIn(BaseModel):
 
 
 class EnfantIn(BaseModel):
-    nom: str
-    date_naissance: str
-    sexe: Literal["F", "M"]
+    nom: Optional[str] = None
+    date_naissance: Optional[str] = None
+    sexe: Optional[Literal["F", "M"]] = None
     poids_kg: Optional[float] = None
     taille_cm: Optional[float] = None
     notes: Optional[str] = None
     numero_cmu: Optional[str] = None  # N° CMU de l'enfant (bénéficiaire)
     groupe_sanguin: Optional[str] = None
     allergies: Optional[List[str]] = None
+    lieu_naissance: Optional[str] = None  # 🆕 Lieu de naissance modifiable
+    photo_base64: Optional[str] = None    # 🆕 Photo modifiable directement dans le PATCH
 
     @field_validator("allergies", mode="before")
     @classmethod
@@ -348,7 +350,7 @@ class EnfantIn(BaseModel):
             return [s.strip() for s in v.split(",") if s.strip()]
         return None
 
-    @field_validator("groupe_sanguin", "numero_cmu", "notes", mode="before")
+    @field_validator("groupe_sanguin", "numero_cmu", "notes", "lieu_naissance", mode="before")
     @classmethod
     def _empty_to_none(cls, v):
         """Normalise chaîne vide → None pour éviter les validations strictes."""
@@ -357,10 +359,47 @@ class EnfantIn(BaseModel):
         return v
 
 
+class EnfantCreateIn(BaseModel):
+    """Modèle STRICT pour création d'enfant (POST) — impose nom, date, sexe."""
+    nom: str
+    date_naissance: str
+    sexe: Literal["F", "M"]
+    poids_kg: Optional[float] = None
+    taille_cm: Optional[float] = None
+    notes: Optional[str] = None
+    numero_cmu: Optional[str] = None
+    groupe_sanguin: Optional[str] = None
+    allergies: Optional[List[str]] = None
+    lieu_naissance: Optional[str] = None
+
+    @field_validator("allergies", mode="before")
+    @classmethod
+    def _parse_allergies(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return None
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return None
+
+    @field_validator("groupe_sanguin", "numero_cmu", "notes", "lieu_naissance", mode="before")
+    @classmethod
+    def _empty_to_none(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+
 class VaccinIn(BaseModel):
     nom: str
     date: str
-    fait: bool = False
+    fait: bool = True  # 🆕 par défaut True (si on ajoute manuellement c'est qu'il a été fait)
+    lieu: Optional[str] = None  # 🆕 lieu où le vaccin a été administré
+    lot: Optional[str] = None   # 🆕 numéro de lot
 
 
 class RdvIn(BaseModel):
@@ -1405,7 +1444,7 @@ async def set_enfant_photo(eid: str, payload: PhotoIn, user=Depends(require_role
 
 
 @api.post("/enfants")
-async def create_enfant(payload: EnfantIn, user=Depends(require_roles("maman"))):
+async def create_enfant(payload: EnfantCreateIn, user=Depends(require_roles("maman"))):
     current = await db.enfants.count_documents({"user_id": user["id"]})
     await check_quota(user, "enfants_max", current)
     data = payload.dict()
@@ -1433,6 +1472,10 @@ async def update_enfant(eid: str, payload: EnfantIn, user=Depends(require_roles(
         data["numero_cmu"] = encrypt_str(data["numero_cmu"])
     if "allergies" in data and isinstance(data["allergies"], list):
         data["allergies"] = encrypt_list(data["allergies"])
+    # 🆕 Photo : si fournie en base64, on la stocke dans photo_base64 (data URI complet)
+    if "photo_base64" in data and data["photo_base64"]:
+        # Le champ est déjà un data URI côté frontend, on garde tel quel
+        data["photo_base64"] = data["photo_base64"]
     res = await db.enfants.update_one(
         {"id": eid, "user_id": user["id"]},
         {"$set": data},
@@ -1476,12 +1519,18 @@ async def delete_vaccin(eid: str, vid: str, user=Depends(require_roles("maman"))
 
 @api.patch("/enfants/{eid}/vaccins/{vid}")
 async def update_vaccin(eid: str, vid: str, payload: dict, user=Depends(require_roles("maman"))):
-    """Toggle fait/non-fait ou modifier date d'un vaccin."""
+    """Modifier un vaccin (date, lieu, lot, fait/non-fait)."""
     sets = {}
     if "fait" in payload:
         sets["vaccins.$.fait"] = bool(payload["fait"])
     if "date" in payload and payload["date"]:
         sets["vaccins.$.date"] = payload["date"]
+    if "lieu" in payload:
+        sets["vaccins.$.lieu"] = (payload["lieu"] or "").strip() or None
+    if "lot" in payload:
+        sets["vaccins.$.lot"] = (payload["lot"] or "").strip() or None
+    if "nom" in payload and (payload["nom"] or "").strip():
+        sets["vaccins.$.nom"] = payload["nom"].strip()
     if sets:
         await db.enfants.update_one(
             {"id": eid, "user_id": user["id"], "vaccins.id": vid},

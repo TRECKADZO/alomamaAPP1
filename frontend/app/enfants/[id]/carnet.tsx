@@ -273,6 +273,11 @@ export default function CarnetModulaire() {
         <TouchableOpacity onPress={toggleTts} style={[styles.iconBtn, ttsOn && { backgroundColor: "#FEF3C7" }]} accessibilityLabel="Activer ou désactiver le mode vocal">
           <Ionicons name={ttsOn ? "volume-high" : "volume-mute"} size={20} color={ttsOn ? "#B45309" : COLORS.textPrimary} />
         </TouchableOpacity>
+        {user?.role === "maman" && (
+          <TouchableOpacity onPress={() => router.push(`/enfants/${enfant.id}/modifier` as any)} style={styles.iconBtn} testID="edit-enfant-btn" accessibilityLabel="Modifier les informations">
+            <Ionicons name="create-outline" size={20} color={COLORS.textPrimary} />
+          </TouchableOpacity>
+        )}
         <TouchableOpacity onPress={shareCarnet} style={styles.iconBtn}>
           <Ionicons name="share-outline" size={20} color={COLORS.textPrimary} />
         </TouchableOpacity>
