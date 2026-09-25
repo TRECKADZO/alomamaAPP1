@@ -1429,6 +1429,48 @@ async def add_mesure(eid: str, payload: MesureIn, user=Depends(require_roles("ma
     return decrypt_enfant(e)
 
 
+@api.patch("/enfants/{eid}/mesures/{mid}")
+async def update_mesure(eid: str, mid: str, payload: dict, user=Depends(require_roles("maman"))):
+    """Modifier une mesure (poids/taille/pc/date)."""
+    sets = {}
+    if "poids_kg" in payload and payload["poids_kg"] is not None:
+        try: sets["mesures.$.poids_kg"] = float(payload["poids_kg"])
+        except: pass
+    if "taille_cm" in payload and payload["taille_cm"] is not None:
+        try: sets["mesures.$.taille_cm"] = float(payload["taille_cm"])
+        except: pass
+    if "perimetre_cranien_cm" in payload and payload["perimetre_cranien_cm"] is not None:
+        try: sets["mesures.$.perimetre_cranien_cm"] = float(payload["perimetre_cranien_cm"])
+        except: pass
+    if "date" in payload and payload["date"]:
+        sets["mesures.$.date"] = payload["date"]
+    if "notes" in payload:
+        sets["mesures.$.notes"] = (payload.get("notes") or "").strip() or None
+    if not sets:
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+    res = await db.enfants.update_one(
+        {"id": eid, "user_id": user["id"], "mesures.id": mid},
+        {"$set": sets},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Mesure introuvable")
+    e = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    return decrypt_enfant(e) if e else {"ok": True}
+
+
+@api.delete("/enfants/{eid}/mesures/{mid}")
+async def delete_mesure(eid: str, mid: str, user=Depends(require_roles("maman"))):
+    """Supprimer une mesure du carnet de croissance."""
+    res = await db.enfants.update_one(
+        {"id": eid, "user_id": user["id"]},
+        {"$pull": {"mesures": {"id": mid}}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Enfant introuvable")
+    e = await db.enfants.find_one({"id": eid, "user_id": user["id"]}, {"_id": 0})
+    return decrypt_enfant(e) if e else {"ok": True}
+
+
 @api.post("/enfants/{eid}/photo")
 async def set_enfant_photo(eid: str, payload: PhotoIn, user=Depends(require_roles("maman"))):
     res = await db.enfants.update_one(
@@ -1705,10 +1747,13 @@ async def croissance_oms(eid: str, user=Depends(require_roles("maman"))):
         p_poids = _classify(m.get("poids_kg") or 0, *pa[1:]) if m.get("poids_kg") else None
         p_taille = _classify(m.get("taille_cm") or 0, *ta[1:]) if m.get("taille_cm") else None
         points.append({
+            "id": m.get("id"),
             "date": m.get("date"),
             "age_mois": age_mois,
             "poids_kg": m.get("poids_kg"),
             "taille_cm": m.get("taille_cm"),
+            "perimetre_cranien_cm": m.get("perimetre_cranien_cm"),
+            "notes": m.get("notes"),
             "oms_poids_ref": {"p3": pa[1], "p15": pa[2], "p50": pa[3], "p85": pa[4], "p97": pa[5]},
             "oms_taille_ref": {"p3": ta[1], "p15": ta[2], "p50": ta[3], "p85": ta[4], "p97": ta[5]},
             "classification_poids": p_poids,

@@ -36,6 +36,7 @@ export default function Croissance() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"poids" | "taille">("poids");
   const [addModal, setAddModal] = useState(false);
+  const [editingMesureId, setEditingMesureId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [mes, setMes] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -43,6 +44,40 @@ export default function Croissance() {
     taille_cm: "",
     perimetre_cranien_cm: "",
   });
+
+  const openAdd = () => {
+    setEditingMesureId(null);
+    setMes({ date: new Date().toISOString().slice(0, 10), poids_kg: "", taille_cm: "", perimetre_cranien_cm: "" });
+    setAddModal(true);
+  };
+
+  const openEdit = (p: any) => {
+    if (!p.id) return;
+    setEditingMesureId(p.id);
+    setMes({
+      date: (p.date || "").slice(0, 10) || new Date().toISOString().slice(0, 10),
+      poids_kg: p.poids_kg != null ? String(p.poids_kg) : "",
+      taille_cm: p.taille_cm != null ? String(p.taille_cm) : "",
+      perimetre_cranien_cm: p.perimetre_cranien_cm != null ? String(p.perimetre_cranien_cm) : "",
+    });
+    setAddModal(true);
+  };
+
+  const supprimerMesure = (mid: string) => {
+    if (!mid) return;
+    Alert.alert("Supprimer cette mesure ?", "Elle disparaîtra de la courbe et de l'historique.", [
+      { text: "Annuler", style: "cancel" },
+      {
+        text: "Supprimer", style: "destructive",
+        onPress: async () => {
+          try {
+            await api.delete(`/enfants/${id}/mesures/${mid}`);
+            load();
+          } catch (e) { Alert.alert("Erreur", formatError(e)); }
+        },
+      },
+    ]);
+  };
 
   const load = async () => {
     try {
@@ -63,11 +98,17 @@ export default function Croissance() {
     if (mes.perimetre_cranien_cm) payload.perimetre_cranien_cm = parseFloat(mes.perimetre_cranien_cm.replace(",", "."));
     setSubmitting(true);
     try {
-      const r = await smartPost(`/enfants/${id}/mesures`, payload);
+      if (editingMesureId) {
+        await api.patch(`/enfants/${id}/mesures/${editingMesureId}`, payload);
+        Alert.alert("✅ Mesure modifiée");
+      } else {
+        const r = await smartPost(`/enfants/${id}/mesures`, payload);
+        if (r?.queued) Alert.alert("Enregistré hors ligne", "La mesure sera envoyée dès la reconnexion.");
+        else Alert.alert("✅ Mesure enregistrée");
+      }
       setAddModal(false);
+      setEditingMesureId(null);
       setMes({ date: new Date().toISOString().slice(0, 10), poids_kg: "", taille_cm: "", perimetre_cranien_cm: "" });
-      if (r?.queued) Alert.alert("Enregistré hors ligne", "La mesure sera envoyée dès la reconnexion.");
-      else Alert.alert("✅ Mesure enregistrée");
       load();
     } catch (e) {
       Alert.alert("Erreur", formatError(e));
@@ -111,7 +152,7 @@ export default function Croissance() {
         </TouchableOpacity>
         <Text style={styles.title}>Courbes OMS — {enfant.nom}</Text>
         {user?.role === "maman" ? (
-          <TouchableOpacity onPress={() => setAddModal(true)} style={styles.addBtn} testID="add-mesure-btn">
+          <TouchableOpacity onPress={openAdd} style={styles.addBtn} testID="add-mesure-btn">
             <Ionicons name="add" size={22} color="#fff" />
           </TouchableOpacity>
         ) : (
@@ -190,7 +231,7 @@ export default function Croissance() {
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4, marginBottom: 8 }}>
           <Text style={[styles.h2, { marginTop: 0, marginBottom: 0 }]}>Historique des mesures</Text>
           {user?.role === "maman" && (
-            <TouchableOpacity onPress={() => setAddModal(true)} style={styles.addInlineBtn} testID="add-mesure-inline">
+            <TouchableOpacity onPress={openAdd} style={styles.addInlineBtn} testID="add-mesure-inline">
               <Ionicons name="add-circle" size={16} color={COLORS.primary} />
               <Text style={styles.addInlineText}>Ajouter</Text>
             </TouchableOpacity>
@@ -200,7 +241,7 @@ export default function Croissance() {
           <View style={styles.empty}>
             <Text style={styles.emptyTxt}>Aucune mesure enregistrée pour le moment.</Text>
             {user?.role === "maman" && (
-              <TouchableOpacity onPress={() => setAddModal(true)} style={styles.emptyBtn} testID="add-mesure-empty">
+              <TouchableOpacity onPress={openAdd} style={styles.emptyBtn} testID="add-mesure-empty">
                 <Ionicons name="add-circle" size={18} color="#fff" />
                 <Text style={styles.emptyBtnText}>Ajouter ma 1ère mesure</Text>
               </TouchableOpacity>
@@ -208,7 +249,13 @@ export default function Croissance() {
           </View>
         ) : (
           points.filter((p: any) => p[keyY]).map((p: any, i: number) => (
-            <View key={i} style={styles.ptRow}>
+            <TouchableOpacity
+              key={p.id || i}
+              style={styles.ptRow}
+              onPress={() => user?.role === "maman" && openEdit(p)}
+              disabled={user?.role !== "maman" || !p.id}
+              testID={`mesure-row-${p.id || i}`}
+            >
               <View style={styles.ptLeft}>
                 <Text style={styles.ptAge}>{Math.round(p.age_mois)}m</Text>
                 <Text style={styles.ptDate}>{p.date?.slice(0, 10)}</Text>
@@ -221,7 +268,27 @@ export default function Croissance() {
                   </Text>
                 </View>
               )}
-            </View>
+              {user?.role === "maman" && p.id && (
+                <View style={styles.ptActions}>
+                  <TouchableOpacity
+                    onPress={(e) => { e.stopPropagation(); openEdit(p); }}
+                    hitSlop={8}
+                    style={styles.ptActionBtn}
+                    testID={`edit-mesure-${p.id}`}
+                  >
+                    <Ionicons name="create-outline" size={18} color={COLORS.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={(e) => { e.stopPropagation(); supprimerMesure(p.id); }}
+                    hitSlop={8}
+                    style={styles.ptActionBtn}
+                    testID={`del-mesure-${p.id}`}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </TouchableOpacity>
           ))
         )}
 
@@ -234,7 +301,7 @@ export default function Croissance() {
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: "flex-end" }}>
             <View style={styles.modalCard}>
               <View style={styles.modalHead}>
-                <Text style={styles.modalTitle}>📏 Nouvelle mesure</Text>
+                <Text style={styles.modalTitle}>{editingMesureId ? "✏️ Modifier la mesure" : "📏 Nouvelle mesure"}</Text>
                 <TouchableOpacity onPress={() => setAddModal(false)} testID="close-mesure-modal">
                   <Ionicons name="close" size={24} color={COLORS.textPrimary} />
                 </TouchableOpacity>
@@ -303,8 +370,19 @@ export default function Croissance() {
 
               <TouchableOpacity onPress={saveMesure} disabled={submitting} style={[styles.saveBtn, submitting && { opacity: 0.6 }]} testID="save-mesure-btn">
                 {submitting ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark-circle" size={20} color="#fff" />}
-                <Text style={styles.saveBtnText}>{submitting ? "Enregistrement..." : "Enregistrer la mesure"}</Text>
+                <Text style={styles.saveBtnText}>{submitting ? "Enregistrement..." : (editingMesureId ? "Enregistrer les modifications" : "Enregistrer la mesure")}</Text>
               </TouchableOpacity>
+
+              {editingMesureId && (
+                <TouchableOpacity
+                  onPress={() => { setAddModal(false); supprimerMesure(editingMesureId); }}
+                  style={styles.deleteMesureBtn}
+                  testID="delete-mesure-btn"
+                >
+                  <Ionicons name="trash" size={18} color="#DC2626" />
+                  <Text style={styles.deleteMesureText}>Supprimer cette mesure</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -357,6 +435,13 @@ const styles = StyleSheet.create({
 
   h2: { fontSize: 14, fontWeight: "800", color: COLORS.textPrimary, marginTop: 4, marginBottom: 8 },
   ptRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, backgroundColor: COLORS.surface, borderRadius: RADIUS.sm, marginBottom: 6, borderWidth: 1, borderColor: COLORS.border },
+  ptActions: { flexDirection: "row", gap: 4, marginLeft: 4 },
+  ptActionBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: COLORS.bgPrimary,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: COLORS.border,
+  },
   ptLeft: { width: 70 },
   ptAge: { fontSize: 13, fontWeight: "800", color: COLORS.textPrimary },
   ptDate: { fontSize: 10, color: COLORS.textMuted },
@@ -386,4 +471,10 @@ const styles = StyleSheet.create({
   row2: { flexDirection: "row", gap: 10 },
   saveBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 18, paddingVertical: 14, borderRadius: 999, backgroundColor: COLORS.primary },
   saveBtnText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  deleteMesureBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingVertical: 12, borderRadius: 999,
+    marginTop: 10, borderWidth: 1, borderColor: "#DC2626",
+  },
+  deleteMesureText: { color: "#DC2626", fontWeight: "800", fontSize: 13 },
 });
