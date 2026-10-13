@@ -1699,11 +1699,12 @@ WHO_TA = {
 
 
 def _month_diff(born_iso: str, measured_iso: str) -> float:
+    # Comparaison sur la partie date uniquement (évite l'erreur naive/aware
+    # quand une date est "YYYY-MM-DD" et l'autre "YYYY-MM-DDT00:00:00Z").
     try:
-        born = datetime.fromisoformat(born_iso.replace("Z", "+00:00"))
-        m = datetime.fromisoformat(measured_iso.replace("Z", "+00:00"))
-        days = (m - born).total_seconds() / 86400
-        return round(days / 30.4375, 2)
+        born = datetime.strptime(born_iso[:10], "%Y-%m-%d")
+        m = datetime.strptime(measured_iso[:10], "%Y-%m-%d")
+        return max(0.0, round((m - born).days / 30.4375, 2))
     except Exception:
         return 0.0
 

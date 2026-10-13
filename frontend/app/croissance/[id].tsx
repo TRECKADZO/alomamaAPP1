@@ -34,6 +34,7 @@ export default function Croissance() {
   const { user } = useAuth();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [chartW, setChartW] = useState(Math.min(Dimensions.get("window").width - 54, 520));
   const [tab, setTab] = useState<"poids" | "taille">("poids");
   const [addModal, setAddModal] = useState(false);
   const [editingMesureId, setEditingMesureId] = useState<string | null>(null);
@@ -125,24 +126,31 @@ export default function Croissance() {
   const keyY = tab === "poids" ? "poids_kg" : "taille_cm";
   const keyClass = tab === "poids" ? "classification_poids" : "classification_taille";
 
-  // Scale
-  const W = Math.min(Dimensions.get("window").width - 32, 500);
-  const H = 260;
-  const PAD_L = 36, PAD_R = 12, PAD_T = 18, PAD_B = 28;
-  const maxX = 60;
-  const allY = refs.flatMap((r: any) => [r.p3, r.p97]).concat(points.map((p: any) => p[keyY] || 0));
-  const maxY = Math.max(...allY) * 1.05;
-  const minY = Math.min(...allY.filter((v: number) => v > 0)) * 0.9;
-  const fx = (x: number) => PAD_L + (x / maxX) * (W - PAD_L - PAD_R);
-  const fy = (y: number) => H - PAD_B - ((y - minY) / (maxY - minY)) * (H - PAD_T - PAD_B);
+  // Scale — l'axe X s'adapte à l'âge du bébé (zoom) au lieu d'être figé sur 0-60 mois
+  const W = Math.max(chartW, 200);
+  const H = 280;
+  const PAD_L = 40, PAD_R = 18, PAD_T = 26, PAD_B = 40;
+  const childPts = points.filter((p: any) => p[keyY] > 0);
+  const maxAge = Math.max(0, ...childPts.map((p: any) => p.age_mois || 0));
+  const maxX = [6, 12, 24, 36, 60].find((d) => d >= maxAge * 1.15 + 1) ?? 60;
+  const ticksX = X_TICKS[maxX];
+  const visRefs = refs.filter((r: any) => r.mois <= maxX);
+  const allY = visRefs.flatMap((r: any) => [r.p3, r.p97]).concat(childPts.map((p: any) => p[keyY]));
+  const rawMin = Math.min(...allY), rawMax = Math.max(...allY);
+  const stepY = niceStep((rawMax - rawMin) / 4);
+  const minY = Math.floor(rawMin / stepY) * stepY;
+  const maxY = Math.ceil(rawMax / stepY) * stepY;
+  const ticksY: number[] = [];
+  for (let v = minY; v <= maxY + 1e-6; v += stepY) ticksY.push(+v.toFixed(2));
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const fx = (x: number) => PAD_L + (Math.min(Math.max(x, 0), maxX) / maxX) * plotW;
+  const fy = (y: number) => PAD_T + plotH - ((y - minY) / (maxY - minY)) * plotH;
 
-  const buildPath = (key: string) => {
-    let d = "";
-    refs.forEach((r: any, i: number) => {
-      d += (i === 0 ? "M" : "L") + fx(r.mois) + "," + fy(r[key]);
-    });
-    return d;
-  };
+  const buildPath = (key: string) =>
+    visRefs.map((r: any, i: number) => `${i === 0 ? "M" : "L"}${fx(r.mois)},${fy(r[key])}`).join(" ");
+  const buildBand = (lo: string, hi: string) =>
+    buildPath(hi) + " " + [...visRefs].reverse().map((r: any) => `L${fx(r.mois)},${fy(r[lo])}`).join(" ") + " Z";
+  const childPath = childPts.map((p: any, i: number) => `${i === 0 ? "M" : "L"}${fx(p.age_mois)},${fy(p[keyY])}`).join(" ");
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -187,26 +195,35 @@ export default function Croissance() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.chartCard}>
+        <View
+          style={styles.chartCard}
+          onLayout={(e) => setChartW(Math.min(e.nativeEvent.layout.width - 22, 520))}
+          testID="oms-chart"
+        >
           <Svg width={W} height={H}>
-            {/* Grid horizontal */}
-            {[0, 0.25, 0.5, 0.75, 1].map((r, i) => {
-              const y = PAD_T + r * (H - PAD_T - PAD_B);
-              const val = maxY - r * (maxY - minY);
-              return (
-                <React.Fragment key={i}>
-                  <Line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="#E5E7EB" strokeWidth={0.5} />
-                  <SvgText x={PAD_L - 4} y={y + 3} fontSize="9" fill="#6B7280" textAnchor="end">{val.toFixed(1)}</SvgText>
-                </React.Fragment>
-              );
-            })}
-            {/* Axes labels months */}
-            {[0, 6, 12, 24, 36, 48, 60].map((m) => (
-              <SvgText key={m} x={fx(m)} y={H - PAD_B + 14} fontSize="9" fill="#6B7280" textAnchor="middle">{m}mo</SvgText>
+            {/* Grille horizontale + valeurs Y */}
+            {ticksY.map((v) => (
+              <React.Fragment key={`y${v}`}>
+                <Line x1={PAD_L} y1={fy(v)} x2={W - PAD_R} y2={fy(v)} stroke="#E5E7EB" strokeWidth={0.5} />
+                <SvgText x={PAD_L - 4} y={fy(v) + 3} fontSize="9" fill="#6B7280" textAnchor="end">
+                  {Number.isInteger(v) ? v : v.toFixed(1)}
+                </SvgText>
+              </React.Fragment>
             ))}
-            {/* Bands : P3-P15 (jaune clair), P15-P85 (vert clair normal), P85-P97 (jaune clair), P3 & P97 (rouge clair) */}
-            <Path d={buildPath("p97") + " L " + fx(60) + "," + fy(0) + " L " + fx(0) + "," + fy(0) + " Z"} fill="#FEE2E2" opacity={0.3} />
-            <Path d={buildPath("p3") + " L " + fx(60) + "," + fy(0) + " L " + fx(0) + "," + fy(0) + " Z"} fill="#FFFFFF" />
+            {/* Grille verticale + âges */}
+            {ticksX.map((m) => (
+              <React.Fragment key={`x${m}`}>
+                <Line x1={fx(m)} y1={PAD_T} x2={fx(m)} y2={PAD_T + plotH} stroke="#F3F4F6" strokeWidth={0.5} />
+                <SvgText x={fx(m)} y={PAD_T + plotH + 13} fontSize="9" fill="#6B7280" textAnchor="middle">{m}</SvgText>
+              </React.Fragment>
+            ))}
+            <SvgText x={PAD_L + plotW / 2} y={H - 6} fontSize="10" fill="#374151" textAnchor="middle" fontWeight="bold">Âge (mois)</SvgText>
+            <SvgText x={PAD_L} y={11} fontSize="10" fill="#374151" textAnchor="middle" fontWeight="bold">{unit}</SvgText>
+            {/* Bandes : P3-P97 (rouge clair), P15-P85 (vert clair = normal) */}
+            <Path d={buildBand("p3", "p97")} fill="#FEE2E2" opacity={0.5} />
+            <Path d={buildBand("p15", "p85")} fill="#D1FAE5" opacity={0.6} />
+            <Line x1={PAD_L} y1={PAD_T + plotH} x2={W - PAD_R} y2={PAD_T + plotH} stroke="#9CA3AF" strokeWidth={1} />
+            <Line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T + plotH} stroke="#9CA3AF" strokeWidth={1} />
             {/* Lines */}
             <Path d={buildPath("p3")} stroke="#DC2626" strokeDasharray="4 3" strokeWidth={1.2} fill="none" />
             <Path d={buildPath("p15")} stroke="#F59E0B" strokeDasharray="4 3" strokeWidth={1.2} fill="none" />
@@ -214,7 +231,8 @@ export default function Croissance() {
             <Path d={buildPath("p85")} stroke="#F59E0B" strokeDasharray="4 3" strokeWidth={1.2} fill="none" />
             <Path d={buildPath("p97")} stroke="#DC2626" strokeDasharray="4 3" strokeWidth={1.2} fill="none" />
             {/* Child points */}
-            {points.filter((p: any) => p[keyY]).map((p: any, i: number) => (
+            {childPts.length > 1 && <Path d={childPath} stroke="#6366F1" strokeWidth={2} fill="none" />}
+            {childPts.map((p: any, i: number) => (
               <Circle key={i} cx={fx(p.age_mois)} cy={fy(p[keyY])} r={5} fill="#6366F1" stroke="#fff" strokeWidth={1.5} />
             ))}
           </Svg>
@@ -393,6 +411,20 @@ export default function Croissance() {
 
 // Stub React import for fragments
 import React from "react";
+
+const X_TICKS: Record<number, number[]> = {
+  6: [0, 1, 2, 3, 4, 5, 6],
+  12: [0, 2, 4, 6, 8, 10, 12],
+  24: [0, 3, 6, 9, 12, 18, 24],
+  36: [0, 6, 12, 18, 24, 30, 36],
+  60: [0, 6, 12, 24, 36, 48, 60],
+};
+
+function niceStep(raw: number) {
+  const pow = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  const n = raw / pow;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * pow;
+}
 
 function Legend({ color, label, solid, dot }: { color: string; label: string; solid?: boolean; dot?: boolean }) {
   return (
