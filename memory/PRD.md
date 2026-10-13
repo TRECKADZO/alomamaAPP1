@@ -94,3 +94,4 @@ Module premium dédié inspiré Pregnancy+ (Philips) adapté contexte ivoirien.
 ## Correctif Courbes OMS (Oct 2026)
 - Backend `_month_diff` : calcul de l’âge sur la partie date (corrige l’âge = 0 pour les dates ISO avec heure/fuseau).
 - Frontend `croissance/[id].tsx` : axe X adaptatif (6/12/24/36/60 mois), axe Y à pas « ronds », bandes P3–P97 et P15–P85, largeur mesurée via onLayout, ligne reliant les points du bébé, titres d’axes.
+- Carnet enfant (`enfants/[id]/carnet.tsx`) : la mini-courbe récupère désormais les mesures via `/croissance-oms` (la liste `/enfants` exclut les mesures → affichait « Pas encore de mesures »).

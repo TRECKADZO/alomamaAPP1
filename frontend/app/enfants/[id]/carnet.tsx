@@ -115,8 +115,13 @@ export default function CarnetModulaire() {
     if (!id) return;
     (async () => {
       try {
-        const r = await api.get("/enfants");
-        const e = (r.data || []).find((x: any) => x.id === id);
+        // /enfants exclut l'historique des mesures → on le récupère via croissance-oms
+        const [r, c] = await Promise.all([
+          api.get("/enfants"),
+          api.get(`/enfants/${id}/croissance-oms`).catch(() => null),
+        ]);
+        const found = (r.data || []).find((x: any) => x.id === id);
+        const e = found ? { ...found, mesures: c?.data?.points || [] } : found;
         setEnfant(e);
         if (e) setActiveStage(getDefaultStage(monthsBetween(e.date_naissance)));
       } finally { setLoading(false); }
